@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.5.0-blue)](docs/releases/v0.5.0.md)
+[![Version](https://img.shields.io/badge/version-v0.6.0-blue)](docs/releases/v0.6.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -76,6 +76,7 @@ var context = engine.Execute("""
 - Array index access: `values[0]`
 - Object property access: `robot.Status`, `robot.Position.X`
 - Function calls in expression statements and expressions
+- User-defined functions with `function` / `return` / `endfunction`
 
 Example:
 
@@ -207,6 +208,34 @@ Invalid function names, wrong argument counts, invalid conversions, and invalid 
 
 JSON functions do not add JSON literal syntax to RuleScript. Use strings plus `JsonParse` when a script needs JSON data.
 
+## User-Defined Functions
+
+RuleScript functions are declared at top level:
+
+```rulescript
+function Add(a, b):
+    return a + b;
+endfunction
+
+var result = Add(10, 20);
+```
+
+`return expression;` returns a value. `return;` returns `null`, and a function that reaches `endfunction` without returning also returns `null`.
+
+Functions use a local scope. Parameters and `var` declarations stay local and do not leak into `RuntimeContext`. A function can read global values from `RuntimeContext`. Assignment inside a function updates an existing local variable first; if no local exists but a global variable exists, the global value is updated; otherwise a new local variable is created.
+
+`return` outside a function is parsed but fails at runtime with `RuntimeException`.
+
+Function lookup order is:
+
+1. User-defined functions
+2. Host functions
+3. Built-in functions
+
+This lets a script function override a host or built-in function name.
+
+Recursion is intentionally blocked in this milestone. A recursive user function call throws `RuntimeException`.
+
 ## Host Functions
 
 C# host code can register custom functions on `RuleScriptEngine`:
@@ -234,7 +263,7 @@ var context = engine.Execute("""
     """);
 ```
 
-Function lookup checks host functions first, then built-in functions, so host functions can override built-ins. Registering the same name again overwrites the previous host function.
+Function lookup checks user-defined functions first, then host functions, then built-in functions. Registering the same host function name again overwrites the previous host function.
 
 Host function management:
 
@@ -281,7 +310,6 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 
 - `switch`
 - JSON/object literal syntax
-- User-defined script functions
 - Async host functions
 - Built-in `delay` / `waitfor` syntax
 - Multi-error parser recovery
@@ -301,6 +329,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M11 Collections and Property Access: complete
 - M12 foreach: complete
 - M13 JSON Support: complete
+- M14 User Defined Functions: complete
 
 ## Verification
 

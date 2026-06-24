@@ -8,6 +8,7 @@ public sealed class Parser
 {
     private readonly IReadOnlyList<Token> _tokens;
     private int _current;
+    private int _blockDepth;
 
     public Parser(IReadOnlyList<Token> tokens)
     {
@@ -33,6 +34,16 @@ public sealed class Parser
 
     private Statement ParseStatement()
     {
+        if (Match(TokenType.Function))
+        {
+            if (_blockDepth > 0)
+            {
+                throw Error(Previous(), "Function declarations are only allowed at top level.");
+            }
+
+            return ParseFunctionDeclarationStatement();
+        }
+
         if (Match(TokenType.Var))
         {
             return ParseVarStatement();
@@ -61,6 +72,11 @@ public sealed class Parser
         if (Match(TokenType.Continue))
         {
             return ParseContinueStatement();
+        }
+
+        if (Match(TokenType.Return))
+        {
+            return ParseReturnStatement();
         }
 
         if (Check(TokenType.Identifier) && CheckNext(TokenType.Assign))
@@ -147,6 +163,39 @@ public sealed class Parser
         return new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column);
     }
 
+    private FunctionDeclarationStatement ParseFunctionDeclarationStatement()
+    {
+        var functionToken = Previous();
+        var name = Consume(TokenType.Identifier, "Expected function name after 'function'.");
+        Consume(TokenType.LeftParen, "Expected '(' after function name.");
+
+        var parameters = new List<string>();
+
+        if (!Check(TokenType.RightParen))
+        {
+            do
+            {
+                var parameter = Consume(TokenType.Identifier, "Expected parameter name.");
+
+                if (parameters.Contains(parameter.Lexeme, StringComparer.Ordinal))
+                {
+                    throw Error(parameter, $"Duplicate parameter name '{parameter.Lexeme}'.");
+                }
+
+                parameters.Add(parameter.Lexeme);
+            }
+            while (Match(TokenType.Comma));
+        }
+
+        Consume(TokenType.RightParen, "Expected ')' after function parameters.");
+        Consume(TokenType.Colon, "Expected ':' after function declaration.");
+
+        var body = ParseBlock(TokenType.EndFunction);
+
+        Consume(TokenType.EndFunction, "Expected 'endfunction' after function declaration.");
+        return new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column);
+    }
+
     private BreakStatement ParseBreakStatement()
     {
         var breakToken = Previous();
@@ -161,13 +210,31 @@ public sealed class Parser
         return new ContinueStatement(continueToken.Line, continueToken.Column);
     }
 
+    private ReturnStatement ParseReturnStatement()
+    {
+        var returnToken = Previous();
+        var value = Check(TokenType.Semicolon) ? null : ParseExpression();
+
+        Consume(TokenType.Semicolon, "Expected ';' after return.");
+        return new ReturnStatement(value, returnToken.Line, returnToken.Column);
+    }
+
     private Statement[] ParseBlock(params TokenType[] terminators)
     {
         var statements = new List<Statement>();
 
-        while (!IsAtEnd() && !terminators.Contains(Peek().Type))
+        _blockDepth++;
+
+        try
         {
-            statements.Add(ParseStatement());
+            while (!IsAtEnd() && !terminators.Contains(Peek().Type))
+            {
+                statements.Add(ParseStatement());
+            }
+        }
+        finally
+        {
+            _blockDepth--;
         }
 
         return [.. statements];

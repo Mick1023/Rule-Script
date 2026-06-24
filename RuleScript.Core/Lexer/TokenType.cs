@@ -20,6 +20,9 @@ public enum TokenType
     Foreach,
     In,
     EndForeach,
+    Function,
+    EndFunction,
+    Return,
     Break,
     Continue,
 

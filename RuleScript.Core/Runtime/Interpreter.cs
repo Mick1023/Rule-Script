@@ -11,6 +11,10 @@ public sealed class Interpreter
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly int _maxLoopIterations;
+    private readonly Dictionary<string, FunctionDeclarationStatement> _userFunctions = new(StringComparer.Ordinal);
+    private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
+    private readonly Stack<int> _functionLoopBoundaries = new();
+    private readonly Stack<string> _callStack = new();
     private int _loopDepth;
 
     public Interpreter(BuiltinFunctions builtinFunctions)
@@ -37,7 +41,18 @@ public sealed class Interpreter
 
         foreach (var statement in statements)
         {
-            ExecuteStatement(statement, context);
+            if (statement is FunctionDeclarationStatement functionDeclaration)
+            {
+                _userFunctions[functionDeclaration.Name] = functionDeclaration;
+            }
+        }
+
+        foreach (var statement in statements)
+        {
+            if (statement is not FunctionDeclarationStatement)
+            {
+                ExecuteStatement(statement, context);
+            }
         }
     }
 
@@ -46,13 +61,18 @@ public sealed class Interpreter
         switch (statement)
         {
             case VarStatement varStatement:
-                context.SetValue(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context));
+                DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context), context);
                 break;
             case AssignmentStatement assignmentStatement:
-                context.SetValue(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context));
+                AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
                 break;
             case ExpressionStatement expressionStatement:
                 Evaluate(expressionStatement.Expression, context);
+                break;
+            case FunctionDeclarationStatement:
+                break;
+            case ReturnStatement returnStatement:
+                ExecuteReturnStatement(returnStatement, context);
                 break;
             case IfStatement ifStatement:
                 ExecuteIfStatement(ifStatement, context);
@@ -147,7 +167,12 @@ public sealed class Interpreter
         var iterableValue = Evaluate(statement.Iterable, context).Value;
         var items = GetIterableItems(iterableValue, statement);
         var iterations = 0;
-        var hadPreviousValue = context.TryGet(statement.VariableName, out var previousValue);
+        var hasLocalScope = TryGetCurrentLocalScope(out var localScope);
+        RuntimeValue? previousRuntimeValue = null;
+        object? previousValue = null;
+        var hadPreviousValue = hasLocalScope
+            ? localScope!.TryGetValue(statement.VariableName, out previousRuntimeValue)
+            : context.TryGet(statement.VariableName, out previousValue);
 
         _loopDepth++;
 
@@ -161,7 +186,14 @@ public sealed class Interpreter
                 }
 
                 iterations++;
-                context.Set(statement.VariableName, item);
+                if (hasLocalScope)
+                {
+                    localScope![statement.VariableName] = RuntimeValue.FromObject(item);
+                }
+                else
+                {
+                    context.Set(statement.VariableName, item);
+                }
 
                 try
                 {
@@ -184,7 +216,18 @@ public sealed class Interpreter
         {
             _loopDepth--;
 
-            if (hadPreviousValue)
+            if (hasLocalScope)
+            {
+                if (hadPreviousValue)
+                {
+                    localScope![statement.VariableName] = previousRuntimeValue!;
+                }
+                else
+                {
+                    localScope!.Remove(statement.VariableName);
+                }
+            }
+            else if (hadPreviousValue)
             {
                 context.Set(statement.VariableName, previousValue);
             }
@@ -197,9 +240,9 @@ public sealed class Interpreter
 
     private void ExecuteBreakStatement(BreakStatement statement)
     {
-        if (_loopDepth == 0)
+        if (_loopDepth <= CurrentFunctionLoopBoundary)
         {
-            throw new RuntimeException("break can only be used inside while.", statement.Line, statement.Column, "break");
+            throw new RuntimeException("break can only be used inside a loop.", statement.Line, statement.Column, "break");
         }
 
         throw new BreakSignalException();
@@ -207,13 +250,83 @@ public sealed class Interpreter
 
     private void ExecuteContinueStatement(ContinueStatement statement)
     {
-        if (_loopDepth == 0)
+        if (_loopDepth <= CurrentFunctionLoopBoundary)
         {
-            throw new RuntimeException("continue can only be used inside while.", statement.Line, statement.Column, "continue");
+            throw new RuntimeException("continue can only be used inside a loop.", statement.Line, statement.Column, "continue");
         }
 
         throw new ContinueSignalException();
     }
+
+    private void ExecuteReturnStatement(ReturnStatement statement, RuntimeContext context)
+    {
+        if (_localScopes.Count == 0)
+        {
+            throw new RuntimeException("return can only be used inside a function.", statement.Line, statement.Column, "return");
+        }
+
+        var value = statement.Value is null ? RuntimeValue.Null : Evaluate(statement.Value, context);
+        throw new ReturnSignalException(value);
+    }
+
+    private void DeclareVariable(string name, RuntimeValue value, RuntimeContext context)
+    {
+        if (TryGetCurrentLocalScope(out var localScope))
+        {
+            localScope![name] = value;
+            return;
+        }
+
+        context.SetValue(name, value);
+    }
+
+    private void AssignVariable(string name, RuntimeValue value, RuntimeContext context)
+    {
+        if (TryGetCurrentLocalScope(out var localScope))
+        {
+            if (localScope!.ContainsKey(name))
+            {
+                localScope[name] = value;
+                return;
+            }
+
+            if (context.Contains(name))
+            {
+                context.SetValue(name, value);
+                return;
+            }
+
+            localScope[name] = value;
+            return;
+        }
+
+        context.SetValue(name, value);
+    }
+
+    private bool TryGetVariable(string name, RuntimeContext context, out object? value)
+    {
+        if (TryGetCurrentLocalScope(out var localScope) && localScope!.TryGetValue(name, out var runtimeValue))
+        {
+            value = runtimeValue.Value;
+            return true;
+        }
+
+        return context.TryGet(name, out value);
+    }
+
+    private bool TryGetCurrentLocalScope(out Dictionary<string, RuntimeValue>? localScope)
+    {
+        if (_localScopes.Count > 0)
+        {
+            localScope = _localScopes.Peek();
+            return true;
+        }
+
+        localScope = null;
+        return false;
+    }
+
+    private int CurrentFunctionLoopBoundary => _functionLoopBoundaries.Count > 0 ? _functionLoopBoundaries.Peek() : 0;
 
     private RuntimeValue Evaluate(Expression expression, RuntimeContext context)
     {
@@ -336,9 +449,9 @@ public sealed class Interpreter
         };
     }
 
-    private static RuntimeValue EvaluateIdentifier(IdentifierExpression expression, RuntimeContext context)
+    private RuntimeValue EvaluateIdentifier(IdentifierExpression expression, RuntimeContext context)
     {
-        if (context.TryGet(expression.Name, out var value))
+        if (TryGetVariable(expression.Name, context, out var value))
         {
             return RuntimeValue.FromObject(value);
         }
@@ -351,6 +464,11 @@ public sealed class Interpreter
         var arguments = expression.Arguments
             .Select(argument => Evaluate(argument, context))
             .ToArray();
+
+        if (_userFunctions.TryGetValue(expression.Name, out var userFunction))
+        {
+            return InvokeUserFunction(userFunction, arguments, context, expression.Line, expression.Column);
+        }
 
         if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
         {
@@ -370,6 +488,55 @@ public sealed class Interpreter
         }
 
         throw new RuntimeException($"Function '{expression.Name}' is not registered.", expression.Line, expression.Column, expression.Name);
+    }
+
+    private RuntimeValue InvokeUserFunction(
+        FunctionDeclarationStatement function,
+        IReadOnlyList<RuntimeValue> arguments,
+        RuntimeContext context,
+        int? line,
+        int? column)
+    {
+        if (arguments.Count != function.Parameters.Count)
+        {
+            throw new RuntimeException($"Function '{function.Name}' expects {function.Parameters.Count} argument(s), but received {arguments.Count}.", line, column, function.Name);
+        }
+
+        if (_callStack.Contains(function.Name, StringComparer.Ordinal))
+        {
+            throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
+        }
+
+        var localScope = new Dictionary<string, RuntimeValue>(StringComparer.Ordinal);
+
+        for (var i = 0; i < function.Parameters.Count; i++)
+        {
+            localScope[function.Parameters[i]] = arguments[i];
+        }
+
+        _callStack.Push(function.Name);
+        _localScopes.Push(localScope);
+        _functionLoopBoundaries.Push(_loopDepth);
+
+        try
+        {
+            foreach (var statement in function.Body)
+            {
+                ExecuteStatement(statement, context);
+            }
+
+            return RuntimeValue.Null;
+        }
+        catch (ReturnSignalException signal)
+        {
+            return signal.Value;
+        }
+        finally
+        {
+            _functionLoopBoundaries.Pop();
+            _localScopes.Pop();
+            _callStack.Pop();
+        }
     }
 
     private static RuntimeValue InvokeHostFunction(
