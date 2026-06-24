@@ -66,6 +66,9 @@ public sealed class Interpreter
             case AssignmentStatement assignmentStatement:
                 AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
                 break;
+            case GlobalAssignmentStatement globalAssignmentStatement:
+                AssignGlobalVariable(globalAssignmentStatement.Name, Evaluate(globalAssignmentStatement.Value, context), context);
+                break;
             case ExpressionStatement expressionStatement:
                 Evaluate(expressionStatement.Expression, context);
                 break;
@@ -291,6 +294,11 @@ public sealed class Interpreter
         context.SetValue(name, value);
     }
 
+    private static void AssignGlobalVariable(string name, RuntimeValue value, RuntimeContext context)
+    {
+        context.SetValue(name, value);
+    }
+
     private bool TryGetVariable(string name, RuntimeContext context, out object? value)
     {
         if (TryGetCurrentLocalScope(out var localScope) && localScope!.TryGetValue(name, out var runtimeValue))
@@ -322,6 +330,7 @@ public sealed class Interpreter
         {
             LiteralExpression literal => RuntimeValue.FromObject(literal.Value),
             IdentifierExpression identifier => EvaluateIdentifier(identifier, context),
+            GlobalIdentifierExpression globalIdentifier => EvaluateGlobalIdentifier(globalIdentifier, context),
             UnaryExpression unary => EvaluateUnary(unary, context),
             BinaryExpression binary => EvaluateBinary(binary, context),
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
@@ -445,6 +454,16 @@ public sealed class Interpreter
         }
 
         throw new RuntimeException($"Undefined variable '{expression.Name}'.", expression.Line, expression.Column, expression.Name);
+    }
+
+    private static RuntimeValue EvaluateGlobalIdentifier(GlobalIdentifierExpression expression, RuntimeContext context)
+    {
+        if (context.TryGet(expression.Name, out var value))
+        {
+            return RuntimeValue.FromObject(value);
+        }
+
+        throw new RuntimeException($"Undefined global variable '{expression.Name}'.", expression.Line, expression.Column, expression.Name);
     }
 
     private RuntimeValue EvaluateFunctionCall(FunctionCallExpression expression, RuntimeContext context)

@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.6.1-blue)](docs/releases/v0.6.1.md)
+[![Version](https://img.shields.io/badge/version-v0.6.2-blue)](docs/releases/v0.6.2.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -77,6 +77,7 @@ var context = engine.Execute("""
 - Object property access: `robot.Status`, `robot.Position.X`
 - Function calls in expression statements and expressions
 - User-defined functions with `function` / `return` / `endfunction`
+- Explicit global access with `global.name`
 
 Example:
 
@@ -226,6 +227,21 @@ Functions use a local scope. Parameters and `var` declarations stay local and do
 
 Assignment inside a function always writes to the function's local scope. It does not implicitly modify global `RuntimeContext` variables. This is a breaking change in `v0.6.1` from the initial `v0.6.0` function scope behavior.
 
+Use `global.name` when a function must explicitly read or write a global `RuntimeContext` variable:
+
+```rulescript
+var count = 0;
+
+function Test():
+    global.count = 100;
+endfunction
+
+Test();
+result = global.count;
+```
+
+`global.name` always bypasses local scope. Reads require the global variable to already exist; missing globals throw `RuntimeException`.
+
 `return` outside a function is parsed but fails at runtime with `RuntimeException`.
 
 Function lookup order is:
@@ -333,6 +349,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M13 JSON Support: complete
 - M14 User Defined Functions: complete
 - M14.1 Scope Correction Hotfix: complete
+- M14.2 Explicit Global Access: complete
 
 ## Verification
 

@@ -79,6 +79,11 @@ public sealed class Parser
             return ParseReturnStatement();
         }
 
+        if (CheckGlobalAssignment())
+        {
+            return ParseGlobalAssignmentStatement();
+        }
+
         if (Check(TokenType.Identifier) && CheckNext(TokenType.Assign))
         {
             return ParseAssignmentStatement();
@@ -108,6 +113,17 @@ public sealed class Parser
         var value = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after assignment.");
         return new AssignmentStatement(name.Lexeme, value, name.Line, name.Column);
+    }
+
+    private GlobalAssignmentStatement ParseGlobalAssignmentStatement()
+    {
+        var globalToken = Consume(TokenType.Identifier, "Expected 'global' assignment target.");
+        Consume(TokenType.Dot, "Expected '.' after 'global'.");
+        var name = Consume(TokenType.Identifier, "Expected global variable name after 'global.'.");
+        Consume(TokenType.Assign, "Expected '=' after global assignment target.");
+        var value = ParseExpression();
+        Consume(TokenType.Semicolon, "Expected ';' after global assignment.");
+        return new GlobalAssignmentStatement(name.Lexeme, value, globalToken.Line, globalToken.Column);
     }
 
     private ExpressionStatement ParseExpressionStatement()
@@ -357,7 +373,10 @@ public sealed class Parser
             {
                 var dot = Previous();
                 var member = Consume(TokenType.Identifier, "Expected property name after '.'.");
-                expression = new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column);
+
+                expression = expression is IdentifierExpression { Name: "global" }
+                    ? new GlobalIdentifierExpression(member.Lexeme, dot.Line, dot.Column)
+                    : new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column);
                 continue;
             }
 
@@ -449,6 +468,16 @@ public sealed class Parser
     private bool Check(TokenType type) => !IsAtEnd() && Peek().Type == type;
 
     private bool CheckNext(TokenType type) => _current + 1 < _tokens.Count && _tokens[_current + 1].Type == type;
+
+    private bool CheckGlobalAssignment()
+    {
+        return _current + 3 < _tokens.Count
+            && _tokens[_current].Type == TokenType.Identifier
+            && _tokens[_current].Lexeme == "global"
+            && _tokens[_current + 1].Type == TokenType.Dot
+            && _tokens[_current + 2].Type == TokenType.Identifier
+            && _tokens[_current + 3].Type == TokenType.Assign;
+    }
 
     private Token Advance()
     {
