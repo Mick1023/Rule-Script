@@ -10,6 +10,8 @@ public sealed class RuleScriptEngine
 
     public int MaxLoopIterations { get; set; } = 100000;
 
+    public string? WorkingDirectory { get; set; }
+
     public RuleScriptEngine()
         : this(new BuiltinFunctions())
     {
@@ -59,7 +61,7 @@ public sealed class RuleScriptEngine
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
         var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
-        var module = BuildModule("<script>", statements, Directory.GetCurrentDirectory(), []);
+        var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
         new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module).Execute(module, context);
     }
 
@@ -79,21 +81,37 @@ public sealed class RuleScriptEngine
 
         ArgumentNullException.ThrowIfNull(context);
 
-        var fullPath = Path.GetFullPath(path);
-        var module = LoadModule(fullPath, []);
+        var fullPath = ResolveExecuteFilePath(path);
+        var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
         new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module).Execute(module, context);
     }
 
-    private ScriptModule LoadModule(string path, Stack<string> importStack)
+    private ScriptModule LoadModule(
+        string path,
+        Stack<string> importStack,
+        Dictionary<string, ScriptModule> moduleCache,
+        string originalPath,
+        string? importingFile,
+        bool isImported)
     {
+        path = Path.GetFullPath(path);
+
+        if (moduleCache.TryGetValue(path, out var cachedModule))
+        {
+            return cachedModule;
+        }
+
         if (importStack.Contains(path, StringComparer.OrdinalIgnoreCase))
         {
-            throw new RuntimeException($"Circular import detected for '{path}'.");
+            var chain = importStack.Reverse().Append(path);
+            throw new RuntimeException($"Circular import detected: {string.Join(" -> ", chain)}.");
         }
 
         if (!File.Exists(path))
         {
-            throw new RuntimeException($"Import file '{path}' was not found.");
+            throw importingFile is null
+                ? new RuntimeException($"ExecuteFile could not find script '{originalPath}'. Resolved full path: '{path}'.")
+                : new RuntimeException($"Import file '{originalPath}' was not found while importing from '{importingFile}'. Resolved full path: '{path}'.");
         }
 
         importStack.Push(path);
@@ -103,7 +121,16 @@ public sealed class RuleScriptEngine
             var script = File.ReadAllText(path);
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
-            return BuildModule(path, statements, Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory(), importStack);
+            var module = BuildModule(
+                path,
+                statements,
+                Path.GetDirectoryName(path) ?? ResolveWorkingDirectory(),
+                importStack,
+                moduleCache,
+                isImported);
+
+            moduleCache[path] = module;
+            return module;
         }
         finally
         {
@@ -115,20 +142,38 @@ public sealed class RuleScriptEngine
         string name,
         IReadOnlyList<Statement> statements,
         string baseDirectory,
-        Stack<string> importStack)
+        Stack<string> importStack,
+        Dictionary<string, ScriptModule> moduleCache,
+        bool isImported)
     {
         var module = new ScriptModule(name, statements);
+
+        if (isImported)
+        {
+            var executableStatement = statements.FirstOrDefault(statement => statement is not ImportStatement and not FunctionDeclarationStatement);
+
+            if (executableStatement is not null)
+            {
+                throw new RuntimeException($"Imported file '{name}' is invalid: top-level executable statements are not allowed in imported files.");
+            }
+        }
 
         foreach (var import in statements.OfType<ImportStatement>())
         {
             var importPath = ResolveImportPath(import.Path, baseDirectory);
-            var importedModule = LoadModule(importPath, importStack);
+            var importedModule = LoadModule(
+                importPath,
+                importStack,
+                moduleCache,
+                originalPath: import.Path,
+                importingFile: name,
+                isImported: true);
 
             if (import.Alias is not null)
             {
                 if (module.Aliases.ContainsKey(import.Alias))
                 {
-                    throw new RuntimeException($"Duplicate import alias '{import.Alias}'.", import.Line, import.Column, import.Alias);
+                    throw new RuntimeException($"Duplicate import alias '{import.Alias}' in file '{name}'.", import.Line, import.Column, import.Alias);
                 }
 
                 module.Aliases[import.Alias] = importedModule;
@@ -154,5 +199,19 @@ public sealed class RuleScriptEngine
         return Path.GetFullPath(Path.IsPathRooted(path)
             ? path
             : Path.Combine(baseDirectory, path));
+    }
+
+    private string ResolveExecuteFilePath(string path)
+    {
+        return Path.GetFullPath(Path.IsPathRooted(path)
+            ? path
+            : Path.Combine(ResolveWorkingDirectory(), path));
+    }
+
+    private string ResolveWorkingDirectory()
+    {
+        return string.IsNullOrWhiteSpace(WorkingDirectory)
+            ? Environment.CurrentDirectory
+            : Path.GetFullPath(WorkingDirectory);
     }
 }

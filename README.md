@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.7.0-blue)](docs/releases/v0.7.0.md)
+[![Version](https://img.shields.io/badge/version-v0.7.1-blue)](docs/releases/v0.7.1.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -215,8 +215,24 @@ JSON functions do not add JSON literal syntax to RuleScript. Use strings plus `J
 Run a `.rules` file with `ExecuteFile`:
 
 ```csharp
-var engine = new RuleScriptEngine();
+var engine = new RuleScriptEngine
+{
+    WorkingDirectory = @"C:\rules"
+};
+
 var context = engine.ExecuteFile("main.rules");
+```
+
+Relative `ExecuteFile` paths are resolved from `RuleScriptEngine.WorkingDirectory`. If `WorkingDirectory` is `null`, RuleScript uses `Environment.CurrentDirectory`. Absolute `ExecuteFile` paths ignore `WorkingDirectory`.
+
+Project example:
+
+```text
+rules/
+  main.rules
+  common.rules
+  modules/
+    robot.rules
 ```
 
 Global imports merge imported functions into the current file's function table:
@@ -242,6 +258,10 @@ result = a + "," + b;
 Alias imports do not expose functions globally. In the example above, `GetSensor();` throws `RuntimeException`; use `robot.GetSensor();` or `port.GetSensor();`.
 
 Nested imports are supported, and circular imports throw `RuntimeException`. If multiple global imports provide the same function name, later global imports override earlier ones. Functions declared in the current file override globally imported functions. Alias imports are recommended when different modules use the same function names.
+
+Import paths are resolved relative to the file that contains the import. Path normalization supports `./common.rules` and `modules/../common.rules`. Imported files may contain only `import` statements and function declarations; top-level executable statements are rejected in imported files.
+
+Common import errors include missing files, duplicate aliases, unknown aliases, missing module functions, invalid alias syntax, executable statements in imported files, and circular imports. Error messages include the relevant alias, path, importing file, resolved full path, or import chain when available.
 
 ## User-Defined Functions
 
@@ -385,6 +405,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M14.1 Scope Correction Hotfix: complete
 - M14.2 Explicit Global Access: complete
 - M15 Project Execution and Import Alias System: complete
+- M15.1 Import Polish: complete
 
 ## Verification
 

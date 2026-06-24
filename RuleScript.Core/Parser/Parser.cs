@@ -133,7 +133,7 @@ public sealed class Parser
 
         if (Match(TokenType.As))
         {
-            alias = Consume(TokenType.Identifier, "Expected import alias after 'as'.").Lexeme;
+            alias = Consume(TokenType.Identifier, "Expected identifier for import alias after 'as'.").Lexeme;
         }
 
         Consume(TokenType.Semicolon, "Expected ';' after import statement.");

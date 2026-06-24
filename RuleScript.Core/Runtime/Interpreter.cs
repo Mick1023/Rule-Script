@@ -543,7 +543,7 @@ public sealed class Interpreter
         if (!module.Functions.TryGetValue(expression.FunctionName, out var userFunction))
         {
             throw new RuntimeException(
-                $"Module alias '{expression.ModuleName}' does not contain function '{expression.FunctionName}'.",
+                $"Module alias '{expression.ModuleName}' function not found: '{expression.FunctionName}'.",
                 expression.Line,
                 expression.Column,
                 expression.FunctionName);
@@ -619,7 +619,7 @@ public sealed class Interpreter
             return module;
         }
 
-        throw new RuntimeException($"Unknown import alias '{alias}'.", line, column, alias);
+        throw new RuntimeException($"Unknown alias '{alias}'.", line, column, alias);
     }
 
     private static RuntimeValue InvokeHostFunction(
