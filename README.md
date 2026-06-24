@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.1.1-blue)](docs/releases/v0.1.1.md)
+[![Version](https://img.shields.io/badge/version-v0.1.2-blue)](docs/releases/v0.1.2.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -14,9 +14,9 @@ The project currently provides a .NET 8 class library with lexer, parser, AST, i
 
 ## Installation
 
-Install from NuGet.org after the package is published:
+Install from NuGet.org:
 
-```powershell
+```bash
 dotnet add package RuleScript.Core
 ```
 
