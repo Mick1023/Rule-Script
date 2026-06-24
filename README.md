@@ -12,9 +12,15 @@ The project currently provides a .NET 8 class library with lexer, parser, AST, i
 - `RuleScript.Core`: Lexer, parser, AST, runtime, built-in functions, host function API, diagnostics.
 - `RuleScript.Tests`: Unit, integration, diagnostics, and regression tests.
 
-## Reference
+## Installation
 
-Reference the core project from another .NET 8 project:
+Install from NuGet after the package is published:
+
+```powershell
+dotnet add package RuleScript.Core
+```
+
+For local development, reference the core project from another .NET 8 project:
 
 ```xml
 <ProjectReference Include="path\to\RuleScript.Core\RuleScript.Core.csproj" />

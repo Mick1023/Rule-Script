@@ -23,6 +23,7 @@ TestResults/
 coverage/
 
 # NuGet
+artifacts/
 *.nupkg
 *.snupkg
 packages/

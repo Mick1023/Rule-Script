@@ -1,0 +1,41 @@
+name: Package
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Pack NuGet package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore RuleScript.sln
+
+      - name: Build
+        run: dotnet build RuleScript.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RuleScript.sln --configuration Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack RuleScript.Core/RuleScript.Core.csproj --configuration Release --no-build --output ./artifacts
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rulescript-core-nuget
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
