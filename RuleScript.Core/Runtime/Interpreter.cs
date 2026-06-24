@@ -8,18 +8,24 @@ public sealed class Interpreter
 {
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
+    private readonly int _maxLoopIterations;
+    private int _loopDepth;
 
     public Interpreter(BuiltinFunctions builtinFunctions)
-        : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal))
+        : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal), 100000)
     {
     }
 
     public Interpreter(
         BuiltinFunctions builtinFunctions,
-        IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions)
+        IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
+        int maxLoopIterations = 100000)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
+        _maxLoopIterations = maxLoopIterations > 0
+            ? maxLoopIterations
+            : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
     }
 
     public void Execute(IReadOnlyList<Statement> statements, RuntimeContext context)
@@ -49,6 +55,15 @@ public sealed class Interpreter
             case IfStatement ifStatement:
                 ExecuteIfStatement(ifStatement, context);
                 break;
+            case WhileStatement whileStatement:
+                ExecuteWhileStatement(whileStatement, context);
+                break;
+            case BreakStatement breakStatement:
+                ExecuteBreakStatement(breakStatement);
+                break;
+            case ContinueStatement continueStatement:
+                ExecuteContinueStatement(continueStatement);
+                break;
             default:
                 throw new RuntimeException($"Unsupported statement type '{statement.GetType().Name}'.");
         }
@@ -69,6 +84,77 @@ public sealed class Interpreter
         {
             ExecuteStatement(childStatement, context);
         }
+    }
+
+    private void ExecuteWhileStatement(WhileStatement statement, RuntimeContext context)
+    {
+        var iterations = 0;
+        _loopDepth++;
+
+        try
+        {
+            while (true)
+            {
+                if (iterations >= _maxLoopIterations)
+                {
+                    throw new RuntimeException($"while exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "while");
+                }
+
+                var condition = Evaluate(statement.Condition, context).Value;
+
+                if (condition is not bool conditionValue)
+                {
+                    throw new RuntimeException("while condition must evaluate to a bool value.", statement.Line, statement.Column, "while");
+                }
+
+                if (!conditionValue)
+                {
+                    break;
+                }
+
+                iterations++;
+
+                try
+                {
+                    foreach (var childStatement in statement.Body)
+                    {
+                        ExecuteStatement(childStatement, context);
+                    }
+                }
+                catch (ContinueSignalException)
+                {
+                    continue;
+                }
+                catch (BreakSignalException)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _loopDepth--;
+        }
+    }
+
+    private void ExecuteBreakStatement(BreakStatement statement)
+    {
+        if (_loopDepth == 0)
+        {
+            throw new RuntimeException("break can only be used inside while.", statement.Line, statement.Column, "break");
+        }
+
+        throw new BreakSignalException();
+    }
+
+    private void ExecuteContinueStatement(ContinueStatement statement)
+    {
+        if (_loopDepth == 0)
+        {
+            throw new RuntimeException("continue can only be used inside while.", statement.Line, statement.Column, "continue");
+        }
+
+        throw new ContinueSignalException();
     }
 
     private RuntimeValue Evaluate(Expression expression, RuntimeContext context)

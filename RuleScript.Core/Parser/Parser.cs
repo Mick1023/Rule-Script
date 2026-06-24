@@ -43,6 +43,21 @@ public sealed class Parser
             return ParseIfStatement();
         }
 
+        if (Match(TokenType.While))
+        {
+            return ParseWhileStatement();
+        }
+
+        if (Match(TokenType.Break))
+        {
+            return ParseBreakStatement();
+        }
+
+        if (Match(TokenType.Continue))
+        {
+            return ParseContinueStatement();
+        }
+
         if (Check(TokenType.Identifier) && CheckNext(TokenType.Assign))
         {
             return ParseAssignmentStatement();
@@ -99,6 +114,32 @@ public sealed class Parser
 
         Consume(TokenType.EndIf, "Expected 'endif' after if statement.");
         return new IfStatement(condition, thenBranch, elseBranch, ifToken.Line, ifToken.Column);
+    }
+
+    private WhileStatement ParseWhileStatement()
+    {
+        var whileToken = Previous();
+        var condition = ParseExpression();
+        Consume(TokenType.Colon, "Expected ':' after while condition.");
+
+        var body = ParseBlock(TokenType.EndWhile);
+
+        Consume(TokenType.EndWhile, "Expected 'endwhile' after while statement.");
+        return new WhileStatement(condition, body, whileToken.Line, whileToken.Column);
+    }
+
+    private BreakStatement ParseBreakStatement()
+    {
+        var breakToken = Previous();
+        Consume(TokenType.Semicolon, "Expected ';' after break.");
+        return new BreakStatement(breakToken.Line, breakToken.Column);
+    }
+
+    private ContinueStatement ParseContinueStatement()
+    {
+        var continueToken = Previous();
+        Consume(TokenType.Semicolon, "Expected ';' after continue.");
+        return new ContinueStatement(continueToken.Line, continueToken.Column);
     }
 
     private Statement[] ParseBlock(params TokenType[] terminators)

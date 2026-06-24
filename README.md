@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.1.2-blue)](docs/releases/v0.1.2.md)
+[![Version](https://img.shields.io/badge/version-v0.2.0-blue)](docs/releases/v0.2.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -68,6 +68,9 @@ var context = engine.Execute("""
 - Grouping with `( expression )`
 - Unary operators: `!`, `-`
 - `if` / `else` / `endif`
+- `while` / `endwhile`
+- `break`
+- `continue`
 - Function calls in expression statements and expressions
 
 Example:
@@ -82,6 +85,29 @@ if distance > 500 then:
 else:
     result = "OK";
 endif
+```
+
+Loop example:
+
+```rulescript
+var i = 0;
+
+while i < 5:
+    i = i + 1;
+endwhile
+
+result = i;
+```
+
+`break;` exits the nearest `while` loop. `continue;` skips the rest of the current loop iteration and continues the nearest `while` loop.
+
+`RuleScriptEngine.MaxLoopIterations` protects hosts from accidental infinite loops. The default is `100000`.
+
+```csharp
+var engine = new RuleScriptEngine
+{
+    MaxLoopIterations = 100000
+};
 ```
 
 ## RuntimeContext
@@ -156,6 +182,23 @@ engine.ClearFunctions();
 
 Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Current supported return values are `number`, `string`, `bool`, and `null`. Other return types throw `RuntimeException`.
 
+Timing and external wait behavior should be implemented as host functions instead of syntax:
+
+```csharp
+engine.RegisterFunction("Delay", args =>
+{
+    Thread.Sleep(Convert.ToInt32(args[0]));
+    return null;
+});
+
+engine.RegisterFunction("WaitFor", args =>
+{
+    var state = args[0]?.ToString();
+    var timeoutMs = Convert.ToInt32(args[1]);
+    return true;
+});
+```
+
 ## Diagnostics
 
 RuleScript errors use `RuleScriptException` as the base type. `SyntaxException` and `RuntimeException` include `Line`, `Column`, and `TokenText` when that information is available.
@@ -172,11 +215,11 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 
 ## Not Supported Yet
 
-- Loops
 - Arrays
 - JSON/object literals
 - User-defined script functions
 - Async host functions
+- Built-in `delay` / `waitfor` syntax
 - Multi-error parser recovery
 - Multi-token source ranges
 
@@ -190,6 +233,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M5 Host Function API: complete
 - M6 Diagnostics: complete
 - M7 Rule Engine Hardening: complete
+- M10 Control Flow: complete
 
 ## Verification
 

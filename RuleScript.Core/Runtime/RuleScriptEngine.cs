@@ -5,6 +5,8 @@ public sealed class RuleScriptEngine
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
 
+    public int MaxLoopIterations { get; set; } = 100000;
+
     public RuleScriptEngine()
         : this(new BuiltinFunctions())
     {
@@ -54,6 +56,6 @@ public sealed class RuleScriptEngine
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
         var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
-        new Interpreter(_builtinFunctions, _hostFunctions).Execute(statements, context);
+        new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations).Execute(statements, context);
     }
 }

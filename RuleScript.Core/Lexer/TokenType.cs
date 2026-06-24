@@ -15,6 +15,10 @@ public enum TokenType
     Then,
     Else,
     EndIf,
+    While,
+    EndWhile,
+    Break,
+    Continue,
 
     Plus,
     Minus,

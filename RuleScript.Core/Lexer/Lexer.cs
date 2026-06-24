@@ -19,6 +19,10 @@ public sealed class Lexer
         ["then"] = TokenType.Then,
         ["else"] = TokenType.Else,
         ["endif"] = TokenType.EndIf,
+        ["while"] = TokenType.While,
+        ["endwhile"] = TokenType.EndWhile,
+        ["break"] = TokenType.Break,
+        ["continue"] = TokenType.Continue,
         ["true"] = TokenType.True,
         ["false"] = TokenType.False
     };
