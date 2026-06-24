@@ -17,6 +17,11 @@ public sealed class RuntimeContext
         new ReadOnlyDictionary<string, RuntimeValue>(new Dictionary<string, RuntimeValue>(_variables, StringComparer.Ordinal));
 
     /// <summary>
+    /// Gets the last source location reported during execution.
+    /// </summary>
+    public RuleScriptSourceLocation? CurrentLocation { get; internal set; }
+
+    /// <summary>
     /// Sets a variable value.
     /// </summary>
     public void Set(string name, object? value)

@@ -8,8 +8,8 @@ public sealed class RuntimeException : RuleScriptException
     /// <summary>
     /// Creates a runtime exception.
     /// </summary>
-    public RuntimeException(string message, int? line = null, int? column = null, string? tokenText = null)
-        : base(FormatRuntimeMessage(message), line, column, tokenText)
+    public RuntimeException(string message, int? line = null, int? column = null, string? tokenText = null, string? sourceFile = null)
+        : base(FormatRuntimeMessage(message), line, column, tokenText, sourceFile)
     {
     }
 
@@ -24,8 +24,8 @@ public sealed class RuntimeException : RuleScriptException
     /// <summary>
     /// Creates a runtime exception with source location and an inner exception.
     /// </summary>
-    public RuntimeException(string message, Exception innerException, int? line, int? column, string? tokenText = null)
-        : base(FormatRuntimeMessage(message), line, column, tokenText, innerException)
+    public RuntimeException(string message, Exception innerException, int? line, int? column, string? tokenText = null, string? sourceFile = null)
+        : base(FormatRuntimeMessage(message), line, column, tokenText, sourceFile, innerException)
     {
     }
 

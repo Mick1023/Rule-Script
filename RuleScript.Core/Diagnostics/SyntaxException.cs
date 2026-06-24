@@ -8,8 +8,8 @@ public sealed class SyntaxException : RuleScriptException
     /// <summary>
     /// Creates a syntax exception.
     /// </summary>
-    public SyntaxException(string message, int? line = null, int? column = null, string? tokenText = null)
-        : base(FormatSyntaxMessage(message), line, column, tokenText)
+    public SyntaxException(string message, int? line = null, int? column = null, string? tokenText = null, string? sourceFile = null)
+        : base(FormatSyntaxMessage(message), line, column, tokenText, sourceFile)
     {
     }
 

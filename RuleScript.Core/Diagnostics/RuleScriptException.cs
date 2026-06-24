@@ -10,12 +10,14 @@ public abstract class RuleScriptException : Exception
         int? line = null,
         int? column = null,
         string? tokenText = null,
+        string? sourceFile = null,
         Exception? innerException = null)
         : base(FormatMessage(message, line, column), innerException)
     {
         Line = line;
         Column = column;
         TokenText = tokenText;
+        SourceFile = sourceFile;
     }
 
     /// <summary>
@@ -32,6 +34,11 @@ public abstract class RuleScriptException : Exception
     /// Gets the token text or source text associated with the failure when available.
     /// </summary>
     public string? TokenText { get; }
+
+    /// <summary>
+    /// Gets the source file associated with the failure when available.
+    /// </summary>
+    public string? SourceFile { get; internal set; }
 
     public override string ToString()
     {

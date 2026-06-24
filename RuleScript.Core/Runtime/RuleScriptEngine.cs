@@ -7,6 +7,7 @@ public sealed class RuleScriptEngine
 {
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
+    private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private IImportResolver _importResolver = new FileSystemImportResolver();
 
     /// <summary>
@@ -27,6 +28,21 @@ public sealed class RuleScriptEngine
         get => _importResolver;
         set => _importResolver = value ?? throw new ArgumentNullException(nameof(value));
     }
+
+    /// <summary>
+    /// Gets or sets whether execution should pause at each executable statement.
+    /// </summary>
+    public bool StepExecution { get; set; }
+
+    /// <summary>
+    /// Gets the currently registered breakpoints.
+    /// </summary>
+    public IReadOnlyList<RuleScriptBreakpoint> Breakpoints => _breakpoints.ToArray();
+
+    /// <summary>
+    /// Notifies the host about runtime events. The returned directive controls step execution.
+    /// </summary>
+    public Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? RuntimeEventHandler { get; set; }
 
     /// <summary>
     /// Creates a RuleScript engine with the default built-in functions.
@@ -79,6 +95,57 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Adds a breakpoint for any source file at the specified line.
+    /// </summary>
+    public void AddBreakpoint(int line)
+    {
+        AddBreakpoint(null, line);
+    }
+
+    /// <summary>
+    /// Adds a breakpoint for the specified source file and line.
+    /// </summary>
+    public void AddBreakpoint(string? file, int line)
+    {
+        if (line <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(line), "Breakpoint line must be greater than zero.");
+        }
+
+        var breakpoint = new RuleScriptBreakpoint(NormalizeBreakpointFile(file), line);
+
+        if (!_breakpoints.Contains(breakpoint))
+        {
+            _breakpoints.Add(breakpoint);
+        }
+    }
+
+    /// <summary>
+    /// Removes a breakpoint for any source file at the specified line.
+    /// </summary>
+    public bool RemoveBreakpoint(int line)
+    {
+        return RemoveBreakpoint(null, line);
+    }
+
+    /// <summary>
+    /// Removes a breakpoint for the specified source file and line.
+    /// </summary>
+    public bool RemoveBreakpoint(string? file, int line)
+    {
+        var breakpoint = new RuleScriptBreakpoint(NormalizeBreakpointFile(file), line);
+        return _breakpoints.Remove(breakpoint);
+    }
+
+    /// <summary>
+    /// Removes all registered breakpoints.
+    /// </summary>
+    public void ClearBreakpoints()
+    {
+        _breakpoints.Clear();
+    }
+
+    /// <summary>
     /// Executes a script using a new runtime context.
     /// </summary>
     public RuntimeContext Execute(string script)
@@ -96,10 +163,19 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(script);
         ArgumentNullException.ThrowIfNull(context);
 
-        var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
-        var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
-        var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-        new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module).Execute(module, context);
+        try
+        {
+            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+            var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
+            new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+        }
+        catch (RuleScriptException exception)
+        {
+            AssignSourceFile(exception, "<script>");
+            NotifyError(exception);
+            throw;
+        }
     }
 
     /// <summary>
@@ -125,8 +201,18 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(context);
 
         var fullPath = ResolveExecuteFilePath(path);
-        var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-        new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module).Execute(module, context);
+
+        try
+        {
+            var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
+            new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+        }
+        catch (RuleScriptException exception)
+        {
+            AssignSourceFile(exception, fullPath);
+            NotifyError(exception);
+            throw;
+        }
     }
 
     private ScriptModule LoadModule(
@@ -162,8 +248,19 @@ public sealed class RuleScriptEngine
         try
         {
             var script = ImportResolver.ReadAllText(path);
-            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
-            var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            IReadOnlyList<Statement> statements;
+
+            try
+            {
+                var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+                statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            }
+            catch (RuleScriptException exception)
+            {
+                AssignSourceFile(exception, path);
+                throw;
+            }
+
             var module = BuildModule(
                 path,
                 statements,
@@ -256,5 +353,75 @@ public sealed class RuleScriptEngine
         return string.IsNullOrWhiteSpace(WorkingDirectory)
             ? Environment.CurrentDirectory
             : ImportResolver.GetFullPath(WorkingDirectory);
+    }
+
+    private RuleScriptExecutionDirective NotifyRuntimeEvent(RuleScriptRuntimeEvent runtimeEvent)
+    {
+        var directive = RuntimeEventHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
+
+        if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.BreakpointHit or RuleScriptRuntimeEventKind.StepPaused)
+        {
+            StepExecution = directive == RuleScriptExecutionDirective.StepOver;
+        }
+
+        return directive;
+    }
+
+    private void NotifyError(RuleScriptException exception)
+    {
+        var location = new RuleScriptSourceLocation(exception.SourceFile, exception.Line, exception.Column);
+        NotifyRuntimeEvent(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.Error,
+            location,
+            exception.Message,
+            exception: exception));
+    }
+
+    private bool IsBreakpoint(RuleScriptSourceLocation location)
+    {
+        if (!location.Line.HasValue)
+        {
+            return false;
+        }
+
+        return _breakpoints.Any(breakpoint =>
+            breakpoint.Line == location.Line.Value
+            && (breakpoint.File is null || string.Equals(breakpoint.File, NormalizeLocationFile(location.File), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static void AssignSourceFile(RuleScriptException exception, string sourceFile)
+    {
+        exception.SourceFile ??= sourceFile;
+    }
+
+    private static string? NormalizeFile(string? file)
+    {
+        return string.IsNullOrWhiteSpace(file) ? null : file;
+    }
+
+    private string? NormalizeBreakpointFile(string? file)
+    {
+        file = NormalizeFile(file);
+
+        if (file is null || file == "<script>")
+        {
+            return file;
+        }
+
+        return ImportResolver.GetFullPath(Path.IsPathRooted(file)
+            ? file
+            : Path.Combine(ResolveWorkingDirectory(), file));
+    }
+
+    private string? NormalizeLocationFile(string? file)
+    {
+        file = NormalizeFile(file);
+
+        if (file is null || file == "<script>")
+        {
+            return file;
+        }
+
+        return ImportResolver.GetFullPath(file);
     }
 }

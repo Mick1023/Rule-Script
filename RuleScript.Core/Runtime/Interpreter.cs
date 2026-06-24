@@ -12,6 +12,9 @@ public sealed class Interpreter
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly int _maxLoopIterations;
     private readonly ScriptModule _mainModule;
+    private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
+    private readonly Func<RuleScriptSourceLocation, bool> _isBreakpoint;
+    private readonly Func<bool> _isStepExecution;
     private readonly Stack<ScriptModule> _moduleStack = new();
     private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
     private readonly Stack<int> _functionLoopBoundaries = new();
@@ -27,7 +30,7 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         int maxLoopIterations = 100000)
-        : this(builtinFunctions, hostFunctions, maxLoopIterations, new ScriptModule("<script>", []))
+        : this(builtinFunctions, hostFunctions, maxLoopIterations, new ScriptModule("<script>", []), _ => RuleScriptExecutionDirective.Continue, _ => false, () => false)
     {
     }
 
@@ -35,11 +38,17 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         int maxLoopIterations,
-        ScriptModule mainModule)
+        ScriptModule mainModule,
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
+        Func<RuleScriptSourceLocation, bool> isBreakpoint,
+        Func<bool> isStepExecution)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
         _mainModule = mainModule ?? throw new ArgumentNullException(nameof(mainModule));
+        _notifyRuntimeEvent = notifyRuntimeEvent ?? throw new ArgumentNullException(nameof(notifyRuntimeEvent));
+        _isBreakpoint = isBreakpoint ?? throw new ArgumentNullException(nameof(isBreakpoint));
+        _isStepExecution = isStepExecution ?? throw new ArgumentNullException(nameof(isStepExecution));
         _maxLoopIterations = maxLoopIterations > 0
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
@@ -88,44 +97,54 @@ public sealed class Interpreter
 
     private void ExecuteStatement(Statement statement, RuntimeContext context)
     {
-        switch (statement)
+        ReportStatementLocation(statement, context);
+
+        try
         {
-            case VarStatement varStatement:
-                DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context), context);
-                break;
-            case AssignmentStatement assignmentStatement:
-                AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
-                break;
-            case GlobalAssignmentStatement globalAssignmentStatement:
-                AssignGlobalVariable(globalAssignmentStatement.Name, Evaluate(globalAssignmentStatement.Value, context), context);
-                break;
-            case ExpressionStatement expressionStatement:
-                Evaluate(expressionStatement.Expression, context);
-                break;
-            case FunctionDeclarationStatement:
-                break;
-            case ImportStatement:
-                break;
-            case ReturnStatement returnStatement:
-                ExecuteReturnStatement(returnStatement, context);
-                break;
-            case IfStatement ifStatement:
-                ExecuteIfStatement(ifStatement, context);
-                break;
-            case WhileStatement whileStatement:
-                ExecuteWhileStatement(whileStatement, context);
-                break;
-            case ForeachStatement foreachStatement:
-                ExecuteForeachStatement(foreachStatement, context);
-                break;
-            case BreakStatement breakStatement:
-                ExecuteBreakStatement(breakStatement);
-                break;
-            case ContinueStatement continueStatement:
-                ExecuteContinueStatement(continueStatement);
-                break;
-            default:
-                throw new RuntimeException($"Unsupported statement type '{statement.GetType().Name}'.");
+            switch (statement)
+            {
+                case VarStatement varStatement:
+                    DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context), context);
+                    break;
+                case AssignmentStatement assignmentStatement:
+                    AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
+                    break;
+                case GlobalAssignmentStatement globalAssignmentStatement:
+                    AssignGlobalVariable(globalAssignmentStatement.Name, Evaluate(globalAssignmentStatement.Value, context), context);
+                    break;
+                case ExpressionStatement expressionStatement:
+                    Evaluate(expressionStatement.Expression, context);
+                    break;
+                case FunctionDeclarationStatement:
+                    break;
+                case ImportStatement:
+                    break;
+                case ReturnStatement returnStatement:
+                    ExecuteReturnStatement(returnStatement, context);
+                    break;
+                case IfStatement ifStatement:
+                    ExecuteIfStatement(ifStatement, context);
+                    break;
+                case WhileStatement whileStatement:
+                    ExecuteWhileStatement(whileStatement, context);
+                    break;
+                case ForeachStatement foreachStatement:
+                    ExecuteForeachStatement(foreachStatement, context);
+                    break;
+                case BreakStatement breakStatement:
+                    ExecuteBreakStatement(breakStatement);
+                    break;
+                case ContinueStatement continueStatement:
+                    ExecuteContinueStatement(continueStatement);
+                    break;
+                default:
+                    throw new RuntimeException($"Unsupported statement type '{statement.GetType().Name}'.");
+            }
+        }
+        catch (RuntimeException exception)
+        {
+            exception.SourceFile ??= CurrentModule.Name;
+            throw;
         }
     }
 
@@ -521,6 +540,11 @@ public sealed class Interpreter
         {
             if (_builtinFunctions.TryInvoke(expression.Name, arguments, out var builtinValue))
             {
+                if (expression.Name == "Print")
+                {
+                    NotifyPrint(expression, builtinValue);
+                }
+
                 return builtinValue;
             }
         }
@@ -620,6 +644,73 @@ public sealed class Interpreter
         }
 
         throw new RuntimeException($"Unknown alias '{alias}'.", line, column, alias);
+    }
+
+    private void ReportStatementLocation(Statement statement, RuntimeContext context)
+    {
+        var location = GetStatementLocation(statement);
+        context.CurrentLocation = location;
+
+        _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.CurrentLineChanged,
+            location));
+
+        var breakpointHit = _isBreakpoint(location);
+
+        if (breakpointHit)
+        {
+            _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
+                RuleScriptRuntimeEventKind.BreakpointHit,
+                location,
+                $"Breakpoint hit at {location.File}:{location.Line}."));
+        }
+
+        if (!breakpointHit && _isStepExecution())
+        {
+            _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
+                RuleScriptRuntimeEventKind.StepPaused,
+                location,
+                $"Step paused at {location.File}:{location.Line}."));
+        }
+    }
+
+    private void NotifyPrint(FunctionCallExpression expression, RuntimeValue value)
+    {
+        var location = new RuleScriptSourceLocation(CurrentModule.Name, expression.Line, expression.Column);
+        _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.Print,
+            location,
+            ConvertToString(value.Value),
+            value.Value));
+    }
+
+    private RuleScriptSourceLocation GetStatementLocation(Statement statement)
+    {
+        var (line, column) = statement switch
+        {
+            VarStatement value => (value.Line, value.Column),
+            AssignmentStatement value => (value.Line, value.Column),
+            GlobalAssignmentStatement value => (value.Line, value.Column),
+            FunctionDeclarationStatement value => (value.Line, value.Column),
+            ImportStatement value => (value.Line, value.Column),
+            ReturnStatement value => (value.Line, value.Column),
+            IfStatement value => (value.Line, value.Column),
+            WhileStatement value => (value.Line, value.Column),
+            ForeachStatement value => (value.Line, value.Column),
+            BreakStatement value => (value.Line, value.Column),
+            ContinueStatement value => (value.Line, value.Column),
+            ExpressionStatement { Expression: FunctionCallExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: ModuleFunctionCallExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: IdentifierExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: GlobalIdentifierExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: UnaryExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: BinaryExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: IndexExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: MemberAccessExpression value } => (value.Line, value.Column),
+            _ => (null, null)
+        };
+
+        return new RuleScriptSourceLocation(CurrentModule.Name, line, column);
     }
 
     private static RuntimeValue InvokeHostFunction(

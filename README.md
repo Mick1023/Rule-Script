@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc1-blue)](docs/releases/v1.0.0-rc1.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc2-blue)](docs/releases/v1.0.0-rc2.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -98,16 +98,14 @@ var result = context.Get("result");
 
 Example scripts live in:
 
-- `examples/basic/main.rules`
-- `examples/json/main.rules`
-- `examples/modules/main.rules`
-- `examples/modules/robot.rules`
-- `examples/modules/port.rules`
-- `examples/host-functions/README.md`
-- `examples/warehouse/main.rules`
-- `examples/alarm/main.rules`
-- `examples/sensor/main.rules`
-- `examples/workflow/main.rules`
+- [basic](examples/basic/main.rules)
+- [json](examples/json/main.rules)
+- [modules](examples/modules/main.rules)
+- [host-functions](examples/host-functions/README.md)
+- [warehouse](examples/warehouse/main.rules)
+- [alarm](examples/alarm/main.rules)
+- [sensor](examples/sensor/main.rules)
+- [workflow](examples/workflow/main.rules)
 
 Example:
 
@@ -426,9 +424,74 @@ engine.RegisterFunction("WaitFor", args =>
 });
 ```
 
+## Host Runtime Notifications
+
+Hosts can observe runtime execution through `RuleScriptEngine.RuntimeEventHandler`.
+
+```csharp
+var engine = new RuleScriptEngine();
+
+engine.RuntimeEventHandler = runtimeEvent =>
+{
+    if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Print)
+    {
+        Console.WriteLine(runtimeEvent.Value);
+    }
+
+    if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Error)
+    {
+        Console.Error.WriteLine($"{runtimeEvent.Location.File}:{runtimeEvent.Location.Line}: {runtimeEvent.Message}");
+    }
+
+    return RuleScriptExecutionDirective.Continue;
+};
+```
+
+Runtime events include current-line changes, `Print` calls, breakpoint hits, step pauses, and errors. Event locations include file, line, and column when available.
+
+Breakpoints and step-over execution are host-controlled:
+
+```csharp
+engine.AddBreakpoint(2);
+engine.StepExecution = true;
+
+engine.RuntimeEventHandler = runtimeEvent =>
+{
+    if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.BreakpointHit ||
+        runtimeEvent.Kind == RuleScriptRuntimeEventKind.StepPaused)
+    {
+        return RuleScriptExecutionDirective.StepOver;
+    }
+
+    return RuleScriptExecutionDirective.Continue;
+};
+```
+
+`RuntimeContext.CurrentLocation` stores the last source location reported during execution.
+
+For host tools that need to pause execution and wait for external commands, use `RuleScriptDebugSession`:
+
+```csharp
+var engine = new RuleScriptEngine
+{
+    WorkingDirectory = selectedFolder
+};
+
+engine.AddBreakpoint("main.rules", 2);
+
+var session = new RuleScriptDebugSession(engine);
+var runTask = session.RunFileAsync("main.rules");
+
+var pause = await session.WaitForPauseAsync();
+session.StepOver();
+session.Continue();
+
+var context = await runTask;
+```
+
 ## Diagnostics
 
-RuleScript errors use `RuleScriptException` as the base type. `SyntaxException` and `RuntimeException` include `Line`, `Column`, and `TokenText` when that information is available.
+RuleScript errors use `RuleScriptException` as the base type. `SyntaxException` and `RuntimeException` include `SourceFile`, `Line`, `Column`, and `TokenText` when that information is available.
 
 Example messages:
 
