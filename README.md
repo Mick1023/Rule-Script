@@ -7,16 +7,11 @@
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
-The project currently provides a .NET 8 class library with lexer, parser, AST, interpreter, built-in functions, host function registration, runtime context APIs, JSON helpers, and diagnostics.
+RuleScript provides a .NET 8 class library with lexer, parser, AST, interpreter, built-in functions, host function registration, runtime context APIs, JSON helpers, and diagnostics.
 
 ## What Is RuleScript?
 
 RuleScript is a small embeddable scripting engine for rule-oriented workflows. It is designed for host applications that need configurable content changes, validation rules, simple math, JSON processing, and project-based rule files without exposing a full general-purpose programming language.
-
-## Projects
-
-- `RuleScript.Core`: Lexer, parser, AST, runtime, built-in functions, host function API, JSON helpers, diagnostics.
-- `RuleScript.Tests`: Unit, integration, diagnostics, and regression tests.
 
 ## Installation
 
@@ -25,16 +20,6 @@ Install from NuGet.org:
 ```bash
 dotnet add package RuleScript.Core
 ```
-
-The NuGet package is produced by GitHub Actions and can be published from tagged releases using the repository secret `NUGET_API_KEY`.
-
-For local development, reference the core project from another .NET 8 project:
-
-```xml
-<ProjectReference Include="path\to\RuleScript.Core\RuleScript.Core.csproj" />
-```
-
-Or reference the compiled `RuleScript.Core.dll` from your host application.
 
 ## Quick Start
 
@@ -356,7 +341,7 @@ var result = Add(10, 20);
 
 Functions use a local scope. Parameters and `var` declarations stay local and do not leak into `RuntimeContext`. A function can read global values from `RuntimeContext`.
 
-Assignment inside a function always writes to the function's local scope. It does not implicitly modify global `RuntimeContext` variables. This is a breaking change in `v0.6.1` from the initial `v0.6.0` function scope behavior.
+Assignment inside a function always writes to the function's local scope. It does not implicitly modify global `RuntimeContext` variables.
 
 Use `global.name` when a function must explicitly read or write a global `RuntimeContext` variable:
 
@@ -383,7 +368,7 @@ Function lookup order is:
 
 This lets a script function override a host or built-in function name.
 
-Recursion is intentionally blocked in this milestone. A recursive user function call throws `RuntimeException`.
+Recursion is intentionally blocked. A recursive user function call throws `RuntimeException`.
 
 ## Host Functions
 
@@ -467,61 +452,3 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - Multi-error parser recovery
 - Multi-token source ranges
 
-## Versioning
-
-RuleScript follows semantic versioning before the v1.0 API freeze. Versions before `1.0.0` may still contain documented behavior changes, but public APIs are being stabilized in the `v0.9.x` line for the v1.0 release.
-
-## v1.0 Readiness Checklist
-
-- [x] Parser
-- [x] Interpreter
-- [x] Import System
-- [x] User Functions
-- [x] Host Functions
-- [x] JSON
-- [x] Standard Library
-- [x] Diagnostics
-- [x] NuGet
-- [x] CI/CD
-- [x] GitHub Release
-- [x] >200 Tests
-
-Release flow:
-
-1. Update version metadata and release notes.
-2. Commit and push changes.
-3. Create a tag with `git tag vX.Y.Z`.
-4. Push the tag with `git push origin vX.Y.Z`.
-5. GitHub Actions automatically runs tests, packs NuGet artifacts, publishes to NuGet.org, creates or updates the GitHub Release, and uploads `.nupkg` / `.snupkg` assets.
-
-## Milestone Status
-
-- M1 Foundation: complete
-- M2 Parser: complete
-- M3 Interpreter: complete
-- M3.5 Runtime validation: complete
-- M4 Built-in functions: complete
-- M5 Host Function API: complete
-- M6 Diagnostics: complete
-- M7 Rule Engine Hardening: complete
-- M10 Control Flow: complete
-- M11 Collections and Property Access: complete
-- M12 foreach: complete
-- M13 JSON Support: complete
-- M14 User Defined Functions: complete
-- M14.1 Scope Correction Hotfix: complete
-- M14.2 Explicit Global Access: complete
-- M15 Project Execution and Import Alias System: complete
-- M15.1 Import Polish: complete
-- M16 Standard Library and README Cleanup: complete
-- M17 v1.0 API Stabilization: complete
-- M18 v1.0 Release Candidate Audit: complete
-
-## Verification
-
-Run:
-
-```powershell
-dotnet build RuleScript.sln
-dotnet test RuleScript.sln
-```
