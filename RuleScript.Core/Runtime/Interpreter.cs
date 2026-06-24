@@ -11,7 +11,8 @@ public sealed class Interpreter
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly int _maxLoopIterations;
-    private readonly Dictionary<string, FunctionDeclarationStatement> _userFunctions = new(StringComparer.Ordinal);
+    private readonly ScriptModule _mainModule;
+    private readonly Stack<ScriptModule> _moduleStack = new();
     private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
     private readonly Stack<int> _functionLoopBoundaries = new();
     private readonly Stack<string> _callStack = new();
@@ -26,9 +27,19 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         int maxLoopIterations = 100000)
+        : this(builtinFunctions, hostFunctions, maxLoopIterations, new ScriptModule("<script>", []))
+    {
+    }
+
+    internal Interpreter(
+        BuiltinFunctions builtinFunctions,
+        IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
+        int maxLoopIterations,
+        ScriptModule mainModule)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
+        _mainModule = mainModule ?? throw new ArgumentNullException(nameof(mainModule));
         _maxLoopIterations = maxLoopIterations > 0
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
@@ -39,20 +50,39 @@ public sealed class Interpreter
         ArgumentNullException.ThrowIfNull(statements);
         ArgumentNullException.ThrowIfNull(context);
 
+        var module = new ScriptModule("<script>", statements);
+
         foreach (var statement in statements)
         {
             if (statement is FunctionDeclarationStatement functionDeclaration)
             {
-                _userFunctions[functionDeclaration.Name] = functionDeclaration;
+                module.Functions[functionDeclaration.Name] = new UserFunction(functionDeclaration, module);
             }
         }
 
-        foreach (var statement in statements)
+        Execute(module, context);
+    }
+
+    internal void Execute(ScriptModule module, RuntimeContext context)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(context);
+
+        _moduleStack.Push(module);
+
+        try
         {
-            if (statement is not FunctionDeclarationStatement)
+            foreach (var statement in module.Statements)
             {
-                ExecuteStatement(statement, context);
+                if (statement is not FunctionDeclarationStatement and not ImportStatement)
+                {
+                    ExecuteStatement(statement, context);
+                }
             }
+        }
+        finally
+        {
+            _moduleStack.Pop();
         }
     }
 
@@ -73,6 +103,8 @@ public sealed class Interpreter
                 Evaluate(expressionStatement.Expression, context);
                 break;
             case FunctionDeclarationStatement:
+                break;
+            case ImportStatement:
                 break;
             case ReturnStatement returnStatement:
                 ExecuteReturnStatement(returnStatement, context);
@@ -324,6 +356,8 @@ public sealed class Interpreter
 
     private int CurrentFunctionLoopBoundary => _functionLoopBoundaries.Count > 0 ? _functionLoopBoundaries.Peek() : 0;
 
+    private ScriptModule CurrentModule => _moduleStack.Count > 0 ? _moduleStack.Peek() : _mainModule;
+
     private RuntimeValue Evaluate(Expression expression, RuntimeContext context)
     {
         return expression switch
@@ -334,6 +368,7 @@ public sealed class Interpreter
             UnaryExpression unary => EvaluateUnary(unary, context),
             BinaryExpression binary => EvaluateBinary(binary, context),
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
+            ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCall(moduleFunctionCall, context),
             ArrayExpression array => EvaluateArray(array, context),
             IndexExpression index => EvaluateIndex(index, context),
             MemberAccessExpression memberAccess => EvaluateMemberAccess(memberAccess, context),
@@ -472,7 +507,7 @@ public sealed class Interpreter
             .Select(argument => Evaluate(argument, context))
             .ToArray();
 
-        if (_userFunctions.TryGetValue(expression.Name, out var userFunction))
+        if (CurrentModule.Functions.TryGetValue(expression.Name, out var userFunction))
         {
             return InvokeUserFunction(userFunction, arguments, context, expression.Line, expression.Column);
         }
@@ -497,19 +532,43 @@ public sealed class Interpreter
         throw new RuntimeException($"Function '{expression.Name}' is not registered.", expression.Line, expression.Column, expression.Name);
     }
 
+    private RuntimeValue EvaluateModuleFunctionCall(ModuleFunctionCallExpression expression, RuntimeContext context)
+    {
+        var arguments = expression.Arguments
+            .Select(argument => Evaluate(argument, context))
+            .ToArray();
+
+        var module = ResolveAlias(expression.ModuleName, expression.Line, expression.Column);
+
+        if (!module.Functions.TryGetValue(expression.FunctionName, out var userFunction))
+        {
+            throw new RuntimeException(
+                $"Module alias '{expression.ModuleName}' does not contain function '{expression.FunctionName}'.",
+                expression.Line,
+                expression.Column,
+                expression.FunctionName);
+        }
+
+        return InvokeUserFunction(userFunction, arguments, context, expression.Line, expression.Column);
+    }
+
     private RuntimeValue InvokeUserFunction(
-        FunctionDeclarationStatement function,
+        UserFunction userFunction,
         IReadOnlyList<RuntimeValue> arguments,
         RuntimeContext context,
         int? line,
         int? column)
     {
+        var function = userFunction.Declaration;
+
         if (arguments.Count != function.Parameters.Count)
         {
             throw new RuntimeException($"Function '{function.Name}' expects {function.Parameters.Count} argument(s), but received {arguments.Count}.", line, column, function.Name);
         }
 
-        if (_callStack.Contains(function.Name, StringComparer.Ordinal))
+        var callId = $"{userFunction.Module.Name}::{function.Name}";
+
+        if (_callStack.Contains(callId, StringComparer.Ordinal))
         {
             throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
         }
@@ -521,7 +580,8 @@ public sealed class Interpreter
             localScope[function.Parameters[i]] = arguments[i];
         }
 
-        _callStack.Push(function.Name);
+        _callStack.Push(callId);
+        _moduleStack.Push(userFunction.Module);
         _localScopes.Push(localScope);
         _functionLoopBoundaries.Push(_loopDepth);
 
@@ -542,8 +602,24 @@ public sealed class Interpreter
         {
             _functionLoopBoundaries.Pop();
             _localScopes.Pop();
+            _moduleStack.Pop();
             _callStack.Pop();
         }
+    }
+
+    private ScriptModule ResolveAlias(string alias, int? line, int? column)
+    {
+        if (CurrentModule.Aliases.TryGetValue(alias, out var module))
+        {
+            return module;
+        }
+
+        if (!ReferenceEquals(CurrentModule, _mainModule) && _mainModule.Aliases.TryGetValue(alias, out module))
+        {
+            return module;
+        }
+
+        throw new RuntimeException($"Unknown import alias '{alias}'.", line, column, alias);
     }
 
     private static RuntimeValue InvokeHostFunction(

@@ -27,6 +27,8 @@ public sealed class Lexer
         ["function"] = TokenType.Function,
         ["endfunction"] = TokenType.EndFunction,
         ["return"] = TokenType.Return,
+        ["import"] = TokenType.Import,
+        ["as"] = TokenType.As,
         ["break"] = TokenType.Break,
         ["continue"] = TokenType.Continue,
         ["true"] = TokenType.True,

@@ -34,6 +34,16 @@ public sealed class Parser
 
     private Statement ParseStatement()
     {
+        if (Match(TokenType.Import))
+        {
+            if (_blockDepth > 0)
+            {
+                throw Error(Previous(), "Import statements are only allowed at top level.");
+            }
+
+            return ParseImportStatement();
+        }
+
         if (Match(TokenType.Function))
         {
             if (_blockDepth > 0)
@@ -113,6 +123,21 @@ public sealed class Parser
         var value = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after assignment.");
         return new AssignmentStatement(name.Lexeme, value, name.Line, name.Column);
+    }
+
+    private ImportStatement ParseImportStatement()
+    {
+        var importToken = Previous();
+        var path = Consume(TokenType.String, "Expected import path string after 'import'.");
+        string? alias = null;
+
+        if (Match(TokenType.As))
+        {
+            alias = Consume(TokenType.Identifier, "Expected import alias after 'as'.").Lexeme;
+        }
+
+        Consume(TokenType.Semicolon, "Expected ';' after import statement.");
+        return new ImportStatement(path.Literal?.ToString() ?? path.Lexeme, alias, importToken.Line, importToken.Column);
     }
 
     private GlobalAssignmentStatement ParseGlobalAssignmentStatement()
@@ -339,23 +364,24 @@ public sealed class Parser
         {
             if (Match(TokenType.LeftParen))
             {
+                if (expression is MemberAccessExpression { Target: IdentifierExpression moduleIdentifier } memberAccess)
+                {
+                    var moduleArguments = ParseArguments();
+                    expression = new ModuleFunctionCallExpression(
+                        moduleIdentifier.Name,
+                        memberAccess.MemberName,
+                        moduleArguments,
+                        memberAccess.Line,
+                        memberAccess.Column);
+                    continue;
+                }
+
                 if (expression is not IdentifierExpression identifier)
                 {
                     throw Error(Previous(), "Only named function calls are supported.");
                 }
 
-                var arguments = new List<Expression>();
-
-                if (!Check(TokenType.RightParen))
-                {
-                    do
-                    {
-                        arguments.Add(ParseExpression());
-                    }
-                    while (Match(TokenType.Comma));
-                }
-
-                Consume(TokenType.RightParen, "Expected ')' after function arguments.");
+                var arguments = ParseArguments();
                 expression = new FunctionCallExpression(identifier.Name, arguments, identifier.Line, identifier.Column);
                 continue;
             }
@@ -384,6 +410,23 @@ public sealed class Parser
         }
 
         return expression;
+    }
+
+    private IReadOnlyList<Expression> ParseArguments()
+    {
+        var arguments = new List<Expression>();
+
+        if (!Check(TokenType.RightParen))
+        {
+            do
+            {
+                arguments.Add(ParseExpression());
+            }
+            while (Match(TokenType.Comma));
+        }
+
+        Consume(TokenType.RightParen, "Expected ')' after function arguments.");
+        return arguments;
     }
 
     private Expression ParsePrimary()

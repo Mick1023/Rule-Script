@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.6.2-blue)](docs/releases/v0.6.2.md)
+[![Version](https://img.shields.io/badge/version-v0.7.0-blue)](docs/releases/v0.7.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -78,6 +78,7 @@ var context = engine.Execute("""
 - Function calls in expression statements and expressions
 - User-defined functions with `function` / `return` / `endfunction`
 - Explicit global access with `global.name`
+- Project imports with `import "file.rules";` and `import "file.rules" as alias;`
 
 Example:
 
@@ -208,6 +209,39 @@ RuleScript function names are case-sensitive, matching variable names.
 Invalid function names, wrong argument counts, invalid conversions, and invalid substring ranges throw `RuntimeException`.
 
 JSON functions do not add JSON literal syntax to RuleScript. Use strings plus `JsonParse` when a script needs JSON data.
+
+## Project Files And Imports
+
+Run a `.rules` file with `ExecuteFile`:
+
+```csharp
+var engine = new RuleScriptEngine();
+var context = engine.ExecuteFile("main.rules");
+```
+
+Global imports merge imported functions into the current file's function table:
+
+```rulescript
+import "common.rules";
+
+result = IsAlarm(600);
+```
+
+Alias imports keep functions isolated behind a module namespace:
+
+```rulescript
+import "robot.rules" as robot;
+import "port.rules" as port;
+
+var a = robot.GetSensor();
+var b = port.GetSensor();
+
+result = a + "," + b;
+```
+
+Alias imports do not expose functions globally. In the example above, `GetSensor();` throws `RuntimeException`; use `robot.GetSensor();` or `port.GetSensor();`.
+
+Nested imports are supported, and circular imports throw `RuntimeException`. If multiple global imports provide the same function name, later global imports override earlier ones. Functions declared in the current file override globally imported functions. Alias imports are recommended when different modules use the same function names.
 
 ## User-Defined Functions
 
@@ -350,6 +384,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M14 User Defined Functions: complete
 - M14.1 Scope Correction Hotfix: complete
 - M14.2 Explicit Global Access: complete
+- M15 Project Execution and Import Alias System: complete
 
 ## Verification
 

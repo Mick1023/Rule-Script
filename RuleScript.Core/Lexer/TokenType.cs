@@ -23,6 +23,8 @@ public enum TokenType
     Function,
     EndFunction,
     Return,
+    Import,
+    As,
     Break,
     Continue,
 
