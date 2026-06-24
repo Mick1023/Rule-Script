@@ -1,0 +1,8 @@
+var payload = JsonParse("{ \"robot\": { \"status\": \"OK\" }, \"items\": [1, 2, 3] }");
+var sum = 0;
+
+foreach item in payload.items:
+    sum = sum + item;
+endforeach
+
+result = payload.robot.status + ":" + ToString(sum);

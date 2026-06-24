@@ -1,0 +1,7 @@
+import "robot.rules" as robot;
+import "port.rules" as port;
+
+var a = robot.GetSensor();
+var b = port.GetSensor();
+
+result = a + "," + b;

@@ -1,11 +1,15 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.8.0-blue)](docs/releases/v0.8.0.md)
+[![Version](https://img.shields.io/badge/version-v0.9.0-blue)](docs/releases/v0.9.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
 The project currently provides a .NET 8 class library with lexer, parser, AST, interpreter, built-in functions, host function registration, runtime context APIs, JSON helpers, and diagnostics.
+
+## What Is RuleScript?
+
+RuleScript is a small embeddable scripting engine for rule-oriented workflows. It is designed for host applications that need configurable content changes, validation rules, simple math, JSON processing, and project-based rule files without exposing a full general-purpose programming language.
 
 ## Projects
 
@@ -30,7 +34,7 @@ For local development, reference the core project from another .NET 8 project:
 
 Or reference the compiled `RuleScript.Core.dll` from your host application.
 
-## Basic Usage
+## Quick Start
 
 ```csharp
 var engine = new RuleScriptEngine();
@@ -57,7 +61,19 @@ var context = engine.Execute("""
     """);
 ```
 
-## Supported Syntax
+Run a project file:
+
+```csharp
+var engine = new RuleScriptEngine
+{
+    WorkingDirectory = @"C:\rules"
+};
+
+var context = engine.ExecuteFile("main.rules");
+var result = context.Get("result");
+```
+
+## Script Syntax
 
 - Single-line comments with `//`
 - `var` declarations
@@ -90,6 +106,17 @@ var context = engine.Execute("""
 - JSON functions
 - Import system with aliases
 - Host functions
+
+## Examples
+
+Example scripts live in:
+
+- `examples/basic/main.rules`
+- `examples/json/main.rules`
+- `examples/modules/main.rules`
+- `examples/modules/robot.rules`
+- `examples/modules/port.rules`
+- `examples/host-functions/README.md`
 
 Example:
 
@@ -241,6 +268,18 @@ RuleScript function names are case-sensitive, matching variable names.
 Invalid function names, wrong argument counts, invalid conversions, and invalid substring ranges throw `RuntimeException`.
 
 JSON functions do not add JSON literal syntax to RuleScript. Use strings plus `JsonParse` when a script needs JSON data.
+
+## JSON Support
+
+Use JSON built-ins instead of JSON literal syntax:
+
+```rulescript
+var payload = JsonParse("{ \"robot\": { \"status\": \"OK\" }, \"items\": [1, 2, 3] }");
+
+if JsonExists(payload, "robot.status") then:
+    result = payload.robot.status;
+endif
+```
 
 ## Project Files And Imports
 
@@ -422,6 +461,18 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - Multi-error parser recovery
 - Multi-token source ranges
 
+## Versioning
+
+RuleScript follows semantic versioning before the v1.0 API freeze. Versions before `1.0.0` may still contain documented behavior changes, but public APIs are being stabilized in the `v0.9.x` line for the v1.0 release.
+
+Release flow:
+
+1. Update version metadata and release notes.
+2. Commit and push changes.
+3. Create a tag with `git tag vX.Y.Z`.
+4. Push the tag with `git push origin vX.Y.Z`.
+5. GitHub Actions automatically runs tests, packs NuGet artifacts, publishes to NuGet.org, creates or updates the GitHub Release, and uploads `.nupkg` / `.snupkg` assets.
+
 ## Milestone Status
 
 - M1 Foundation: complete
@@ -442,6 +493,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M15 Project Execution and Import Alias System: complete
 - M15.1 Import Polish: complete
 - M16 Standard Library and README Cleanup: complete
+- M17 v1.0 API Stabilization: complete
 
 ## Verification
 

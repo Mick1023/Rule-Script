@@ -1,0 +1,3 @@
+function GetSensor():
+    return "robot";
+endfunction

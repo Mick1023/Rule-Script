@@ -7,21 +7,46 @@ public sealed class RuleScriptEngine
 {
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
+    private IImportResolver _importResolver = new FileSystemImportResolver();
 
+    /// <summary>
+    /// Gets or sets the maximum number of iterations allowed for each loop.
+    /// </summary>
     public int MaxLoopIterations { get; set; } = 100000;
 
+    /// <summary>
+    /// Gets or sets the base directory used for relative <see cref="ExecuteFile(string)"/> paths.
+    /// </summary>
     public string? WorkingDirectory { get; set; }
 
+    /// <summary>
+    /// Gets or sets the import resolver used by <see cref="ExecuteFile(string)"/> and import statements.
+    /// </summary>
+    public IImportResolver ImportResolver
+    {
+        get => _importResolver;
+        set => _importResolver = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>
+    /// Creates a RuleScript engine with the default built-in functions.
+    /// </summary>
     public RuleScriptEngine()
         : this(new BuiltinFunctions())
     {
     }
 
+    /// <summary>
+    /// Creates a RuleScript engine with a custom built-in function registry.
+    /// </summary>
     public RuleScriptEngine(BuiltinFunctions builtinFunctions)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
     }
 
+    /// <summary>
+    /// Registers or replaces a host function.
+    /// </summary>
     public void RegisterFunction(string name, Func<IReadOnlyList<object?>, object?> function)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -32,6 +57,9 @@ public sealed class RuleScriptEngine
         _hostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
     }
 
+    /// <summary>
+    /// Removes a registered host function.
+    /// </summary>
     public bool UnregisterFunction(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -42,11 +70,17 @@ public sealed class RuleScriptEngine
         return _hostFunctions.Remove(name);
     }
 
+    /// <summary>
+    /// Removes all registered host functions.
+    /// </summary>
     public void ClearFunctions()
     {
         _hostFunctions.Clear();
     }
 
+    /// <summary>
+    /// Executes a script using a new runtime context.
+    /// </summary>
     public RuntimeContext Execute(string script)
     {
         var context = new RuntimeContext();
@@ -54,6 +88,9 @@ public sealed class RuleScriptEngine
         return context;
     }
 
+    /// <summary>
+    /// Executes a script using the provided runtime context.
+    /// </summary>
     public void Execute(string script, RuntimeContext context)
     {
         ArgumentNullException.ThrowIfNull(script);
@@ -65,6 +102,9 @@ public sealed class RuleScriptEngine
         new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module).Execute(module, context);
     }
 
+    /// <summary>
+    /// Executes a script file using a new runtime context.
+    /// </summary>
     public RuntimeContext ExecuteFile(string path)
     {
         var context = new RuntimeContext();
@@ -72,6 +112,9 @@ public sealed class RuleScriptEngine
         return context;
     }
 
+    /// <summary>
+    /// Executes a script file using the provided runtime context.
+    /// </summary>
     public void ExecuteFile(string path, RuntimeContext context)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -94,7 +137,7 @@ public sealed class RuleScriptEngine
         string? importingFile,
         bool isImported)
     {
-        path = Path.GetFullPath(path);
+        path = ImportResolver.GetFullPath(path);
 
         if (moduleCache.TryGetValue(path, out var cachedModule))
         {
@@ -107,7 +150,7 @@ public sealed class RuleScriptEngine
             throw new RuntimeException($"Circular import detected: {string.Join(" -> ", chain)}.");
         }
 
-        if (!File.Exists(path))
+        if (!ImportResolver.Exists(path))
         {
             throw importingFile is null
                 ? new RuntimeException($"ExecuteFile could not find script '{originalPath}'. Resolved full path: '{path}'.")
@@ -118,7 +161,7 @@ public sealed class RuleScriptEngine
 
         try
         {
-            var script = File.ReadAllText(path);
+            var script = ImportResolver.ReadAllText(path);
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule(
@@ -194,16 +237,16 @@ public sealed class RuleScriptEngine
         return module;
     }
 
-    private static string ResolveImportPath(string path, string baseDirectory)
+    private string ResolveImportPath(string path, string baseDirectory)
     {
-        return Path.GetFullPath(Path.IsPathRooted(path)
+        return ImportResolver.GetFullPath(Path.IsPathRooted(path)
             ? path
             : Path.Combine(baseDirectory, path));
     }
 
     private string ResolveExecuteFilePath(string path)
     {
-        return Path.GetFullPath(Path.IsPathRooted(path)
+        return ImportResolver.GetFullPath(Path.IsPathRooted(path)
             ? path
             : Path.Combine(ResolveWorkingDirectory(), path));
     }
@@ -212,6 +255,6 @@ public sealed class RuleScriptEngine
     {
         return string.IsNullOrWhiteSpace(WorkingDirectory)
             ? Environment.CurrentDirectory
-            : Path.GetFullPath(WorkingDirectory);
+            : ImportResolver.GetFullPath(WorkingDirectory);
     }
 }

@@ -1,0 +1,8 @@
+var name = "Mick";
+var score = 80;
+
+if score >= 60 then:
+    result = "Hello " + name + ": PASS";
+else:
+    result = "Hello " + name + ": FAIL";
+endif

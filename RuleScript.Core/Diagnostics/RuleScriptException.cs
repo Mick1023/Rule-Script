@@ -1,5 +1,8 @@
 namespace RuleScript.Core.Diagnostics;
 
+/// <summary>
+/// Base exception type for RuleScript syntax and runtime failures.
+/// </summary>
 public abstract class RuleScriptException : Exception
 {
     protected RuleScriptException(
@@ -15,10 +18,19 @@ public abstract class RuleScriptException : Exception
         TokenText = tokenText;
     }
 
+    /// <summary>
+    /// Gets the 1-based source line when available.
+    /// </summary>
     public int? Line { get; }
 
+    /// <summary>
+    /// Gets the 1-based source column when available.
+    /// </summary>
     public int? Column { get; }
 
+    /// <summary>
+    /// Gets the token text or source text associated with the failure when available.
+    /// </summary>
     public string? TokenText { get; }
 
     public override string ToString()
