@@ -70,6 +70,58 @@ public sealed class ControlFlowTests
     }
 
     [Fact]
+    public void If_WithAndCondition_ExecutesWhenAllConditionsAreTrue()
+    {
+        var context = Execute("""
+            var enabled = true;
+            var ready = true;
+
+            if enabled and ready then:
+                result = "OK";
+            else:
+                result = "NG";
+            endif
+            """);
+
+        Assert.Equal("OK", context.Get<string>("result"));
+    }
+
+    [Fact]
+    public void If_WithOrCondition_ExecutesWhenAnyConditionIsTrue()
+    {
+        var context = Execute("""
+            var enabled = false;
+            var ready = true;
+
+            if enabled or ready then:
+                result = "OK";
+            else:
+                result = "NG";
+            endif
+            """);
+
+        Assert.Equal("OK", context.Get<string>("result"));
+    }
+
+    [Fact]
+    public void If_WithMixedAndOrCondition_UsesAndBeforeOr()
+    {
+        var context = Execute("""
+            var a = false;
+            var b = true;
+            var c = true;
+
+            if a and b or c then:
+                result = "OK";
+            else:
+                result = "NG";
+            endif
+            """);
+
+        Assert.Equal("OK", context.Get<string>("result"));
+    }
+
+    [Fact]
     public void Continue_SkipsRestOfLoopBody()
     {
         var context = Execute("""

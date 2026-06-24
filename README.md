@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc2-blue)](docs/releases/v1.0.0-rc2.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc3-blue)](docs/releases/v1.0.0-rc3.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -68,6 +68,7 @@ var result = context.Get("result");
 - `number`, `string`, and `bool` values
 - Arithmetic operators: `+`, `-`, `*`, `/`, `%`
 - Comparison operators: `>`, `>=`, `<`, `<=`, `==`, `!=`
+- Boolean operators: `and`, `or`
 - Grouping with `( expression )`
 - Unary operators: `!`, `-`
 - `if` / `else` / `endif`
@@ -118,6 +119,14 @@ if distance > 500 then:
     result = "NG";
 else:
     result = "OK";
+endif
+```
+
+Multiple bool conditions can be combined with `and` and `or`:
+
+```rulescript
+if distance > 500 and enabled or forceAlarm then:
+    result = "NG";
 endif
 ```
 

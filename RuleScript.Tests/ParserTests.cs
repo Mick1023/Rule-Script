@@ -73,6 +73,19 @@ public sealed class ParserTests
     }
 
     [Fact]
+    public void Parse_BooleanExpression_UsesExpectedPrecedence()
+    {
+        var statement = Assert.Single(Parse("a == 1 and b == 2 or c == 3;"));
+        var expressionStatement = Assert.IsType<ExpressionStatement>(statement);
+        var or = AssertBinary(expressionStatement.Expression, TokenType.Or);
+        var and = AssertBinary(or.Left, TokenType.And);
+
+        AssertBinary(and.Left, TokenType.EqualEqual);
+        AssertBinary(and.Right, TokenType.EqualEqual);
+        AssertBinary(or.Right, TokenType.EqualEqual);
+    }
+
+    [Fact]
     public void Parse_GroupedExpression_OverridesPrecedence()
     {
         var statement = Assert.Single(Parse("(1 + 2) * 3;"));
@@ -133,6 +146,16 @@ public sealed class ParserTests
     public void Parse_InvalidSyntax_ThrowsSyntaxException()
     {
         Assert.Throws<SyntaxException>(() => Parse("var = 1;"));
+    }
+
+    [Theory]
+    [InlineData("and;")]
+    [InlineData("or;")]
+    public void Parse_BooleanOperatorWithoutOperands_ThrowsSyntaxException(string script)
+    {
+        var exception = Assert.Throws<SyntaxException>(() => Parse(script));
+
+        Assert.Contains("Expected expression", exception.Message);
     }
 
     private static IReadOnlyList<Statement> Parse(string script)

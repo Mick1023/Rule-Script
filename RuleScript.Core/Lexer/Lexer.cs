@@ -31,6 +31,8 @@ public sealed class Lexer
         ["as"] = TokenType.As,
         ["break"] = TokenType.Break,
         ["continue"] = TokenType.Continue,
+        ["and"] = TokenType.And,
+        ["or"] = TokenType.Or,
         ["true"] = TokenType.True,
         ["false"] = TokenType.False
     };

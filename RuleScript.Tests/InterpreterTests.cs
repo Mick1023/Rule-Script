@@ -56,6 +56,20 @@ public sealed class InterpreterTests
         Assert.True(context.Get<bool>("result"));
     }
 
+    [Theory]
+    [InlineData("true and true", true)]
+    [InlineData("true and false", false)]
+    [InlineData("false or true", true)]
+    [InlineData("false or false", false)]
+    [InlineData("1 < 2 and 3 < 4", true)]
+    [InlineData("1 > 2 or 3 < 4", true)]
+    public void Execute_BooleanOperators_WriteBoolResult(string expression, bool expected)
+    {
+        var context = Execute($"result = {expression};");
+
+        Assert.Equal(expected, context.Get<bool>("result"));
+    }
+
     [Fact]
     public void Execute_IfTrueBranch_ExecutesThenBranch()
     {
@@ -106,6 +120,17 @@ public sealed class InterpreterTests
     public void Execute_InvalidTypeOperation_ThrowsRuntimeException()
     {
         Assert.Throws<RuntimeException>(() => Execute("result = true - 1;"));
+    }
+
+    [Theory]
+    [InlineData("true and 1", "and")]
+    [InlineData("false or 1", "or")]
+    public void Execute_BooleanOperatorWithNonBoolOperand_ThrowsRuntimeException(string expression, string tokenText)
+    {
+        var exception = Assert.Throws<RuntimeException>(() => Execute($"result = {expression};"));
+
+        Assert.Contains("bool operands", exception.Message);
+        Assert.Equal(tokenText, exception.TokenText);
     }
 
     [Fact]

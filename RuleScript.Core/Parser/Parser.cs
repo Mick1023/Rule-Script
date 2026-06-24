@@ -281,7 +281,35 @@ public sealed class Parser
         return [.. statements];
     }
 
-    private Expression ParseExpression() => ParseEquality();
+    private Expression ParseExpression() => ParseOr();
+
+    private Expression ParseOr()
+    {
+        var expression = ParseAnd();
+
+        while (Match(TokenType.Or))
+        {
+            var operatorToken = Previous();
+            var right = ParseAnd();
+            expression = new BinaryExpression(expression, TokenType.Or, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+        }
+
+        return expression;
+    }
+
+    private Expression ParseAnd()
+    {
+        var expression = ParseEquality();
+
+        while (Match(TokenType.And))
+        {
+            var operatorToken = Previous();
+            var right = ParseEquality();
+            expression = new BinaryExpression(expression, TokenType.And, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+        }
+
+        return expression;
+    }
 
     private Expression ParseEquality()
     {

@@ -5,6 +5,7 @@ This folder tracks planned release milestones and the work that must be complete
 ## Active Milestones
 
 - [v1.0.0-rc2](v1.0.0-rc2.md)
+- [v1.0.0-rc3](v1.0.0-rc3.md)
 
 ## Planning Notes
 

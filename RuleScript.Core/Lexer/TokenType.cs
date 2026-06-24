@@ -40,6 +40,8 @@ public enum TokenType
     LessOrEqual,
     EqualEqual,
     BangEqual,
+    And,
+    Or,
 
     Assign,
     Bang,

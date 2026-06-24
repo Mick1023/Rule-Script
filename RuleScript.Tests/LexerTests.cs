@@ -34,4 +34,27 @@ public sealed class LexerTests
             ],
             tokens);
     }
+
+    [Fact]
+    public void Tokenize_AndOr_ReturnsBooleanOperatorTokens()
+    {
+        var lexer = new Lexer("if a and b or c then: endif");
+
+        var tokens = lexer.Tokenize().Select(token => token.Type).ToArray();
+
+        Assert.Equal(
+            [
+                TokenType.If,
+                TokenType.Identifier,
+                TokenType.And,
+                TokenType.Identifier,
+                TokenType.Or,
+                TokenType.Identifier,
+                TokenType.Then,
+                TokenType.Colon,
+                TokenType.EndIf,
+                TokenType.EndOfFile
+            ],
+            tokens);
+    }
 }

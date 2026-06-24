@@ -496,6 +496,8 @@ public sealed class Interpreter
             TokenType.LessOrEqual => NumberComparison(left, right, "<=", expression, (a, b) => a <= b),
             TokenType.EqualEqual => new RuntimeValue(AreEqual(left, right)),
             TokenType.BangEqual => new RuntimeValue(!AreEqual(left, right)),
+            TokenType.And => BooleanOperation(left, right, "and", expression, (a, b) => a && b),
+            TokenType.Or => BooleanOperation(left, right, "or", expression, (a, b) => a || b),
             _ => throw new RuntimeException($"Unsupported binary operator '{expression.Operator}'.", expression.Line, expression.Column, expression.TokenText)
         };
     }
@@ -775,6 +777,16 @@ public sealed class Interpreter
         }
 
         throw new RuntimeException($"Operator '{operatorText}' requires number operands.", expression.Line, expression.Column, expression.TokenText);
+    }
+
+    private static RuntimeValue BooleanOperation(object? left, object? right, string operatorText, BinaryExpression expression, Func<bool, bool, bool> operation)
+    {
+        if (left is bool leftBool && right is bool rightBool)
+        {
+            return new RuntimeValue(operation(leftBool, rightBool));
+        }
+
+        throw new RuntimeException($"Operator '{operatorText}' requires bool operands.", expression.Line, expression.Column, expression.TokenText);
     }
 
     private static bool AreEqual(object? left, object? right)
