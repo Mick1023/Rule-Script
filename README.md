@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.9.0-blue)](docs/releases/v0.9.0.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc1-blue)](docs/releases/v1.0.0-rc1.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -117,6 +117,10 @@ Example scripts live in:
 - `examples/modules/robot.rules`
 - `examples/modules/port.rules`
 - `examples/host-functions/README.md`
+- `examples/warehouse/main.rules`
+- `examples/alarm/main.rules`
+- `examples/sensor/main.rules`
+- `examples/workflow/main.rules`
 
 Example:
 
@@ -465,6 +469,21 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 
 RuleScript follows semantic versioning before the v1.0 API freeze. Versions before `1.0.0` may still contain documented behavior changes, but public APIs are being stabilized in the `v0.9.x` line for the v1.0 release.
 
+## v1.0 Readiness Checklist
+
+- [x] Parser
+- [x] Interpreter
+- [x] Import System
+- [x] User Functions
+- [x] Host Functions
+- [x] JSON
+- [x] Standard Library
+- [x] Diagnostics
+- [x] NuGet
+- [x] CI/CD
+- [x] GitHub Release
+- [x] >200 Tests
+
 Release flow:
 
 1. Update version metadata and release notes.
@@ -494,6 +513,7 @@ Release flow:
 - M15.1 Import Polish: complete
 - M16 Standard Library and README Cleanup: complete
 - M17 v1.0 API Stabilization: complete
+- M18 v1.0 Release Candidate Audit: complete
 
 ## Verification
 

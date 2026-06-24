@@ -1,0 +1,16 @@
+function NormalizeSku(value):
+    return ToUpper(Trim(value));
+endfunction
+
+function NeedsReorder(quantity):
+    return quantity < 10;
+endfunction
+
+var sku = NormalizeSku("  ab-100  ");
+var quantity = 8;
+
+if NeedsReorder(quantity) then:
+    result = sku + ":REORDER";
+else:
+    result = sku + ":OK";
+endif

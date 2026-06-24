@@ -1,0 +1,10 @@
+var tasks = JsonParse("{ \"items\": [{ \"name\": \"inspect\", \"done\": true }, { \"name\": \"ship\", \"done\": false }] }");
+var open = [];
+
+foreach task in tasks.items:
+    if task.done == false then:
+        ArrayAdd(open, task.name);
+    endif
+endforeach
+
+result = Join(",", open);

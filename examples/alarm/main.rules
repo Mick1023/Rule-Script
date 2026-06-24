@@ -1,0 +1,7 @@
+var payload = JsonParse("{ \"distance\": 519, \"limit\": 500 }");
+
+if payload.distance > payload.limit then:
+    result = "ALARM";
+else:
+    result = "OK";
+endif

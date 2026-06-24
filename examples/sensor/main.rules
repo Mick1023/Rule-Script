@@ -1,0 +1,9 @@
+var raw = "SR,01,519";
+var distanceText = Substring(raw, 6, 3);
+var distance = ParseInt(distanceText);
+
+if distance > 500 then:
+    result = "NG";
+else:
+    result = "OK";
+endif
