@@ -1,6 +1,8 @@
 using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Lexer;
 using RuleScript.Core.Parser.Ast;
+using System.Collections;
+using System.Reflection;
 
 namespace RuleScript.Core.Runtime;
 
@@ -57,6 +59,9 @@ public sealed class Interpreter
                 break;
             case WhileStatement whileStatement:
                 ExecuteWhileStatement(whileStatement, context);
+                break;
+            case ForeachStatement foreachStatement:
+                ExecuteForeachStatement(foreachStatement, context);
                 break;
             case BreakStatement breakStatement:
                 ExecuteBreakStatement(breakStatement);
@@ -137,6 +142,59 @@ public sealed class Interpreter
         }
     }
 
+    private void ExecuteForeachStatement(ForeachStatement statement, RuntimeContext context)
+    {
+        var iterableValue = Evaluate(statement.Iterable, context).Value;
+        var items = GetIterableItems(iterableValue, statement);
+        var iterations = 0;
+        var hadPreviousValue = context.TryGet(statement.VariableName, out var previousValue);
+
+        _loopDepth++;
+
+        try
+        {
+            foreach (var item in items)
+            {
+                if (iterations >= _maxLoopIterations)
+                {
+                    throw new RuntimeException($"foreach exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "foreach");
+                }
+
+                iterations++;
+                context.Set(statement.VariableName, item);
+
+                try
+                {
+                    foreach (var childStatement in statement.Body)
+                    {
+                        ExecuteStatement(childStatement, context);
+                    }
+                }
+                catch (ContinueSignalException)
+                {
+                    continue;
+                }
+                catch (BreakSignalException)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _loopDepth--;
+
+            if (hadPreviousValue)
+            {
+                context.Set(statement.VariableName, previousValue);
+            }
+            else
+            {
+                context.Remove(statement.VariableName);
+            }
+        }
+    }
+
     private void ExecuteBreakStatement(BreakStatement statement)
     {
         if (_loopDepth == 0)
@@ -166,8 +224,80 @@ public sealed class Interpreter
             UnaryExpression unary => EvaluateUnary(unary, context),
             BinaryExpression binary => EvaluateBinary(binary, context),
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
+            ArrayExpression array => EvaluateArray(array, context),
+            IndexExpression index => EvaluateIndex(index, context),
+            MemberAccessExpression memberAccess => EvaluateMemberAccess(memberAccess, context),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
         };
+    }
+
+    private RuntimeValue EvaluateArray(ArrayExpression expression, RuntimeContext context)
+    {
+        var values = expression.Elements
+            .Select(element => Evaluate(element, context).Value)
+            .ToList();
+
+        return new RuntimeValue(values);
+    }
+
+    private RuntimeValue EvaluateIndex(IndexExpression expression, RuntimeContext context)
+    {
+        var target = Evaluate(expression.Target, context).Value;
+        var indexValue = Evaluate(expression.Index, context).Value;
+
+        if (!TryGetInteger(indexValue, out var index))
+        {
+            throw new RuntimeException("Array index must be an int value.", expression.Line, expression.Column, "[");
+        }
+
+        if (target is not IList list)
+        {
+            throw new RuntimeException("Index access requires an array value.", expression.Line, expression.Column, "[");
+        }
+
+        if (index < 0 || index >= list.Count)
+        {
+            throw new RuntimeException($"Array index {index} is outside the array bounds.", expression.Line, expression.Column, "[");
+        }
+
+        return RuntimeValue.FromObject(list[index]);
+    }
+
+    private RuntimeValue EvaluateMemberAccess(MemberAccessExpression expression, RuntimeContext context)
+    {
+        var target = Evaluate(expression.Target, context).Value;
+
+        if (target is null)
+        {
+            throw new RuntimeException($"Cannot access property '{expression.MemberName}' on null.", expression.Line, expression.Column, expression.MemberName);
+        }
+
+        if (target is IDictionary<string, object?> dictionary)
+        {
+            if (dictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
+            {
+                return RuntimeValue.FromObject(dictionaryValue);
+            }
+        }
+
+        if (target is IReadOnlyDictionary<string, object?> readOnlyDictionary)
+        {
+            if (readOnlyDictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
+            {
+                return RuntimeValue.FromObject(dictionaryValue);
+            }
+        }
+
+        var property = target.GetType().GetProperty(
+            expression.MemberName,
+            BindingFlags.Instance | BindingFlags.Public);
+
+        if (property is not null)
+        {
+            return RuntimeValue.FromObject(property.GetValue(target));
+        }
+
+        throw new RuntimeException($"Property '{expression.MemberName}' was not found.", expression.Line, expression.Column, expression.MemberName);
     }
 
     private RuntimeValue EvaluateUnary(UnaryExpression expression, RuntimeContext context)
@@ -254,12 +384,7 @@ public sealed class Interpreter
             var hostArguments = arguments.Select(argument => argument.Value).ToArray();
             var result = function(hostArguments);
 
-            if (IsSupportedHostReturnValue(result))
-            {
-                return RuntimeValue.FromObject(result);
-            }
-
-            throw new RuntimeException($"Host function '{name}' returned unsupported type '{result!.GetType().Name}'.", line, column, name);
+            return RuntimeValue.FromObject(result);
         }
         catch (Exception exception) when (exception is not RuntimeException)
         {
@@ -358,18 +483,47 @@ public sealed class Interpreter
         }
     }
 
-    private static bool IsSupportedHostReturnValue(object? value)
+    private static IEnumerable<object?> GetIterableItems(object? value, ForeachStatement statement)
     {
-        return value is null
-            or string
-            or bool
-            or byte
-            or short
-            or int
-            or long
-            or float
-            or double
-            or decimal;
+        return value switch
+        {
+            List<object?> list => list,
+            object?[] array => array,
+            IEnumerable<object?> enumerable => enumerable,
+            string text => text.Select(character => character.ToString()),
+            _ => throw new RuntimeException("foreach requires an iterable value.", statement.Line, statement.Column, "foreach")
+        };
+    }
+
+    private static bool TryGetInteger(object? value, out int intValue)
+    {
+        switch (value)
+        {
+            case byte byteValue:
+                intValue = byteValue;
+                return true;
+            case short shortValue:
+                intValue = shortValue;
+                return true;
+            case int directValue:
+                intValue = directValue;
+                return true;
+            case long longValue when longValue is >= int.MinValue and <= int.MaxValue:
+                intValue = (int)longValue;
+                return true;
+            case float floatValue when IsWholeNumber(floatValue) && floatValue is >= int.MinValue and <= int.MaxValue:
+                intValue = (int)floatValue;
+                return true;
+            case double doubleValue when IsWholeNumber(doubleValue) && doubleValue is >= int.MinValue and <= int.MaxValue:
+                intValue = (int)doubleValue;
+                return true;
+            case decimal decimalValue when decimalValue == decimal.Truncate(decimalValue) && decimalValue is >= int.MinValue and <= int.MaxValue:
+                intValue = (int)decimalValue;
+                return true;
+            default:
+                intValue = 0;
+                return false;
+        }
     }
 
     private static string ConvertToString(object? value)
@@ -381,5 +535,10 @@ public sealed class Interpreter
             IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty
         };
+    }
+
+    private static bool IsWholeNumber(double value)
+    {
+        return !double.IsNaN(value) && !double.IsInfinity(value) && value == Math.Truncate(value);
     }
 }

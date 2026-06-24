@@ -127,13 +127,15 @@ public sealed class HostFunctionTests
     }
 
     [Fact]
-    public void HostFunction_UnsupportedReturnType_ThrowsRuntimeException()
+    public void HostFunction_ObjectReturnValue_CanBeAssigned()
     {
         var engine = new RuleScriptEngine();
-        engine.RegisterFunction("GetObject", _ => new object());
+        var value = new object();
+        engine.RegisterFunction("GetObject", _ => value);
 
-        var exception = Assert.Throws<RuntimeException>(() => Execute(engine, "result = GetObject();"));
-        Assert.Contains("GetObject", exception.Message);
+        var context = Execute(engine, "result = GetObject();");
+
+        Assert.Same(value, context.Get("result"));
     }
 
     [Fact]

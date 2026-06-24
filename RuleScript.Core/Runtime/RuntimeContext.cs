@@ -79,6 +79,12 @@ public sealed class RuntimeContext
         _variables.Clear();
     }
 
+    public bool Remove(string name)
+    {
+        ValidateName(name);
+        return _variables.Remove(name);
+    }
+
     private static void ValidateName(string name)
     {
         if (string.IsNullOrWhiteSpace(name))

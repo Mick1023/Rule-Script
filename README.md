@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue)](docs/releases/v0.2.0.md)
+[![Version](https://img.shields.io/badge/version-v0.4.0-blue)](docs/releases/v0.4.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -71,6 +71,10 @@ var context = engine.Execute("""
 - `while` / `endwhile`
 - `break`
 - `continue`
+- `foreach` / `endforeach`
+- Array literals: `[1, 2, 3]`
+- Array index access: `values[0]`
+- Object property access: `robot.Status`, `robot.Position.X`
 - Function calls in expression statements and expressions
 
 Example:
@@ -101,7 +105,9 @@ result = i;
 
 `break;` exits the nearest `while` loop. `continue;` skips the rest of the current loop iteration and continues the nearest `while` loop.
 
-`RuleScriptEngine.MaxLoopIterations` protects hosts from accidental infinite loops. The default is `100000`.
+`break;` and `continue;` also work inside `foreach`, always targeting the nearest active loop.
+
+`RuleScriptEngine.MaxLoopIterations` protects hosts from accidental infinite loops. The default is `100000`, and it applies to both `while` and `foreach`.
 
 ```csharp
 var engine = new RuleScriptEngine
@@ -109,6 +115,36 @@ var engine = new RuleScriptEngine
     MaxLoopIterations = 100000
 };
 ```
+
+Array and property access example:
+
+```rulescript
+var values = [1, 2, 3];
+result = values[0];
+
+var robot = GetRobot();
+
+if robot.Status == "Error" then:
+    Alarm(robot.Message);
+endif
+```
+
+Arrays are represented internally as `List<object?>`. Property access supports `Dictionary<string, object?>`, `IReadOnlyDictionary<string, object?>`, and public C# object properties. Dictionary keys are checked before public properties.
+
+Foreach example:
+
+```rulescript
+var values = [1, 2, 3];
+var sum = 0;
+
+foreach item in values:
+    sum = sum + item;
+endforeach
+
+result = sum;
+```
+
+`foreach` supports `List<object?>`, `object?[]`, `IEnumerable<object?>`, and `string`. Strings iterate as one-character strings.
 
 ## RuntimeContext
 
@@ -215,7 +251,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 
 ## Not Supported Yet
 
-- Arrays
+- `switch`
 - JSON/object literals
 - User-defined script functions
 - Async host functions
@@ -234,6 +270,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M6 Diagnostics: complete
 - M7 Rule Engine Hardening: complete
 - M10 Control Flow: complete
+- M11 Collections and Property Access: complete
 
 ## Verification
 

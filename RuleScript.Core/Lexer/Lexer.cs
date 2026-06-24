@@ -21,6 +21,9 @@ public sealed class Lexer
         ["endif"] = TokenType.EndIf,
         ["while"] = TokenType.While,
         ["endwhile"] = TokenType.EndWhile,
+        ["foreach"] = TokenType.Foreach,
+        ["in"] = TokenType.In,
+        ["endforeach"] = TokenType.EndForeach,
         ["break"] = TokenType.Break,
         ["continue"] = TokenType.Continue,
         ["true"] = TokenType.True,
@@ -56,6 +59,15 @@ public sealed class Lexer
                 break;
             case ')':
                 AddToken(TokenType.RightParen);
+                break;
+            case '[':
+                AddToken(TokenType.LeftBracket);
+                break;
+            case ']':
+                AddToken(TokenType.RightBracket);
+                break;
+            case '.':
+                AddToken(TokenType.Dot);
                 break;
             case ',':
                 AddToken(TokenType.Comma);

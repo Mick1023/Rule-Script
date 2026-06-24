@@ -48,6 +48,11 @@ public sealed class Parser
             return ParseWhileStatement();
         }
 
+        if (Match(TokenType.Foreach))
+        {
+            return ParseForeachStatement();
+        }
+
         if (Match(TokenType.Break))
         {
             return ParseBreakStatement();
@@ -126,6 +131,20 @@ public sealed class Parser
 
         Consume(TokenType.EndWhile, "Expected 'endwhile' after while statement.");
         return new WhileStatement(condition, body, whileToken.Line, whileToken.Column);
+    }
+
+    private ForeachStatement ParseForeachStatement()
+    {
+        var foreachToken = Previous();
+        var variable = Consume(TokenType.Identifier, "Expected iterator variable after 'foreach'.");
+        Consume(TokenType.In, "Expected 'in' after foreach iterator variable.");
+        var iterable = ParseExpression();
+        Consume(TokenType.Colon, "Expected ':' after foreach iterable expression.");
+
+        var body = ParseBlock(TokenType.EndForeach);
+
+        Consume(TokenType.EndForeach, "Expected 'endforeach' after foreach statement.");
+        return new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column);
     }
 
     private BreakStatement ParseBreakStatement()
@@ -233,26 +252,49 @@ public sealed class Parser
     {
         var expression = ParsePrimary();
 
-        while (Match(TokenType.LeftParen))
+        while (true)
         {
-            if (expression is not IdentifierExpression identifier)
+            if (Match(TokenType.LeftParen))
             {
-                throw Error(Previous(), "Only named function calls are supported.");
-            }
-
-            var arguments = new List<Expression>();
-
-            if (!Check(TokenType.RightParen))
-            {
-                do
+                if (expression is not IdentifierExpression identifier)
                 {
-                    arguments.Add(ParseExpression());
+                    throw Error(Previous(), "Only named function calls are supported.");
                 }
-                while (Match(TokenType.Comma));
+
+                var arguments = new List<Expression>();
+
+                if (!Check(TokenType.RightParen))
+                {
+                    do
+                    {
+                        arguments.Add(ParseExpression());
+                    }
+                    while (Match(TokenType.Comma));
+                }
+
+                Consume(TokenType.RightParen, "Expected ')' after function arguments.");
+                expression = new FunctionCallExpression(identifier.Name, arguments, identifier.Line, identifier.Column);
+                continue;
             }
 
-            Consume(TokenType.RightParen, "Expected ')' after function arguments.");
-            expression = new FunctionCallExpression(identifier.Name, arguments, identifier.Line, identifier.Column);
+            if (Match(TokenType.LeftBracket))
+            {
+                var bracket = Previous();
+                var index = ParseExpression();
+                Consume(TokenType.RightBracket, "Expected ']' after index expression.");
+                expression = new IndexExpression(expression, index, bracket.Line, bracket.Column);
+                continue;
+            }
+
+            if (Match(TokenType.Dot))
+            {
+                var dot = Previous();
+                var member = Consume(TokenType.Identifier, "Expected property name after '.'.");
+                expression = new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column);
+                continue;
+            }
+
+            break;
         }
 
         return expression;
@@ -288,7 +330,29 @@ public sealed class Parser
             return expression;
         }
 
+        if (Match(TokenType.LeftBracket))
+        {
+            return ParseArrayExpression();
+        }
+
         throw Error(Peek(), "Expected expression.");
+    }
+
+    private ArrayExpression ParseArrayExpression()
+    {
+        var elements = new List<Expression>();
+
+        if (!Check(TokenType.RightBracket))
+        {
+            do
+            {
+                elements.Add(ParseExpression());
+            }
+            while (Match(TokenType.Comma));
+        }
+
+        Consume(TokenType.RightBracket, "Expected ']' after array literal.");
+        return new ArrayExpression(elements);
     }
 
     private bool Match(params TokenType[] types)

@@ -1,4 +1,5 @@
 using RuleScript.Core.Diagnostics;
+using System.Collections;
 using System.Globalization;
 
 namespace RuleScript.Core.Runtime;
@@ -149,6 +150,11 @@ public sealed class BuiltinFunctions
     private static RuntimeValue Length(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("Length", arguments, 1);
+        if (arguments[0].Value is IList list)
+        {
+            return new RuntimeValue(list.Count);
+        }
+
         return new RuntimeValue(ConvertToString(arguments[0].Value).Length);
     }
 

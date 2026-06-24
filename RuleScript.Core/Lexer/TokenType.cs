@@ -17,6 +17,9 @@ public enum TokenType
     EndIf,
     While,
     EndWhile,
+    Foreach,
+    In,
+    EndForeach,
     Break,
     Continue,
 
@@ -38,6 +41,9 @@ public enum TokenType
 
     LeftParen,
     RightParen,
+    LeftBracket,
+    RightBracket,
+    Dot,
     Comma,
     Semicolon,
     Colon
