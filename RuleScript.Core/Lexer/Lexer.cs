@@ -142,6 +142,8 @@ public sealed class Lexer
 
     private void ScanString()
     {
+        var value = new System.Text.StringBuilder();
+
         while (!IsAtEnd() && Peek() != '"')
         {
             if (Peek() == '\n')
@@ -149,7 +151,20 @@ public sealed class Lexer
                 throw new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\"");
             }
 
-            Advance();
+            if (Peek() == '\\')
+            {
+                Advance();
+
+                if (IsAtEnd())
+                {
+                    throw new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\"");
+                }
+
+                value.Append(AdvanceEscapedCharacter());
+                continue;
+            }
+
+            value.Append(Advance());
         }
 
         if (IsAtEnd())
@@ -159,8 +174,22 @@ public sealed class Lexer
 
         Advance();
 
-        var value = _source[(_start + 1)..(_current - 1)];
-        AddToken(TokenType.String, value);
+        AddToken(TokenType.String, value.ToString());
+    }
+
+    private char AdvanceEscapedCharacter()
+    {
+        var escaped = Advance();
+
+        return escaped switch
+        {
+            '"' => '"',
+            '\\' => '\\',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            _ => throw new SyntaxException($"Unsupported string escape '\\{escaped}'.", _line, _column - 1, escaped.ToString())
+        };
     }
 
     private void ScanNumber()

@@ -20,6 +20,10 @@ public sealed class BuiltinFunctions
         Register("Replace", Replace);
         Register("Substring", Substring);
         Register("Length", Length);
+        Register("JsonParse", JsonFunctions.JsonParse);
+        Register("JsonStringify", JsonFunctions.JsonStringify);
+        Register("JsonGet", JsonFunctions.JsonGet);
+        Register("JsonSet", JsonFunctions.JsonSet);
     }
 
     public IEnumerable<string> Names => _functions.Keys;

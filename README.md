@@ -1,15 +1,15 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.4.0-blue)](docs/releases/v0.4.0.md)
+[![Version](https://img.shields.io/badge/version-v0.5.0-blue)](docs/releases/v0.5.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
-The project currently provides a .NET 8 class library with lexer, parser, AST, interpreter, built-in functions, host function registration, runtime context APIs, and diagnostics.
+The project currently provides a .NET 8 class library with lexer, parser, AST, interpreter, built-in functions, host function registration, runtime context APIs, JSON helpers, and diagnostics.
 
 ## Projects
 
-- `RuleScript.Core`: Lexer, parser, AST, runtime, built-in functions, host function API, diagnostics.
+- `RuleScript.Core`: Lexer, parser, AST, runtime, built-in functions, host function API, JSON helpers, diagnostics.
 - `RuleScript.Tests`: Unit, integration, diagnostics, and regression tests.
 
 ## Installation
@@ -146,6 +146,28 @@ result = sum;
 
 `foreach` supports `List<object?>`, `object?[]`, `IEnumerable<object?>`, and `string`. Strings iterate as one-character strings.
 
+JSON example:
+
+```rulescript
+var obj = JsonParse("{ \"name\": \"Mick\", \"items\": [1, 2, 3] }");
+
+result = obj.name;
+second = obj.items[1];
+```
+
+JSON values integrate with property access, index access, and `foreach`:
+
+```rulescript
+var obj = JsonParse("{ \"items\": [1, 2, 3] }");
+var sum = 0;
+
+foreach item in obj.items:
+    sum = sum + item;
+endforeach
+
+result = sum;
+```
+
 ## RuntimeContext
 
 `RuntimeContext` stores variables shared between the host and script.
@@ -175,9 +197,15 @@ RuleScript function names are case-sensitive, matching variable names.
 - `ToLower(value)`: converts `value` to string and lowercases it using invariant culture.
 - `Replace(value, oldValue, newValue)`: converts all arguments to string and replaces exact text matches.
 - `Substring(value, start, length)`: converts `value` to string and extracts a range. `start` and `length` must be int values.
-- `Length(value)`: converts `value` to string and returns its length.
+- `Length(value)`: returns array count for array values, otherwise converts `value` to string and returns its length.
+- `JsonParse(value)`: converts a JSON string into RuleScript values. JSON objects become `Dictionary<string, object?>`, arrays become `List<object?>`, and numbers become `decimal`.
+- `JsonStringify(value)`: converts supported RuleScript values to compact JSON.
+- `JsonGet(value, path)`: reads a value by dot path, including array indexes such as `items.0.name`.
+- `JsonSet(value, path, newValue)`: updates an existing path and returns the original object. Dictionaries and lists are mutated in place.
 
 Invalid function names, wrong argument counts, invalid conversions, and invalid substring ranges throw `RuntimeException`.
+
+JSON functions do not add JSON literal syntax to RuleScript. Use strings plus `JsonParse` when a script needs JSON data.
 
 ## Host Functions
 
@@ -252,7 +280,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 ## Not Supported Yet
 
 - `switch`
-- JSON/object literals
+- JSON/object literal syntax
 - User-defined script functions
 - Async host functions
 - Built-in `delay` / `waitfor` syntax
@@ -271,6 +299,8 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M7 Rule Engine Hardening: complete
 - M10 Control Flow: complete
 - M11 Collections and Property Access: complete
+- M12 foreach: complete
+- M13 JSON Support: complete
 
 ## Verification
 
