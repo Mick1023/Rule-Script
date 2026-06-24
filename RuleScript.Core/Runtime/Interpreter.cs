@@ -284,19 +284,7 @@ public sealed class Interpreter
     {
         if (TryGetCurrentLocalScope(out var localScope))
         {
-            if (localScope!.ContainsKey(name))
-            {
-                localScope[name] = value;
-                return;
-            }
-
-            if (context.Contains(name))
-            {
-                context.SetValue(name, value);
-                return;
-            }
-
-            localScope[name] = value;
+            localScope![name] = value;
             return;
         }
 

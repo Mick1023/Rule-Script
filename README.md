@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.6.0-blue)](docs/releases/v0.6.0.md)
+[![Version](https://img.shields.io/badge/version-v0.6.1-blue)](docs/releases/v0.6.1.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -222,7 +222,9 @@ var result = Add(10, 20);
 
 `return expression;` returns a value. `return;` returns `null`, and a function that reaches `endfunction` without returning also returns `null`.
 
-Functions use a local scope. Parameters and `var` declarations stay local and do not leak into `RuntimeContext`. A function can read global values from `RuntimeContext`. Assignment inside a function updates an existing local variable first; if no local exists but a global variable exists, the global value is updated; otherwise a new local variable is created.
+Functions use a local scope. Parameters and `var` declarations stay local and do not leak into `RuntimeContext`. A function can read global values from `RuntimeContext`.
+
+Assignment inside a function always writes to the function's local scope. It does not implicitly modify global `RuntimeContext` variables. This is a breaking change in `v0.6.1` from the initial `v0.6.0` function scope behavior.
 
 `return` outside a function is parsed but fails at runtime with `RuntimeException`.
 
@@ -330,6 +332,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M12 foreach: complete
 - M13 JSON Support: complete
 - M14 User Defined Functions: complete
+- M14.1 Scope Correction Hotfix: complete
 
 ## Verification
 

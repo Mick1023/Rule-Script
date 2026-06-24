@@ -206,7 +206,7 @@ public sealed class UserFunctionTests
     }
 
     [Fact]
-    public void AssignmentInsideFunction_UpdatesExistingGlobalVariable()
+    public void AssignmentInsideFunction_DoesNotUpdateExistingGlobalVariable()
     {
         var context = Execute("""
             var count = 1;
@@ -219,7 +219,7 @@ public sealed class UserFunctionTests
             result = count;
             """);
 
-        Assert.Equal(2d, context.Get<double>("result"));
+        Assert.Equal(1d, context.Get<double>("result"));
     }
 
     [Fact]
