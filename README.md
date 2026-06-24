@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v0.7.1-blue)](docs/releases/v0.7.1.md)
+[![Version](https://img.shields.io/badge/version-v0.8.0-blue)](docs/releases/v0.8.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
 
@@ -79,6 +79,17 @@ var context = engine.Execute("""
 - User-defined functions with `function` / `return` / `endfunction`
 - Explicit global access with `global.name`
 - Project imports with `import "file.rules";` and `import "file.rules" as alias;`
+
+## Supported Features
+
+- Variables and assignment
+- User-defined functions and `return`
+- Arrays and array helpers
+- `foreach`
+- `while`
+- JSON functions
+- Import system with aliases
+- Host functions
 
 Example:
 
@@ -198,13 +209,34 @@ RuleScript function names are case-sensitive, matching variable names.
 - `Trim(value)`: converts `value` to string and trims whitespace.
 - `ToUpper(value)`: converts `value` to string and uppercases it using invariant culture.
 - `ToLower(value)`: converts `value` to string and lowercases it using invariant culture.
+- `StartsWith(text, value)`: checks whether text starts with value.
+- `EndsWith(text, value)`: checks whether text ends with value.
+- `Contains(text, value)`: checks whether text contains value.
+- `Split(text, separator)`: splits text into an array.
+- `Join(separator, values)`: joins an array into text.
 - `Replace(value, oldValue, newValue)`: converts all arguments to string and replaces exact text matches.
 - `Substring(value, start, length)`: converts `value` to string and extracts a range. `start` and `length` must be int values.
 - `Length(value)`: returns array count for array values, otherwise converts `value` to string and returns its length.
+- `ArrayAdd(array, value)`: appends a value and returns the array.
+- `ArrayRemove(array, value)`: removes the first matching value and returns `true` if removed.
+- `ArrayContains(array, value)`: checks whether an array contains a value.
+- `ArrayClear(array)`: removes all items and returns the array.
+- `Abs(number)`: returns absolute value.
+- `Min(a, b)`: returns the smaller number.
+- `Max(a, b)`: returns the larger number.
+- `Clamp(value, min, max)`: clamps a number to a range.
+- `Round(value)`: rounds a number.
+- `Floor(value)`: floors a number.
+- `Ceiling(value)`: ceilings a number.
+- `ParseBool(value)`: converts a bool or bool string to `bool`.
+- `IsNull(value)`: checks whether a value is `null`.
+- `TypeOf(value)`: returns `null`, `string`, `bool`, `number`, `array`, or `object`.
+- `Coalesce(a, b)`: returns `a` unless it is `null`; otherwise returns `b`.
 - `JsonParse(value)`: converts a JSON string into RuleScript values. JSON objects become `Dictionary<string, object?>`, arrays become `List<object?>`, and numbers become `decimal`.
 - `JsonStringify(value)`: converts supported RuleScript values to compact JSON.
 - `JsonGet(value, path)`: reads a value by dot path, including array indexes such as `items.0.name`.
 - `JsonSet(value, path, newValue)`: updates an existing path and returns the original object. Dictionaries and lists are mutated in place.
+- `JsonExists(value, path)`: checks whether a JSON path exists.
 
 Invalid function names, wrong argument counts, invalid conversions, and invalid substring ranges throw `RuntimeException`.
 
@@ -378,11 +410,14 @@ Line 2, Column 9: Runtime error: Function 'Missing' is not registered.
 Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2.
 ```
 
-## Not Supported Yet
+## Roadmap / Planned Features
 
 - `switch`
-- JSON/object literal syntax
+- Object literal syntax
+- Package manager
+- Generic collections
 - Async host functions
+- Async script execution
 - Built-in `delay` / `waitfor` syntax
 - Multi-error parser recovery
 - Multi-token source ranges
@@ -406,6 +441,7 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - M14.2 Explicit Global Access: complete
 - M15 Project Execution and Import Alias System: complete
 - M15.1 Import Polish: complete
+- M16 Standard Library and README Cleanup: complete
 
 ## Verification
 

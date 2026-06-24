@@ -50,7 +50,7 @@ internal static class JsonFunctions
         EnsureArgumentCount("JsonGet", arguments, 2);
         var path = RequirePath("JsonGet", arguments[1].Value);
 
-        return RuntimeValue.FromObject(ResolvePath(arguments[0].Value, path));
+        return RuntimeValue.FromObject(ResolvePath(arguments[0].Value, path, "JsonGet"));
     }
 
     public static RuntimeValue JsonSet(IReadOnlyList<RuntimeValue> arguments)
@@ -60,6 +60,22 @@ internal static class JsonFunctions
         SetPath(arguments[0].Value, path, arguments[2].Value);
 
         return arguments[0];
+    }
+
+    public static RuntimeValue JsonExists(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("JsonExists", arguments, 2);
+        var path = RequirePath("JsonExists", arguments[1].Value);
+
+        try
+        {
+            _ = ResolvePath(arguments[0].Value, path, "JsonExists");
+            return new RuntimeValue(true);
+        }
+        catch (RuntimeException)
+        {
+            return new RuntimeValue(false);
+        }
     }
 
     private static object? ConvertElement(JsonElement element)
@@ -101,19 +117,19 @@ internal static class JsonFunctions
         };
     }
 
-    private static object? ResolvePath(object? value, string path)
+    private static object? ResolvePath(object? value, string path, string functionName)
     {
         var current = value;
 
         foreach (var segment in SplitPath(path))
         {
-            current = ResolveSegment(current, segment, path);
+            current = ResolveSegment(current, segment, path, functionName);
         }
 
         return current;
     }
 
-    private static object? ResolveSegment(object? value, string segment, string path)
+    private static object? ResolveSegment(object? value, string segment, string path, string functionName)
     {
         if (value is Dictionary<string, object?> dictionary)
         {
@@ -122,7 +138,7 @@ internal static class JsonFunctions
                 return dictionaryValue;
             }
 
-            throw new RuntimeException($"JsonGet path '{path}' was not found.");
+            throw new RuntimeException($"{functionName} path '{path}' was not found.");
         }
 
         if (value is IReadOnlyDictionary<string, object?> readOnlyDictionary)
@@ -132,22 +148,22 @@ internal static class JsonFunctions
                 return dictionaryValue;
             }
 
-            throw new RuntimeException($"JsonGet path '{path}' was not found.");
+            throw new RuntimeException($"{functionName} path '{path}' was not found.");
         }
 
         if (value is IList list)
         {
-            var index = ParsePathIndex("JsonGet", segment, path);
+            var index = ParsePathIndex(functionName, segment, path);
 
             if (index < 0 || index >= list.Count)
             {
-                throw new RuntimeException($"JsonGet path '{path}' array index {index} is out of range.");
+                throw new RuntimeException($"{functionName} path '{path}' array index {index} is out of range.");
             }
 
             return list[index];
         }
 
-        throw new RuntimeException($"JsonGet path '{path}' cannot access segment '{segment}'.");
+        throw new RuntimeException($"{functionName} path '{path}' cannot access segment '{segment}'.");
     }
 
     private static void SetPath(object? value, string path, object? newValue)
