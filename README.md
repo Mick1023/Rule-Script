@@ -1,6 +1,6 @@
 # RuleScript
 
-[![Build](https://img.shields.io/badge/build-placeholder-lightgrey)](#verification)
+[![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
 [![Version](https://img.shields.io/badge/version-v0.1.0-blue)](docs/releases/v0.1.0.md)
 
 RuleScript is a lightweight embeddable DSL / rule engine for content modification, conditional checks, and basic numeric operations.
