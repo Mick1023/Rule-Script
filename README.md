@@ -416,7 +416,9 @@ engine.ClearFunctions();
 
 Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Current supported return values are `number`, `string`, `bool`, and `null`. Other return types throw `RuntimeException`.
 
-Timing and external wait behavior should be implemented as host functions instead of syntax:
+Timing and external wait behavior should be implemented as host functions instead of syntax.
+`Execute` and host functions run synchronously, so UI applications should run script
+execution on a background task instead of the UI thread:
 
 ```csharp
 engine.RegisterFunction("Delay", args =>
@@ -431,6 +433,11 @@ engine.RegisterFunction("WaitFor", args =>
     var timeoutMs = Convert.ToInt32(args[1]);
     return true;
 });
+
+var context = await Task.Run(() => engine.Execute("""
+    Delay(1000);
+    result = "done";
+    """));
 ```
 
 ## Host Runtime Notifications
