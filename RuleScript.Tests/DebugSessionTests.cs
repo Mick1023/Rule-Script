@@ -55,6 +55,41 @@ public sealed class DebugSessionTests
     }
 
     [Fact]
+    public async Task Breakpoint_PausesWhenEngineHasAsyncRuntimeEventHandler()
+    {
+        var asyncHandlerEvents = new List<RuleScriptRuntimeEventKind>();
+        var engine = new RuleScriptEngine();
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            asyncHandlerEvents.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+        engine.AddBreakpoint(5);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            var a = 1;
+            Print(a);
+            var b = 2;
+            Print(b);
+            result = a + b;
+            Print(result);
+            """);
+        var pause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+        Assert.Equal(5, pause.Location.Line);
+        Assert.Empty(asyncHandlerEvents);
+        Assert.False(session.Context?.Contains("result"));
+
+        session.Continue();
+        var context = await runTask.WaitAsync(TestTimeout());
+
+        Assert.Equal(3d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public async Task StepOver_AfterBreakpointPausesAtNextExecutableStatement()
     {
         using var project = new RuleScriptProject();

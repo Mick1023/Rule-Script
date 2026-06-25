@@ -61,9 +61,21 @@ public sealed class RuleScriptDebugSession
         return Task.Run(async () =>
         {
             using var registration = cancellationToken.Register(Continue);
-            _engine.RuntimeEventHandler = HandleRuntimeEvent;
-            await _engine.ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
-            return context;
+            var previousHandler = _engine.RuntimeEventHandler;
+            var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+
+            try
+            {
+                _engine.RuntimeEventHandler = HandleRuntimeEvent;
+                _engine.RuntimeEventHandlerAsync = HandleRuntimeEventAsync;
+                await _engine.ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
+                return context;
+            }
+            finally
+            {
+                _engine.RuntimeEventHandler = previousHandler;
+                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+            }
         }, cancellationToken);
     }
 
@@ -85,9 +97,21 @@ public sealed class RuleScriptDebugSession
         return Task.Run(async () =>
         {
             using var registration = cancellationToken.Register(Continue);
-            _engine.RuntimeEventHandler = HandleRuntimeEvent;
-            await _engine.ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
-            return context;
+            var previousHandler = _engine.RuntimeEventHandler;
+            var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+
+            try
+            {
+                _engine.RuntimeEventHandler = HandleRuntimeEvent;
+                _engine.RuntimeEventHandlerAsync = HandleRuntimeEventAsync;
+                await _engine.ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
+                return context;
+            }
+            finally
+            {
+                _engine.RuntimeEventHandler = previousHandler;
+                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+            }
         }, cancellationToken);
     }
 
@@ -152,6 +176,12 @@ public sealed class RuleScriptDebugSession
         {
             return _resumeDirective;
         }
+    }
+
+    private Task<RuleScriptExecutionDirective> HandleRuntimeEventAsync(RuleScriptRuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(HandleRuntimeEvent(runtimeEvent));
     }
 
     private void Resume(RuleScriptExecutionDirective directive)
