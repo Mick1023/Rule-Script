@@ -7,6 +7,7 @@ public sealed class RuleScriptEngine
 {
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private IImportResolver _importResolver = new FileSystemImportResolver();
 
@@ -74,6 +75,32 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Registers or replaces an async host function.
+    /// </summary>
+    public void RegisterFunctionAsync(string name, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Function name cannot be empty.", nameof(name));
+        }
+
+        _asyncHostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
+    }
+
+    /// <summary>
+    /// Registers or replaces an async host function.
+    /// </summary>
+    public void RegisterFunctionAsync(string name, Func<IReadOnlyList<object?>, Task<object?>> function)
+    {
+        if (function is null)
+        {
+            throw new ArgumentNullException(nameof(function));
+        }
+
+        RegisterFunctionAsync(name, (args, _) => function(args));
+    }
+
+    /// <summary>
     /// Removes a registered host function.
     /// </summary>
     public bool UnregisterFunction(string name)
@@ -83,7 +110,8 @@ public sealed class RuleScriptEngine
             throw new ArgumentException("Function name cannot be empty.", nameof(name));
         }
 
-        return _hostFunctions.Remove(name);
+        var removed = _hostFunctions.Remove(name);
+        return _asyncHostFunctions.Remove(name) || removed;
     }
 
     /// <summary>
@@ -92,6 +120,7 @@ public sealed class RuleScriptEngine
     public void ClearFunctions()
     {
         _hostFunctions.Clear();
+        _asyncHostFunctions.Clear();
     }
 
     /// <summary>
@@ -168,7 +197,42 @@ public sealed class RuleScriptEngine
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+        }
+        catch (RuleScriptException exception)
+        {
+            AssignSourceFile(exception, "<script>");
+            NotifyError(exception);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Executes a script asynchronously using a new runtime context.
+    /// </summary>
+    public async Task<RuntimeContext> ExecuteAsync(string script, CancellationToken cancellationToken = default)
+    {
+        var context = new RuntimeContext();
+        await ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
+        return context;
+    }
+
+    /// <summary>
+    /// Executes a script asynchronously using the provided runtime context.
+    /// </summary>
+    public async Task ExecuteAsync(string script, RuntimeContext context, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        ArgumentNullException.ThrowIfNull(context);
+
+        try
+        {
+            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+            var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
+            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution)
+                .ExecuteAsync(module, context, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {
@@ -205,7 +269,46 @@ public sealed class RuleScriptEngine
         try
         {
             var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+        }
+        catch (RuleScriptException exception)
+        {
+            AssignSourceFile(exception, fullPath);
+            NotifyError(exception);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Executes a script file asynchronously using a new runtime context.
+    /// </summary>
+    public async Task<RuntimeContext> ExecuteFileAsync(string path, CancellationToken cancellationToken = default)
+    {
+        var context = new RuntimeContext();
+        await ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
+        return context;
+    }
+
+    /// <summary>
+    /// Executes a script file asynchronously using the provided runtime context.
+    /// </summary>
+    public async Task ExecuteFileAsync(string path, RuntimeContext context, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Script path cannot be empty.", nameof(path));
+        }
+
+        ArgumentNullException.ThrowIfNull(context);
+
+        var fullPath = ResolveExecuteFilePath(path);
+
+        try
+        {
+            var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
+            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution)
+                .ExecuteAsync(module, context, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {

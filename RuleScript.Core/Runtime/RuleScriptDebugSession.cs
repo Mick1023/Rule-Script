@@ -58,11 +58,11 @@ public sealed class RuleScriptDebugSession
         Context = context;
         PrepareForRun();
 
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
             using var registration = cancellationToken.Register(Continue);
             _engine.RuntimeEventHandler = HandleRuntimeEvent;
-            _engine.ExecuteFile(path, context);
+            await _engine.ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
             return context;
         }, cancellationToken);
     }
@@ -82,11 +82,11 @@ public sealed class RuleScriptDebugSession
         Context = context;
         PrepareForRun();
 
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
             using var registration = cancellationToken.Register(Continue);
             _engine.RuntimeEventHandler = HandleRuntimeEvent;
-            _engine.Execute(script, context);
+            await _engine.ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
             return context;
         }, cancellationToken);
     }

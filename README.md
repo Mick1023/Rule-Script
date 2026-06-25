@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc3-blue)](docs/releases/v1.0.0-rc3.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc4-blue)](docs/releases/v1.0.0-rc4.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -417,13 +417,12 @@ engine.ClearFunctions();
 Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Current supported return values are `number`, `string`, `bool`, and `null`. Other return types throw `RuntimeException`.
 
 Timing and external wait behavior should be implemented as host functions instead of syntax.
-`Execute` and host functions run synchronously, so UI applications should run script
-execution on a background task instead of the UI thread:
+For UI applications and I/O waits, prefer async host functions with `ExecuteAsync`:
 
 ```csharp
-engine.RegisterFunction("Delay", args =>
+engine.RegisterFunctionAsync("Delay", async (args, cancellationToken) =>
 {
-    Thread.Sleep(Convert.ToInt32(args[0]));
+    await Task.Delay(Convert.ToInt32(args[0]), cancellationToken);
     return null;
 });
 
@@ -434,11 +433,13 @@ engine.RegisterFunction("WaitFor", args =>
     return true;
 });
 
-var context = await Task.Run(() => engine.Execute("""
+var context = await engine.ExecuteAsync("""
     Delay(1000);
     result = "done";
-    """));
+    """);
 ```
+
+`Execute` remains synchronous for existing hosts. If you use synchronous host functions in a UI application, run the script on a background task so the UI thread can keep rendering.
 
 ## Host Runtime Notifications
 
@@ -525,8 +526,6 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - Object literal syntax
 - Package manager
 - Generic collections
-- Async host functions
-- Async script execution
 - Built-in `delay` / `waitfor` syntax
 - Multi-error parser recovery
 - Multi-token source ranges
