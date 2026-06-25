@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc4-blue)](docs/releases/v1.0.0-rc4.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc5-blue)](docs/releases/v1.0.0-rc5.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -222,6 +222,7 @@ context.Clear();
 ```
 
 `context.Variables` returns a read-only snapshot. Mutating the snapshot cannot change the internal runtime state.
+`context.VariableNames` returns a sorted snapshot for editor autocomplete.
 
 ## Built-in Functions
 
@@ -414,6 +415,31 @@ engine.UnregisterFunction("Value");
 engine.ClearFunctions();
 ```
 
+`engine.RegisteredFunctionNames` returns a sorted snapshot of host function names registered with `RegisterFunction` and `RegisterFunctionAsync`. `engine.GetVariableNames(context)` returns the current `RuntimeContext` variable names after execution.
+
+For editor autocomplete before execution, use static analysis:
+
+```csharp
+var symbols = engine.Analyze(script);
+
+var variables = symbols.VariableNames;
+var functions = symbols.FunctionNames;
+var imports = symbols.ImportAliases;
+```
+
+`Analyze` parses the script but does not execute it. The result includes script variables, user-defined functions, currently registered host functions, built-in functions, and import aliases. The script must be parseable.
+
+For live editor input that may be incomplete, use best-effort analysis:
+
+```csharp
+var attempt = engine.TryAnalyze(script);
+
+var variables = attempt.Symbols.VariableNames;
+var diagnostics = attempt.Diagnostics;
+```
+
+`TryAnalyze` does not throw for syntax errors. `Success` is `false` when parsing fails, but `Symbols` still contains names collected from the partial script when possible.
+
 Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Current supported return values are `number`, `string`, `bool`, and `null`. Other return types throw `RuntimeException`.
 
 Timing and external wait behavior should be implemented as host functions instead of syntax.
@@ -444,6 +470,7 @@ var context = await engine.ExecuteAsync("""
 ## Host Runtime Notifications
 
 Hosts can observe runtime execution through `RuleScriptEngine.RuntimeEventHandler`.
+Async hosts can use `RuntimeEventHandlerAsync` with `ExecuteAsync` or `ExecuteFileAsync`.
 
 ```csharp
 var engine = new RuleScriptEngine();
@@ -465,6 +492,22 @@ engine.RuntimeEventHandler = runtimeEvent =>
 ```
 
 Runtime events include current-line changes, `Print` calls, breakpoint hits, step pauses, and errors. Event locations include file, line, and column when available.
+
+Async runtime events can await UI dispatch, logging, or external tooling work:
+
+```csharp
+engine.RuntimeEventHandlerAsync = async (runtimeEvent, cancellationToken) =>
+{
+    if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Print)
+    {
+        await logger.WriteAsync(runtimeEvent.Value?.ToString(), cancellationToken);
+    }
+
+    return RuleScriptExecutionDirective.Continue;
+};
+
+await engine.ExecuteAsync(script);
+```
 
 Breakpoints and step-over execution are host-controlled:
 

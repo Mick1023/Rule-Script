@@ -1,4 +1,5 @@
 using RuleScript.Core.Diagnostics;
+using RuleScript.Core.Lexer;
 using RuleScript.Core.Parser.Ast;
 
 namespace RuleScript.Core.Runtime;
@@ -41,9 +42,24 @@ public sealed class RuleScriptEngine
     public IReadOnlyList<RuleScriptBreakpoint> Breakpoints => _breakpoints.ToArray();
 
     /// <summary>
+    /// Gets a read-only snapshot of registered host function names.
+    /// </summary>
+    public IReadOnlyList<string> RegisteredFunctionNames =>
+        _hostFunctions.Keys
+            .Concat(_asyncHostFunctions.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>
     /// Notifies the host about runtime events. The returned directive controls step execution.
     /// </summary>
     public Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? RuntimeEventHandler { get; set; }
+
+    /// <summary>
+    /// Asynchronously notifies the host about runtime events during async execution. The returned directive controls step execution.
+    /// </summary>
+    public Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>>? RuntimeEventHandlerAsync { get; set; }
 
     /// <summary>
     /// Creates a RuleScript engine with the default built-in functions.
@@ -124,6 +140,61 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Gets a read-only snapshot of variable names from a runtime context.
+    /// </summary>
+    public IReadOnlyList<string> GetVariableNames(RuntimeContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.VariableNames;
+    }
+
+    /// <summary>
+    /// Strictly analyzes parseable script text without executing it and returns symbols for editor tooling.
+    /// Syntax errors are reported by throwing <see cref="SyntaxException"/>.
+    /// </summary>
+    public RuleScriptAnalysisResult Analyze(string script)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+        var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+        var variables = new HashSet<string>(StringComparer.Ordinal);
+        var userFunctions = new HashSet<string>(StringComparer.Ordinal);
+        var importAliases = new HashSet<string>(StringComparer.Ordinal);
+
+        CollectSymbols(statements, variables, userFunctions, importAliases);
+
+        return new RuleScriptAnalysisResult(
+            variables,
+            userFunctions,
+            RegisteredFunctionNames,
+            _builtinFunctions.Names,
+            importAliases);
+    }
+
+    /// <summary>
+    /// Best-effort analyzes script text without executing it, returning diagnostics and partial symbols instead of throwing for syntax errors.
+    /// </summary>
+    public RuleScriptAnalysisAttempt TryAnalyze(string script)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        try
+        {
+            return new RuleScriptAnalysisAttempt(Analyze(script), [], success: true);
+        }
+        catch (SyntaxException exception)
+        {
+            var diagnostics = new[]
+            {
+                new RuleScriptDiagnostic(exception.Message, exception.Line, exception.Column, exception.TokenText)
+            };
+
+            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script), diagnostics, success: false);
+        }
+    }
+
+    /// <summary>
     /// Adds a breakpoint for any source file at the specified line.
     /// </summary>
     public void AddBreakpoint(int line)
@@ -197,7 +268,7 @@ public sealed class RuleScriptEngine
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution).Execute(module, context);
         }
         catch (RuleScriptException exception)
         {
@@ -230,14 +301,14 @@ public sealed class RuleScriptEngine
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution)
+            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution)
                 .ExecuteAsync(module, context, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, "<script>");
-            NotifyError(exception);
+            await NotifyErrorAsync(exception, cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -269,7 +340,7 @@ public sealed class RuleScriptEngine
         try
         {
             var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution).Execute(module, context);
+            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution).Execute(module, context);
         }
         catch (RuleScriptException exception)
         {
@@ -306,14 +377,14 @@ public sealed class RuleScriptEngine
         try
         {
             var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, IsBreakpoint, () => StepExecution)
+            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution)
                 .ExecuteAsync(module, context, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, fullPath);
-            NotifyError(exception);
+            await NotifyErrorAsync(exception, cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -437,6 +508,295 @@ public sealed class RuleScriptEngine
         return module;
     }
 
+    private static void CollectSymbols(
+        IEnumerable<Statement> statements,
+        ISet<string> variables,
+        ISet<string> userFunctions,
+        ISet<string> importAliases)
+    {
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case VarStatement varStatement:
+                    variables.Add(varStatement.Name);
+                    break;
+                case AssignmentStatement assignmentStatement:
+                    variables.Add(assignmentStatement.Name);
+                    break;
+                case GlobalAssignmentStatement globalAssignmentStatement:
+                    variables.Add(globalAssignmentStatement.Name);
+                    break;
+                case ForeachStatement foreachStatement:
+                    variables.Add(foreachStatement.VariableName);
+                    CollectSymbols(foreachStatement.Body, variables, userFunctions, importAliases);
+                    break;
+                case IfStatement ifStatement:
+                    CollectSymbols(ifStatement.ThenBranch, variables, userFunctions, importAliases);
+                    CollectSymbols(ifStatement.ElseBranch, variables, userFunctions, importAliases);
+                    break;
+                case WhileStatement whileStatement:
+                    CollectSymbols(whileStatement.Body, variables, userFunctions, importAliases);
+                    break;
+                case FunctionDeclarationStatement functionDeclaration:
+                    userFunctions.Add(functionDeclaration.Name);
+                    foreach (var parameter in functionDeclaration.Parameters)
+                    {
+                        variables.Add(parameter);
+                    }
+
+                    CollectSymbols(functionDeclaration.Body, variables, userFunctions, importAliases);
+                    break;
+                case ImportStatement { Alias: not null } importStatement:
+                    importAliases.Add(importStatement.Alias);
+                    break;
+            }
+        }
+    }
+
+    private RuleScriptAnalysisResult AnalyzeBestEffort(string script)
+    {
+        var variables = new HashSet<string>(StringComparer.Ordinal);
+        var userFunctions = new HashSet<string>(StringComparer.Ordinal);
+        var importAliases = new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+            CollectSymbolsFromTokens(tokens, variables, userFunctions, importAliases);
+        }
+        catch (SyntaxException)
+        {
+            CollectSymbolsFromText(script, variables, userFunctions, importAliases);
+        }
+
+        return new RuleScriptAnalysisResult(
+            variables,
+            userFunctions,
+            RegisteredFunctionNames,
+            _builtinFunctions.Names,
+            importAliases);
+    }
+
+    private static void CollectSymbolsFromTokens(
+        IReadOnlyList<Token> tokens,
+        ISet<string> variables,
+        ISet<string> userFunctions,
+        ISet<string> importAliases)
+    {
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+
+            switch (token.Type)
+            {
+                case TokenType.Var when TryGetIdentifier(tokens, i + 1, out var variableName):
+                    variables.Add(variableName);
+                    break;
+                case TokenType.Foreach when TryGetIdentifier(tokens, i + 1, out var iteratorName):
+                    variables.Add(iteratorName);
+                    break;
+                case TokenType.Function when TryGetIdentifier(tokens, i + 1, out var functionName):
+                    userFunctions.Add(functionName);
+                    CollectFunctionParameters(tokens, i + 2, variables);
+                    break;
+                case TokenType.Import:
+                    CollectImportAlias(tokens, i + 1, importAliases);
+                    break;
+                case TokenType.Identifier when TryGetToken(tokens, i + 1, out var next) && next.Type == TokenType.Assign:
+                    variables.Add(token.Lexeme);
+                    break;
+            }
+        }
+    }
+
+    private static void CollectFunctionParameters(IReadOnlyList<Token> tokens, int start, ISet<string> variables)
+    {
+        if (!TryGetToken(tokens, start, out var openParen) || openParen.Type != TokenType.LeftParen)
+        {
+            return;
+        }
+
+        for (var i = start + 1; i < tokens.Count && tokens[i].Type is not TokenType.RightParen and not TokenType.EndOfFile; i++)
+        {
+            if (tokens[i].Type == TokenType.Identifier)
+            {
+                variables.Add(tokens[i].Lexeme);
+            }
+        }
+    }
+
+    private static void CollectImportAlias(IReadOnlyList<Token> tokens, int start, ISet<string> importAliases)
+    {
+        for (var i = start; i < tokens.Count && tokens[i].Type is not TokenType.Semicolon and not TokenType.EndOfFile; i++)
+        {
+            if (tokens[i].Type == TokenType.As && TryGetIdentifier(tokens, i + 1, out var alias))
+            {
+                importAliases.Add(alias);
+                return;
+            }
+        }
+    }
+
+    private static bool TryGetIdentifier(IReadOnlyList<Token> tokens, int index, out string name)
+    {
+        if (TryGetToken(tokens, index, out var token) && token.Type == TokenType.Identifier)
+        {
+            name = token.Lexeme;
+            return true;
+        }
+
+        name = string.Empty;
+        return false;
+    }
+
+    private static bool TryGetToken(IReadOnlyList<Token> tokens, int index, out Token token)
+    {
+        if (index >= 0 && index < tokens.Count)
+        {
+            token = tokens[index];
+            return true;
+        }
+
+        token = new Token(TokenType.EndOfFile, string.Empty, null, 0, 0);
+        return false;
+    }
+
+    private static void CollectSymbolsFromText(
+        string script,
+        ISet<string> variables,
+        ISet<string> userFunctions,
+        ISet<string> importAliases)
+    {
+        foreach (var rawLine in script.Split(["\r\n", "\n"], StringSplitOptions.None))
+        {
+            var line = rawLine.TrimStart();
+
+            if (TryReadIdentifierAfterKeyword(line, "var", out var variableName)
+                || TryReadIdentifierAfterKeyword(line, "foreach", out variableName))
+            {
+                variables.Add(variableName);
+            }
+
+            if (TryReadIdentifierAfterKeyword(line, "function", out var functionName))
+            {
+                userFunctions.Add(functionName);
+                CollectParametersFromText(line, variables);
+            }
+
+            if (TryReadAssignmentTarget(line, out var assignmentName))
+            {
+                variables.Add(assignmentName);
+            }
+
+            if (TryReadImportAlias(line, out var alias))
+            {
+                importAliases.Add(alias);
+            }
+        }
+    }
+
+    private static bool TryReadIdentifierAfterKeyword(string line, string keyword, out string identifier)
+    {
+        identifier = string.Empty;
+
+        if (!line.StartsWith(keyword, StringComparison.Ordinal)
+            || line.Length <= keyword.Length
+            || !char.IsWhiteSpace(line[keyword.Length]))
+        {
+            return false;
+        }
+
+        return TryReadIdentifier(line, keyword.Length, out identifier);
+    }
+
+    private static bool TryReadAssignmentTarget(string line, out string identifier)
+    {
+        identifier = string.Empty;
+        var equalsIndex = line.IndexOf('=');
+
+        if (equalsIndex <= 0 || (equalsIndex + 1 < line.Length && line[equalsIndex + 1] == '='))
+        {
+            return false;
+        }
+
+        var target = line[..equalsIndex].Trim();
+
+        if (!IsValidIdentifier(target) || target is "var" or "global")
+        {
+            return false;
+        }
+
+        identifier = target;
+        return true;
+    }
+
+    private static bool TryReadImportAlias(string line, out string alias)
+    {
+        alias = string.Empty;
+        var marker = " as ";
+        var index = line.IndexOf(marker, StringComparison.Ordinal);
+
+        return index >= 0 && TryReadIdentifier(line, index + marker.Length, out alias);
+    }
+
+    private static void CollectParametersFromText(string line, ISet<string> variables)
+    {
+        var open = line.IndexOf('(');
+        var close = line.IndexOf(')', open + 1);
+
+        if (open < 0 || close < 0)
+        {
+            return;
+        }
+
+        foreach (var part in line.Substring(open + 1, close - open - 1).Split(','))
+        {
+            var parameter = part.Trim();
+
+            if (IsValidIdentifier(parameter))
+            {
+                variables.Add(parameter);
+            }
+        }
+    }
+
+    private static bool TryReadIdentifier(string text, int start, out string identifier)
+    {
+        identifier = string.Empty;
+
+        while (start < text.Length && char.IsWhiteSpace(text[start]))
+        {
+            start++;
+        }
+
+        if (start >= text.Length || !IsIdentifierStart(text[start]))
+        {
+            return false;
+        }
+
+        var end = start + 1;
+
+        while (end < text.Length && IsIdentifierPart(text[end]))
+        {
+            end++;
+        }
+
+        identifier = text[start..end];
+        return true;
+    }
+
+    private static bool IsValidIdentifier(string value)
+    {
+        return !string.IsNullOrEmpty(value)
+            && IsIdentifierStart(value[0])
+            && value.Skip(1).All(IsIdentifierPart);
+    }
+
+    private static bool IsIdentifierStart(char value) => char.IsLetter(value) || value == '_';
+
+    private static bool IsIdentifierPart(char value) => IsIdentifierStart(value) || char.IsDigit(value);
+
     private string ResolveImportPath(string path, string baseDirectory)
     {
         return ImportResolver.GetFullPath(Path.IsPathRooted(path)
@@ -460,7 +820,26 @@ public sealed class RuleScriptEngine
 
     private RuleScriptExecutionDirective NotifyRuntimeEvent(RuleScriptRuntimeEvent runtimeEvent)
     {
+        if (RuntimeEventHandler is null && RuntimeEventHandlerAsync is not null)
+        {
+            throw new InvalidOperationException("RuntimeEventHandlerAsync requires ExecuteAsync or ExecuteFileAsync.");
+        }
+
         var directive = RuntimeEventHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
+
+        if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.BreakpointHit or RuleScriptRuntimeEventKind.StepPaused)
+        {
+            StepExecution = directive == RuleScriptExecutionDirective.StepOver;
+        }
+
+        return directive;
+    }
+
+    private async Task<RuleScriptExecutionDirective> NotifyRuntimeEventAsync(RuleScriptRuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+    {
+        var directive = RuntimeEventHandlerAsync is not null
+            ? await RuntimeEventHandlerAsync(runtimeEvent, cancellationToken).ConfigureAwait(false)
+            : NotifyRuntimeEvent(runtimeEvent);
 
         if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.BreakpointHit or RuleScriptRuntimeEventKind.StepPaused)
         {
@@ -478,6 +857,16 @@ public sealed class RuleScriptEngine
             location,
             exception.Message,
             exception: exception));
+    }
+
+    private Task NotifyErrorAsync(RuleScriptException exception, CancellationToken cancellationToken)
+    {
+        var location = new RuleScriptSourceLocation(exception.SourceFile, exception.Line, exception.Column);
+        return NotifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.Error,
+            location,
+            exception.Message,
+            exception: exception), cancellationToken);
     }
 
     private bool IsBreakpoint(RuleScriptSourceLocation location)

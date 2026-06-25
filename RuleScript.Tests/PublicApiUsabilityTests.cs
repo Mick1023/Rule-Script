@@ -66,6 +66,38 @@ public sealed class PublicApiUsabilityTests
     }
 
     [Fact]
+    public void RuntimeContext_VariableNames_ReturnsSortedSnapshot()
+    {
+        var context = new RuntimeContext();
+        context.Set("beta", 2);
+        context.Set("alpha", 1);
+
+        var names = context.VariableNames;
+        context.Set("gamma", 3);
+
+        Assert.Equal(["alpha", "beta"], names);
+        Assert.Equal(["alpha", "beta", "gamma"], context.VariableNames);
+    }
+
+    [Fact]
+    public void RuleScriptEngine_GetVariableNames_ReturnsContextVariableNames()
+    {
+        var engine = new RuleScriptEngine();
+        var context = engine.Execute("""
+            var distance = 519;
+
+            function LocalValue():
+                var localOnly = 1;
+                return localOnly;
+            endfunction
+
+            result = LocalValue();
+            """);
+
+        Assert.Equal(["distance", "result"], engine.GetVariableNames(context));
+    }
+
+    [Fact]
     public void RegisterFunction_OverwriteBehavior_RemainsStable()
     {
         var engine = new RuleScriptEngine();
@@ -75,6 +107,124 @@ public sealed class PublicApiUsabilityTests
         var context = engine.Execute("result = Value();");
 
         Assert.Equal("second", context.Get<string>("result"));
+    }
+
+    [Fact]
+    public void RegisteredFunctionNames_ReturnsSyncAndAsyncHostFunctionNames()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Read", _ => 1);
+        engine.RegisterFunctionAsync("Delay", _ => Task.FromResult<object?>(null));
+
+        Assert.Equal(["Delay", "Read"], engine.RegisteredFunctionNames);
+    }
+
+    [Fact]
+    public void RegisteredFunctionNames_ReflectsOverwriteUnregisterAndClear()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Value", _ => 1);
+        engine.RegisterFunctionAsync("Value", _ => Task.FromResult<object?>(2));
+        engine.RegisterFunction("Other", _ => 3);
+
+        Assert.Equal(["Other", "Value"], engine.RegisteredFunctionNames);
+
+        Assert.True(engine.UnregisterFunction("Value"));
+        Assert.Equal(["Other"], engine.RegisteredFunctionNames);
+
+        engine.ClearFunctions();
+        Assert.Empty(engine.RegisteredFunctionNames);
+    }
+
+    [Fact]
+    public void Analyze_ReturnsStaticSymbolsWithoutExecutingScript()
+    {
+        var engine = new RuleScriptEngine();
+        var called = false;
+        engine.RegisterFunction("Read", _ =>
+        {
+            called = true;
+            return 1;
+        });
+        engine.RegisterFunctionAsync("Wait", _ => Task.FromResult<object?>(null));
+
+        var result = engine.Analyze("""
+            import "robot.rules" as robot;
+
+            var distance = Read();
+            status = "OK";
+
+            foreach item in [1, 2]:
+                total = item;
+            endforeach
+
+            function Format(value):
+                var localText = ToString(value);
+                return localText;
+            endfunction
+            """);
+
+        Assert.False(called);
+        Assert.Equal(["distance", "item", "localText", "status", "total", "value"], result.VariableNames);
+        Assert.Equal(["Format"], result.UserFunctionNames);
+        Assert.Equal(["Read", "Wait"], result.HostFunctionNames);
+        Assert.Contains("ToString", result.BuiltinFunctionNames);
+        Assert.Contains("Format", result.FunctionNames);
+        Assert.Contains("Read", result.FunctionNames);
+        Assert.Contains("ToString", result.FunctionNames);
+        Assert.Equal(["robot"], result.ImportAliases);
+    }
+
+    [Fact]
+    public void TryAnalyze_ParseableScript_ReturnsSuccessfulAnalysis()
+    {
+        var engine = new RuleScriptEngine();
+
+        var result = engine.TryAnalyze("var value = 1;");
+
+        Assert.True(result.Success);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(["value"], result.Symbols.VariableNames);
+    }
+
+    [Fact]
+    public void TryAnalyze_IncompleteScript_ReturnsDiagnosticsAndPartialSymbols()
+    {
+        var engine = new RuleScriptEngine();
+
+        var result = engine.TryAnalyze("""
+            var distance =
+            status = "editing";
+
+            function Format(value):
+                var localText =
+            """);
+
+        Assert.False(result.Success);
+        Assert.NotEmpty(result.Diagnostics);
+        Assert.Contains("distance", result.Symbols.VariableNames);
+        Assert.Contains("status", result.Symbols.VariableNames);
+        Assert.Contains("value", result.Symbols.VariableNames);
+        Assert.Contains("localText", result.Symbols.VariableNames);
+        Assert.Equal(["Format"], result.Symbols.UserFunctionNames);
+    }
+
+    [Fact]
+    public void TryAnalyze_LexerError_ReturnsDiagnosticsAndTextScannedSymbols()
+    {
+        var engine = new RuleScriptEngine();
+
+        var result = engine.TryAnalyze("""
+            import "module.rules" as module;
+            var name = "unfinished
+            result = name;
+            """);
+
+        Assert.False(result.Success);
+        Assert.NotEmpty(result.Diagnostics);
+        Assert.Contains("name", result.Symbols.VariableNames);
+        Assert.Contains("result", result.Symbols.VariableNames);
+        Assert.Equal(["module"], result.Symbols.ImportAliases);
     }
 
     [Fact]

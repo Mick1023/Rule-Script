@@ -56,6 +56,98 @@ public sealed class RuntimeNotificationTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_AwaitsAsyncRuntimeEventHandler()
+    {
+        var engine = new RuleScriptEngine();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canContinue = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var currentLines = new List<int?>();
+
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, cancellationToken) =>
+        {
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.CurrentLineChanged)
+            {
+                currentLines.Add(runtimeEvent.Location.Line);
+                started.TrySetResult();
+                await canContinue.Task.WaitAsync(cancellationToken);
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var runTask = engine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        await started.Task.WaitAsync(TestTimeout());
+
+        Assert.False(runTask.IsCompleted);
+
+        canContinue.SetResult();
+        var context = await runTask.WaitAsync(TestTimeout());
+
+        Assert.Equal(2d, context.Get<double>("result"));
+        Assert.Equal([1, 2], currentLines);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AsyncRuntimeEventHandlerCanControlStepExecution()
+    {
+        var engine = new RuleScriptEngine
+        {
+            StepExecution = true
+        };
+        var stepLines = new List<int?>();
+
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.StepPaused)
+            {
+                stepLines.Add(runtimeEvent.Location.Line);
+                return RuleScriptExecutionDirective.StepOver;
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        await engine.ExecuteAsync("""
+            var a = 1;
+            var b = 2;
+            result = a + b;
+            """);
+
+        Assert.Equal([1, 2, 3], stepLines);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CanUseSynchronousRuntimeEventHandler()
+    {
+        var engine = new RuleScriptEngine();
+        var currentLines = new List<int?>();
+
+        engine.RuntimeEventHandler = runtimeEvent =>
+        {
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.CurrentLineChanged)
+            {
+                currentLines.Add(runtimeEvent.Location.Line);
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var context = await engine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.Equal(2d, context.Get<double>("result"));
+        Assert.Equal([1, 2], currentLines);
+    }
+
+    [Fact]
     public void Breakpoint_NotifiesHostBeforeStatementExecutes()
     {
         var engine = new RuleScriptEngine();
@@ -163,6 +255,49 @@ public sealed class RuntimeNotificationTests
         Assert.Same(exception, errorEvent?.Exception);
         Assert.Equal(project.PathFor("module.rules"), errorEvent?.Location.File);
         Assert.Equal(2, errorEvent?.Location.Line);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RuntimeError_NotifiesAsyncHandler()
+    {
+        var engine = new RuleScriptEngine();
+        RuleScriptRuntimeEvent? errorEvent = null;
+
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Error)
+            {
+                errorEvent = runtimeEvent;
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var exception = await Assert.ThrowsAsync<RuntimeException>(() => engine.ExecuteAsync("result = missing;"));
+
+        Assert.Same(exception, errorEvent?.Exception);
+        Assert.Equal("<script>", errorEvent?.Location.File);
+        Assert.Equal(1, errorEvent?.Location.Line);
+    }
+
+    [Fact]
+    public void Execute_AsyncRuntimeEventHandler_ThrowsClearException()
+    {
+        var engine = new RuleScriptEngine
+        {
+            RuntimeEventHandlerAsync = (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue)
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => engine.Execute("result = 1;"));
+
+        Assert.Contains("ExecuteAsync", exception.Message);
+    }
+
+    private static TimeSpan TestTimeout()
+    {
+        return TimeSpan.FromSeconds(5);
     }
 
     private sealed class RuleScriptProject : IDisposable

@@ -56,6 +56,17 @@ public sealed class AsyncHostFunctionTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_CanCallSynchronousHostFunction()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Read", _ => 41);
+
+        var context = await engine.ExecuteAsync("result = Read() + 1;");
+
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public async Task ExecuteFileAsync_CanUseAsyncHostFunction()
     {
         using var project = new RuleScriptProject();

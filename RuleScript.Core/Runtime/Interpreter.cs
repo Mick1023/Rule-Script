@@ -11,6 +11,7 @@ public sealed class Interpreter
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions;
+    private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
     private readonly ScriptModule _mainModule;
     private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
@@ -31,7 +32,16 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         int maxLoopIterations = 100000)
-        : this(builtinFunctions, hostFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal), maxLoopIterations, new ScriptModule("<script>", []), _ => RuleScriptExecutionDirective.Continue, _ => false, () => false)
+        : this(
+            builtinFunctions,
+            hostFunctions,
+            new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal),
+            maxLoopIterations,
+            new ScriptModule("<script>", []),
+            _ => RuleScriptExecutionDirective.Continue,
+            (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue),
+            _ => false,
+            () => false)
     {
     }
 
@@ -42,6 +52,7 @@ public sealed class Interpreter
         int maxLoopIterations,
         ScriptModule mainModule,
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
+        Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
         Func<RuleScriptSourceLocation, bool> isBreakpoint,
         Func<bool> isStepExecution)
     {
@@ -50,6 +61,7 @@ public sealed class Interpreter
         _asyncHostFunctions = asyncHostFunctions ?? throw new ArgumentNullException(nameof(asyncHostFunctions));
         _mainModule = mainModule ?? throw new ArgumentNullException(nameof(mainModule));
         _notifyRuntimeEvent = notifyRuntimeEvent ?? throw new ArgumentNullException(nameof(notifyRuntimeEvent));
+        _notifyRuntimeEventAsync = notifyRuntimeEventAsync ?? throw new ArgumentNullException(nameof(notifyRuntimeEventAsync));
         _isBreakpoint = isBreakpoint ?? throw new ArgumentNullException(nameof(isBreakpoint));
         _isStepExecution = isStepExecution ?? throw new ArgumentNullException(nameof(isStepExecution));
         _maxLoopIterations = maxLoopIterations > 0
@@ -197,7 +209,7 @@ public sealed class Interpreter
     private async Task ExecuteStatementAsync(Statement statement, RuntimeContext context, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ReportStatementLocation(statement, context);
+        await ReportStatementLocationAsync(statement, context, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -982,7 +994,7 @@ public sealed class Interpreter
             {
                 if (expression.Name == "Print")
                 {
-                    NotifyPrint(expression, builtinValue);
+                    await NotifyPrintAsync(expression, builtinValue, cancellationToken).ConfigureAwait(false);
                 }
 
                 return builtinValue;
@@ -1193,6 +1205,34 @@ public sealed class Interpreter
         }
     }
 
+    private async Task ReportStatementLocationAsync(Statement statement, RuntimeContext context, CancellationToken cancellationToken)
+    {
+        var location = GetStatementLocation(statement);
+        context.CurrentLocation = location;
+
+        await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.CurrentLineChanged,
+            location), cancellationToken).ConfigureAwait(false);
+
+        var breakpointHit = _isBreakpoint(location);
+
+        if (breakpointHit)
+        {
+            await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
+                RuleScriptRuntimeEventKind.BreakpointHit,
+                location,
+                $"Breakpoint hit at {location.File}:{location.Line}."), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!breakpointHit && _isStepExecution())
+        {
+            await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
+                RuleScriptRuntimeEventKind.StepPaused,
+                location,
+                $"Step paused at {location.File}:{location.Line}."), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private void NotifyPrint(FunctionCallExpression expression, RuntimeValue value)
     {
         var location = new RuleScriptSourceLocation(CurrentModule.Name, expression.Line, expression.Column);
@@ -1201,6 +1241,16 @@ public sealed class Interpreter
             location,
             ConvertToString(value.Value),
             value.Value));
+    }
+
+    private Task NotifyPrintAsync(FunctionCallExpression expression, RuntimeValue value, CancellationToken cancellationToken)
+    {
+        var location = new RuleScriptSourceLocation(CurrentModule.Name, expression.Line, expression.Column);
+        return _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
+            RuleScriptRuntimeEventKind.Print,
+            location,
+            ConvertToString(value.Value),
+            value.Value), cancellationToken);
     }
 
     private RuleScriptSourceLocation GetStatementLocation(Statement statement)

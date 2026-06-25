@@ -17,6 +17,11 @@ public sealed class RuntimeContext
         new ReadOnlyDictionary<string, RuntimeValue>(new Dictionary<string, RuntimeValue>(_variables, StringComparer.Ordinal));
 
     /// <summary>
+    /// Gets a read-only snapshot of current variable names.
+    /// </summary>
+    public IReadOnlyList<string> VariableNames => _variables.Keys.Order(StringComparer.Ordinal).ToArray();
+
+    /// <summary>
     /// Gets the last source location reported during execution.
     /// </summary>
     public RuleScriptSourceLocation? CurrentLocation { get; internal set; }
