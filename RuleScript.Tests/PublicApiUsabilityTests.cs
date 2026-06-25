@@ -228,6 +228,108 @@ public sealed class PublicApiUsabilityTests
     }
 
     [Fact]
+    public void TryAnalyze_ParseableScript_DoesNotPreventLaterExecute()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        var context = engine.Execute("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.True(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public void TryAnalyze_IncompleteScript_DoesNotPreventLaterExecute()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("var value =");
+
+        var context = engine.Execute("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.False(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public void TryAnalyze_LexerError_DoesNotPreventLaterExecute()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("var value = \"unfinished");
+
+        var context = engine.Execute("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.False(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task TryAnalyze_ParseableScript_DoesNotPreventLaterExecuteAsync()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        var context = await engine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.True(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task TryAnalyze_IncompleteScript_DoesNotPreventLaterExecuteAsync()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("var value =");
+
+        var context = await engine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.False(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task TryAnalyze_LexerError_DoesNotPreventLaterExecuteAsync()
+    {
+        var engine = new RuleScriptEngine();
+
+        var analysis = engine.TryAnalyze("var value = \"unfinished");
+
+        var context = await engine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.False(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void UnregisterFunction_RemovesHostFunction()
     {
         var engine = new RuleScriptEngine();

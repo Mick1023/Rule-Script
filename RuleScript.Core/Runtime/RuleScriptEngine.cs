@@ -820,11 +820,6 @@ public sealed class RuleScriptEngine
 
     private RuleScriptExecutionDirective NotifyRuntimeEvent(RuleScriptRuntimeEvent runtimeEvent)
     {
-        if (RuntimeEventHandler is null && RuntimeEventHandlerAsync is not null)
-        {
-            throw new InvalidOperationException("RuntimeEventHandlerAsync requires ExecuteAsync or ExecuteFileAsync.");
-        }
-
         var directive = RuntimeEventHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
 
         if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.BreakpointHit or RuleScriptRuntimeEventKind.StepPaused)

@@ -283,16 +283,81 @@ public sealed class RuntimeNotificationTests
     }
 
     [Fact]
-    public void Execute_AsyncRuntimeEventHandler_ThrowsClearException()
+    public void Execute_AsyncRuntimeEventHandler_IgnoresAsyncHandlerAndRuns()
     {
+        var called = false;
         var engine = new RuleScriptEngine
         {
-            RuntimeEventHandlerAsync = (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue)
+            RuntimeEventHandlerAsync = (_, _) =>
+            {
+                called = true;
+                return Task.FromResult(RuleScriptExecutionDirective.Continue);
+            }
         };
 
-        var exception = Assert.Throws<InvalidOperationException>(() => engine.Execute("result = 1;"));
+        var context = engine.Execute("result = 1;");
 
-        Assert.Contains("ExecuteAsync", exception.Message);
+        Assert.False(called);
+        Assert.Equal(1d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public void TryAnalyze_DoesNotPreventRuntimeEventHandlerNotifications()
+    {
+        var engine = new RuleScriptEngine();
+        var eventKinds = new List<RuleScriptRuntimeEventKind>();
+
+        engine.RuntimeEventHandler = runtimeEvent =>
+        {
+            eventKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var analysis = engine.TryAnalyze("""
+            var value = 1;
+            Print(value);
+            """);
+
+        var context = engine.Execute("""
+            var value = 1;
+            Print(value);
+            result = value + 1;
+            """);
+
+        Assert.True(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+        Assert.Contains(RuleScriptRuntimeEventKind.CurrentLineChanged, eventKinds);
+        Assert.Contains(RuleScriptRuntimeEventKind.Print, eventKinds);
+    }
+
+    [Fact]
+    public async Task TryAnalyze_DoesNotPreventRuntimeEventHandlerAsyncNotifications()
+    {
+        var engine = new RuleScriptEngine();
+        var eventKinds = new List<RuleScriptRuntimeEventKind>();
+
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            eventKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var analysis = engine.TryAnalyze("""
+            var value = 1;
+            Print(value);
+            """);
+
+        var context = await engine.ExecuteAsync("""
+            var value = 1;
+            Print(value);
+            result = value + 1;
+            """);
+
+        Assert.True(analysis.Success);
+        Assert.Equal(2d, context.Get<double>("result"));
+        Assert.Contains(RuleScriptRuntimeEventKind.CurrentLineChanged, eventKinds);
+        Assert.Contains(RuleScriptRuntimeEventKind.Print, eventKinds);
     }
 
     private static TimeSpan TestTimeout()
