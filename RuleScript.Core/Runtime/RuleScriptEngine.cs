@@ -10,7 +10,9 @@ public sealed class RuleScriptEngine
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
+    private readonly object _executionSync = new();
     private IImportResolver _importResolver = new FileSystemImportResolver();
+    private CancellationTokenSource? _stopCancellation;
 
     /// <summary>
     /// Gets or sets the maximum number of iterations allowed for each loop.
@@ -246,6 +248,27 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Requests cancellation for the currently running script execution.
+    /// </summary>
+    public void Stop()
+    {
+        CancellationTokenSource? stopCancellation;
+
+        lock (_executionSync)
+        {
+            stopCancellation = _stopCancellation;
+        }
+
+        try
+        {
+            stopCancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    /// <summary>
     /// Executes a script using a new runtime context.
     /// </summary>
     public RuntimeContext Execute(string script)
@@ -263,18 +286,24 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(script);
         ArgumentNullException.ThrowIfNull(context);
 
+        using var stopCancellation = CreateStopCancellation();
+
         try
         {
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution).Execute(module, context);
+            CreateInterpreter(module, stopCancellation.Token).Execute(module, context);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, "<script>");
             NotifyError(exception);
             throw;
+        }
+        finally
+        {
+            ClearStopCancellation(stopCancellation);
         }
     }
 
@@ -296,20 +325,27 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(script);
         ArgumentNullException.ThrowIfNull(context);
 
+        using var stopCancellation = CreateStopCancellation();
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopCancellation.Token);
+
         try
         {
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
-            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution)
-                .ExecuteAsync(module, context, cancellationToken)
+            await CreateInterpreter(module, linkedCancellation.Token)
+                .ExecuteAsync(module, context, linkedCancellation.Token)
                 .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, "<script>");
-            await NotifyErrorAsync(exception, cancellationToken).ConfigureAwait(false);
+            await NotifyErrorAsync(exception, linkedCancellation.Token).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            ClearStopCancellation(stopCancellation);
         }
     }
 
@@ -336,17 +372,22 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(context);
 
         var fullPath = ResolveExecuteFilePath(path);
+        using var stopCancellation = CreateStopCancellation();
 
         try
         {
             var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-            new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution).Execute(module, context);
+            CreateInterpreter(module, stopCancellation.Token).Execute(module, context);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, fullPath);
             NotifyError(exception);
             throw;
+        }
+        finally
+        {
+            ClearStopCancellation(stopCancellation);
         }
     }
 
@@ -373,19 +414,63 @@ public sealed class RuleScriptEngine
         ArgumentNullException.ThrowIfNull(context);
 
         var fullPath = ResolveExecuteFilePath(path);
+        using var stopCancellation = CreateStopCancellation();
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopCancellation.Token);
 
         try
         {
             var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
-            await new Interpreter(_builtinFunctions, _hostFunctions, _asyncHostFunctions, MaxLoopIterations, module, NotifyRuntimeEvent, NotifyRuntimeEventAsync, IsBreakpoint, () => StepExecution)
-                .ExecuteAsync(module, context, cancellationToken)
+            await CreateInterpreter(module, linkedCancellation.Token)
+                .ExecuteAsync(module, context, linkedCancellation.Token)
                 .ConfigureAwait(false);
         }
         catch (RuleScriptException exception)
         {
             AssignSourceFile(exception, fullPath);
-            await NotifyErrorAsync(exception, cancellationToken).ConfigureAwait(false);
+            await NotifyErrorAsync(exception, linkedCancellation.Token).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            ClearStopCancellation(stopCancellation);
+        }
+    }
+
+    private Interpreter CreateInterpreter(ScriptModule module, CancellationToken cancellationToken)
+    {
+        return new Interpreter(
+            _builtinFunctions,
+            _hostFunctions,
+            _asyncHostFunctions,
+            MaxLoopIterations,
+            module,
+            NotifyRuntimeEvent,
+            NotifyRuntimeEventAsync,
+            IsBreakpoint,
+            () => StepExecution,
+            cancellationToken);
+    }
+
+    private CancellationTokenSource CreateStopCancellation()
+    {
+        var stopCancellation = new CancellationTokenSource();
+
+        lock (_executionSync)
+        {
+            _stopCancellation = stopCancellation;
+        }
+
+        return stopCancellation;
+    }
+
+    private void ClearStopCancellation(CancellationTokenSource stopCancellation)
+    {
+        lock (_executionSync)
+        {
+            if (ReferenceEquals(_stopCancellation, stopCancellation))
+            {
+                _stopCancellation = null;
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.4-blue)](docs/releases/v1.0.0-rc5.4.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.5-blue)](docs/releases/v1.0.0-rc5.5.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -466,6 +466,25 @@ var context = await engine.ExecuteAsync("""
 ```
 
 `Execute` remains synchronous for existing hosts. If you use synchronous host functions in a UI application, run the script on a background task so the UI thread can keep rendering.
+
+Hosts can stop the current engine execution directly:
+
+```csharp
+var runTask = engine.ExecuteAsync(script);
+
+engine.Stop();
+
+try
+{
+    await runTask;
+}
+catch (OperationCanceledException)
+{
+    // Execution was stopped by the host.
+}
+```
+
+`Stop()` cancels the active `ExecuteAsync` / `ExecuteFileAsync` token, including async host functions that observe the provided cancellation token. Synchronous `Execute` / `ExecuteFile` also observe `Stop()` at statement, loop, and user-function boundaries when they are running on another thread.
 
 ## Host Runtime Notifications
 

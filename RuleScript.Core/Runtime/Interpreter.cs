@@ -17,6 +17,7 @@ public sealed class Interpreter
     private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
     private readonly Func<RuleScriptSourceLocation, bool> _isBreakpoint;
     private readonly Func<bool> _isStepExecution;
+    private readonly CancellationToken _cancellationToken;
     private readonly Stack<ScriptModule> _moduleStack = new();
     private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
     private readonly Stack<int> _functionLoopBoundaries = new();
@@ -54,7 +55,8 @@ public sealed class Interpreter
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
         Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
         Func<RuleScriptSourceLocation, bool> isBreakpoint,
-        Func<bool> isStepExecution)
+        Func<bool> isStepExecution,
+        CancellationToken cancellationToken = default)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
@@ -64,6 +66,7 @@ public sealed class Interpreter
         _notifyRuntimeEventAsync = notifyRuntimeEventAsync ?? throw new ArgumentNullException(nameof(notifyRuntimeEventAsync));
         _isBreakpoint = isBreakpoint ?? throw new ArgumentNullException(nameof(isBreakpoint));
         _isStepExecution = isStepExecution ?? throw new ArgumentNullException(nameof(isStepExecution));
+        _cancellationToken = cancellationToken;
         _maxLoopIterations = maxLoopIterations > 0
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
@@ -98,6 +101,8 @@ public sealed class Interpreter
         {
             foreach (var statement in module.Statements)
             {
+                _cancellationToken.ThrowIfCancellationRequested();
+
                 if (statement is not FunctionDeclarationStatement and not ImportStatement)
                 {
                     ExecuteStatement(statement, context);
@@ -155,6 +160,7 @@ public sealed class Interpreter
 
     private void ExecuteStatement(Statement statement, RuntimeContext context)
     {
+        _cancellationToken.ThrowIfCancellationRequested();
         ReportStatementLocation(statement, context);
 
         try
@@ -273,6 +279,7 @@ public sealed class Interpreter
 
         foreach (var childStatement in branch)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             ExecuteStatement(childStatement, context);
         }
     }
@@ -303,6 +310,8 @@ public sealed class Interpreter
         {
             while (true)
             {
+                _cancellationToken.ThrowIfCancellationRequested();
+
                 if (iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"while exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "while");
@@ -326,6 +335,7 @@ public sealed class Interpreter
                 {
                     foreach (var childStatement in statement.Body)
                     {
+                        _cancellationToken.ThrowIfCancellationRequested();
                         ExecuteStatement(childStatement, context);
                     }
                 }
@@ -416,6 +426,8 @@ public sealed class Interpreter
         {
             foreach (var item in items)
             {
+                _cancellationToken.ThrowIfCancellationRequested();
+
                 if (iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"foreach exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "foreach");
@@ -435,6 +447,7 @@ public sealed class Interpreter
                 {
                     foreach (var childStatement in statement.Body)
                     {
+                        _cancellationToken.ThrowIfCancellationRequested();
                         ExecuteStatement(childStatement, context);
                     }
                 }
@@ -650,6 +663,8 @@ public sealed class Interpreter
 
     private RuntimeValue Evaluate(Expression expression, RuntimeContext context)
     {
+        _cancellationToken.ThrowIfCancellationRequested();
+
         return expression switch
         {
             LiteralExpression literal => RuntimeValue.FromObject(literal.Value),
@@ -1088,6 +1103,7 @@ public sealed class Interpreter
         {
             foreach (var statement in function.Body)
             {
+                _cancellationToken.ThrowIfCancellationRequested();
                 ExecuteStatement(statement, context);
             }
 

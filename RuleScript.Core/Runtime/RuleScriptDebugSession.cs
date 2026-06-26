@@ -194,6 +194,7 @@ public sealed class RuleScriptDebugSession
         try
         {
             stopCancellation?.Cancel();
+            _engine.Stop();
         }
         catch (ObjectDisposedException)
         {
@@ -202,9 +203,12 @@ public sealed class RuleScriptDebugSession
 
     private RuleScriptExecutionDirective HandleRuntimeEvent(
         RuleScriptRuntimeEvent runtimeEvent,
-        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler)
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler,
+        CancellationToken cancellationToken = default)
     {
         RuntimeEvent?.Invoke(runtimeEvent);
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (runtimeEvent.Kind is not RuleScriptRuntimeEventKind.BreakpointHit and not RuleScriptRuntimeEventKind.StepPaused)
         {
@@ -223,13 +227,26 @@ public sealed class RuleScriptDebugSession
             _nextPause.TrySetResult(runtimeEvent);
         }
 
+        using var cancellationRegistration = cancellationToken.CanBeCanceled
+            ? cancellationToken.Register(static state => ((ManualResetEventSlim)state!).Set(), signal)
+            : default;
+
         signal.Wait();
 
         lock (_sync)
         {
-            if (_stopRequested)
+            if (_stopRequested || cancellationToken.IsCancellationRequested)
             {
-                throw new OperationCanceledException("Debug session was stopped.");
+                IsPaused = false;
+                CurrentPause = null;
+
+                if (ReferenceEquals(_resumeSignal, signal))
+                {
+                    _resumeSignal = null;
+                }
+
+                _nextPause = CreatePauseCompletionSource();
+                throw new OperationCanceledException("Debug session was stopped.", cancellationToken);
             }
 
             return _resumeDirective;
@@ -263,7 +280,7 @@ public sealed class RuleScriptDebugSession
             await previousAsyncHandler(runtimeEvent, cancellationToken).ConfigureAwait(false);
         }
 
-        return HandleRuntimeEvent(runtimeEvent, previousHandler: null);
+        return HandleRuntimeEvent(runtimeEvent, previousHandler: null, cancellationToken);
     }
 
     private void Resume(RuleScriptExecutionDirective directive)

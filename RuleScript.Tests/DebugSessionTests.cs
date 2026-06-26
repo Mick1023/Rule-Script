@@ -284,6 +284,30 @@ public sealed class DebugSessionTests
     }
 
     [Fact]
+    public async Task EngineStop_WhilePausedAtBreakpoint_CancelsDebugRunAndClearsPause()
+    {
+        var engine = new RuleScriptEngine();
+        engine.AddBreakpoint(2);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+        var pause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+        Assert.True(session.IsPaused);
+
+        engine.Stop();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+        Assert.False(session.IsPaused);
+        Assert.Null(session.CurrentPause);
+        Assert.False(session.Context?.Contains("result"));
+    }
+
+    [Fact]
     public async Task Stop_RestoresRuntimeHandlers()
     {
         var syncEvents = new List<RuleScriptRuntimeEventKind>();
