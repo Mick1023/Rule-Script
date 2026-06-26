@@ -62,6 +62,40 @@ public sealed class DiagnosticsTests
     }
 
     [Fact]
+    public void ExecuteFile_SyntaxErrorInImportedFile_MessageIncludesImportedFile()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("main.rules", """import "base.rules";""");
+        project.Write("base.rules", """
+            function Add(a, b)
+                return a + b;
+            endfunction
+            """);
+        var engine = new RuleScriptEngine();
+
+        var exception = Assert.Throws<SyntaxException>(() => { engine.ExecuteFile(project.PathFor("main.rules")); });
+
+        Assert.Equal(project.PathFor("base.rules"), exception.SourceFile);
+        Assert.Contains(project.PathFor("base.rules"), exception.Message);
+        Assert.Contains("Line 2, Column", exception.Message);
+        Assert.Contains("Expected ':' after function declaration", exception.Message);
+    }
+
+    [Fact]
+    public void ExecuteFile_SyntaxErrorInMainFile_MessageIncludesFile()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("main.rules", "var value = ;");
+        var engine = new RuleScriptEngine();
+
+        var exception = Assert.Throws<SyntaxException>(() => { engine.ExecuteFile(project.PathFor("main.rules")); });
+
+        Assert.Equal(project.PathFor("main.rules"), exception.SourceFile);
+        Assert.Contains(project.PathFor("main.rules"), exception.Message);
+        Assert.Contains("Line 1, Column", exception.Message);
+    }
+
+    [Fact]
     public void Runtime_UndefinedVariable_IncludesVariableName()
     {
         var exception = Assert.Throws<RuntimeException>(() => Execute("result = distance;"));
@@ -116,5 +150,35 @@ public sealed class DiagnosticsTests
         var context = new RuntimeContext();
 
         engine.Execute(script, context);
+    }
+
+    private sealed class RuleScriptProject : IDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), "rulescript-tests", Guid.NewGuid().ToString("N"));
+
+        public RuleScriptProject()
+        {
+            Directory.CreateDirectory(_root);
+        }
+
+        public void Write(string fileName, string content)
+        {
+            var path = PathFor(fileName);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content);
+        }
+
+        public string PathFor(string fileName)
+        {
+            return Path.Combine(_root, fileName);
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
     }
 }

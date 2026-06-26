@@ -223,6 +223,7 @@ public sealed class RuntimeNotificationTests
         Assert.Same(exception, errorEvent?.Exception);
         Assert.Equal(project.PathFor("main.rules"), errorEvent?.Location.File);
         Assert.Equal(1, errorEvent?.Location.Line);
+        Assert.Contains(project.PathFor("main.rules"), errorEvent?.Message);
     }
 
     [Fact]
@@ -255,6 +256,7 @@ public sealed class RuntimeNotificationTests
         Assert.Same(exception, errorEvent?.Exception);
         Assert.Equal(project.PathFor("module.rules"), errorEvent?.Location.File);
         Assert.Equal(2, errorEvent?.Location.Line);
+        Assert.Contains(project.PathFor("module.rules"), errorEvent?.Message);
     }
 
     [Fact]

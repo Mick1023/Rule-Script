@@ -189,7 +189,7 @@ public sealed class RuleScriptEngine
         {
             var diagnostics = new[]
             {
-                new RuleScriptDiagnostic(exception.Message, exception.Line, exception.Column, exception.TokenText)
+                new RuleScriptDiagnostic(exception.Message, exception.Line, exception.Column, exception.TokenText, exception.SourceFile)
             };
 
             return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script), diagnostics, success: false);

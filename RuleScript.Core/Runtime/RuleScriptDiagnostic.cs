@@ -7,4 +7,5 @@ public sealed record RuleScriptDiagnostic(
     string Message,
     int? Line = null,
     int? Column = null,
-    string? TokenText = null);
+    string? TokenText = null,
+    string? SourceFile = null);
