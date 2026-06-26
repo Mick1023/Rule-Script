@@ -283,6 +283,71 @@ public sealed class RuntimeNotificationTests
     }
 
     [Fact]
+    public async Task RuntimeEventHandlerAsync_ReceivesBreakpointStepErrorAndPrintEvents()
+    {
+        var receivedKinds = new List<RuleScriptRuntimeEventKind>();
+
+        var breakpointEngine = new RuleScriptEngine();
+        breakpointEngine.AddBreakpoint(2);
+        breakpointEngine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            receivedKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var breakpointContext = await breakpointEngine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.Equal(2d, breakpointContext.Get<double>("result"));
+
+        var stepEngine = new RuleScriptEngine
+        {
+            StepExecution = true
+        };
+        stepEngine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            receivedKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        var stepContext = await stepEngine.ExecuteAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+
+        Assert.Equal(2d, stepContext.Get<double>("result"));
+
+        var printEngine = new RuleScriptEngine();
+        printEngine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            receivedKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        await printEngine.ExecuteAsync("Print(123);");
+
+        var errorEngine = new RuleScriptEngine();
+        errorEngine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            receivedKinds.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+
+        await Assert.ThrowsAsync<RuntimeException>(() => errorEngine.ExecuteAsync("result = missing;"));
+
+        Assert.Contains(RuleScriptRuntimeEventKind.BreakpointHit, receivedKinds);
+        Assert.Contains(RuleScriptRuntimeEventKind.StepPaused, receivedKinds);
+        Assert.Contains(RuleScriptRuntimeEventKind.Error, receivedKinds);
+        Assert.Contains(RuleScriptRuntimeEventKind.Print, receivedKinds);
+    }
+
+    [Fact]
     public void Execute_AsyncRuntimeEventHandler_IgnoresAsyncHandlerAndRuns()
     {
         var called = false;

@@ -10,6 +10,7 @@ This folder tracks planned release milestones and the work that must be complete
 - [v1.0.0-rc5](v1.0.0-rc5.md)
 - [v1.0.0-rc5.1](../releases/v1.0.0-rc5.1.md)
 - [v1.0.0-rc5.2](../releases/v1.0.0-rc5.2.md)
+- [v1.0.0-rc5.3](../releases/v1.0.0-rc5.3.md)
 
 ## Planning Notes
 

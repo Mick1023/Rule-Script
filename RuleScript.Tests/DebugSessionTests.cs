@@ -80,13 +80,133 @@ public sealed class DebugSessionTests
 
         Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
         Assert.Equal(5, pause.Location.Line);
-        Assert.Empty(asyncHandlerEvents);
+        Assert.Contains(RuleScriptRuntimeEventKind.Print, asyncHandlerEvents);
+        Assert.Contains(RuleScriptRuntimeEventKind.BreakpointHit, asyncHandlerEvents);
         Assert.False(session.Context?.Contains("result"));
 
         session.Continue();
         var context = await runTask.WaitAsync(TestTimeout());
 
         Assert.Equal(3d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task RunAsync_BreakpointAtLineFivePausesAndContinueCompletesExecution()
+    {
+        var printedValues = new List<object?>();
+        var engine = new RuleScriptEngine();
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Print)
+            {
+                printedValues.Add(runtimeEvent.Value);
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+        engine.RegisterFunctionAsync("Delay", async (args, cancellationToken) =>
+        {
+            await Task.Delay(Convert.ToInt32(args[0]), cancellationToken);
+            return null;
+        });
+        engine.AddBreakpoint(5);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            Print(5);
+            Delay(1);
+            Print(4);
+            Delay(1);
+            Print(3);
+            Delay(1);
+            Print(2);
+            Delay(1);
+            Print(1);
+            Delay(1);
+            Print(0);
+            """);
+        var pause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+        Assert.Equal(5, pause.Location.Line);
+        Assert.Equal([5d, 4d], printedValues);
+
+        session.Continue();
+        await runTask.WaitAsync(TestTimeout());
+
+        Assert.Equal([5d, 4d, 3d, 2d, 1d, 0d], printedValues);
+    }
+
+    [Fact]
+    public async Task RunAsync_StepOverMovesOneExecutableStatementAndWaitsForNextResume()
+    {
+        var engine = new RuleScriptEngine();
+        engine.AddBreakpoint(2);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            var a = 1;
+            var b = 2;
+            var c = 3;
+            result = a + b + c;
+            """);
+        var breakpoint = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, breakpoint.Kind);
+        Assert.Equal(2, breakpoint.Location.Line);
+        Assert.False(session.Context?.Contains("b"));
+
+        session.StepOver();
+        var firstStep = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.StepPaused, firstStep.Kind);
+        Assert.Equal(3, firstStep.Location.Line);
+        Assert.Equal(2d, session.Context?.Get<double>("b"));
+        Assert.False(session.Context?.Contains("c"));
+
+        session.StepOver();
+        var secondStep = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.StepPaused, secondStep.Kind);
+        Assert.Equal(4, secondStep.Location.Line);
+        Assert.Equal(3d, session.Context?.Get<double>("c"));
+        Assert.False(session.Context?.Contains("result"));
+        Assert.False(runTask.IsCompleted);
+
+        session.Continue();
+        var context = await runTask.WaitAsync(TestTimeout());
+
+        Assert.Equal(6d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task RunAsync_ForwardsPrintEventsToAsyncRuntimeEventHandler()
+    {
+        var printedValues = new List<object?>();
+        var engine = new RuleScriptEngine();
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Print)
+            {
+                printedValues.Add(runtimeEvent.Value);
+            }
+
+            return RuleScriptExecutionDirective.Continue;
+        };
+        var session = new RuleScriptDebugSession(engine);
+
+        var context = await session.RunAsync("""
+            Print(5);
+            Print(4);
+            result = 9;
+            """).WaitAsync(TestTimeout());
+
+        Assert.Equal([5d, 4d], printedValues);
+        Assert.Equal(9d, context.Get<double>("result"));
     }
 
     [Fact]

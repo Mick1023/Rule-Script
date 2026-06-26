@@ -66,8 +66,8 @@ public sealed class RuleScriptDebugSession
 
             try
             {
-                _engine.RuntimeEventHandler = HandleRuntimeEvent;
-                _engine.RuntimeEventHandlerAsync = HandleRuntimeEventAsync;
+                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
                 await _engine.ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
                 return context;
             }
@@ -102,8 +102,8 @@ public sealed class RuleScriptDebugSession
 
             try
             {
-                _engine.RuntimeEventHandler = HandleRuntimeEvent;
-                _engine.RuntimeEventHandlerAsync = HandleRuntimeEventAsync;
+                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
                 await _engine.ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
                 return context;
             }
@@ -151,14 +151,18 @@ public sealed class RuleScriptDebugSession
         Resume(RuleScriptExecutionDirective.StepOver);
     }
 
-    private RuleScriptExecutionDirective HandleRuntimeEvent(RuleScriptRuntimeEvent runtimeEvent)
+    private RuleScriptExecutionDirective HandleRuntimeEvent(
+        RuleScriptRuntimeEvent runtimeEvent,
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler)
     {
         RuntimeEvent?.Invoke(runtimeEvent);
 
         if (runtimeEvent.Kind is not RuleScriptRuntimeEventKind.BreakpointHit and not RuleScriptRuntimeEventKind.StepPaused)
         {
-            return RuleScriptExecutionDirective.Continue;
+            return previousHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
         }
+
+        previousHandler?.Invoke(runtimeEvent);
 
         var signal = new ManualResetEventSlim(false);
 
@@ -178,10 +182,34 @@ public sealed class RuleScriptDebugSession
         }
     }
 
-    private Task<RuleScriptExecutionDirective> HandleRuntimeEventAsync(RuleScriptRuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+    private async Task<RuleScriptExecutionDirective> HandleRuntimeEventAsync(
+        RuleScriptRuntimeEvent runtimeEvent,
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler,
+        Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>>? previousAsyncHandler,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(HandleRuntimeEvent(runtimeEvent));
+
+        if (runtimeEvent.Kind is not RuleScriptRuntimeEventKind.BreakpointHit and not RuleScriptRuntimeEventKind.StepPaused)
+        {
+            RuntimeEvent?.Invoke(runtimeEvent);
+
+            if (previousAsyncHandler is not null)
+            {
+                return await previousAsyncHandler(runtimeEvent, cancellationToken).ConfigureAwait(false);
+            }
+
+            return previousHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
+        }
+
+        previousHandler?.Invoke(runtimeEvent);
+
+        if (previousAsyncHandler is not null)
+        {
+            await previousAsyncHandler(runtimeEvent, cancellationToken).ConfigureAwait(false);
+        }
+
+        return HandleRuntimeEvent(runtimeEvent, previousHandler: null);
     }
 
     private void Resume(RuleScriptExecutionDirective directive)
