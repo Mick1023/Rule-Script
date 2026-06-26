@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.3-blue)](docs/releases/v1.0.0-rc5.3.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.4-blue)](docs/releases/v1.0.0-rc5.4.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -544,9 +544,26 @@ var runTask = session.RunFileAsync("main.rules");
 
 var pause = await session.WaitForPauseAsync();
 session.StepOver();
+
+pause = await session.WaitForPauseAsync();
 session.Continue();
 
 var context = await runTask;
+```
+
+A UI Stop button can cancel the current debug run, including when execution is paused:
+
+```csharp
+session.Stop();
+
+try
+{
+    await runTask;
+}
+catch (OperationCanceledException)
+{
+    // Debug run was stopped by the host.
+}
 ```
 
 ## Diagnostics

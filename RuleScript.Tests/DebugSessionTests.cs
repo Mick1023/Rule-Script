@@ -210,6 +210,129 @@ public sealed class DebugSessionTests
     }
 
     [Fact]
+    public async Task Stop_WhilePausedAtBreakpoint_CancelsRunAndClearsPause()
+    {
+        var engine = new RuleScriptEngine();
+        engine.AddBreakpoint(2);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            var value = 1;
+            result = value + 1;
+            """);
+        var pause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+        Assert.True(session.IsPaused);
+
+        session.Stop();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+        Assert.False(session.IsPaused);
+        Assert.Null(session.CurrentPause);
+    }
+
+    [Fact]
+    public async Task Stop_WhilePausedAfterStepOver_CancelsRunAndClearsPause()
+    {
+        var engine = new RuleScriptEngine();
+        engine.AddBreakpoint(1);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            var a = 1;
+            var b = 2;
+            result = a + b;
+            """);
+        await session.WaitForPauseAsync(TestTimeout());
+
+        session.StepOver();
+        var stepPause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.StepPaused, stepPause.Kind);
+        Assert.Equal(2, stepPause.Location.Line);
+        Assert.True(session.IsPaused);
+
+        session.Stop();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+        Assert.False(session.IsPaused);
+        Assert.Null(session.CurrentPause);
+    }
+
+    [Fact]
+    public async Task Stop_WhileRunningAsyncHostFunction_CancelsRun()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunctionAsync("Delay", async (args, cancellationToken) =>
+        {
+            await Task.Delay(Convert.ToInt32(args[0]), cancellationToken);
+            return null;
+        });
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            Delay(30000);
+            result = 1;
+            """);
+
+        await Task.Delay(50);
+        session.Stop();
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+        Assert.False(session.Context?.Contains("result"));
+    }
+
+    [Fact]
+    public async Task Stop_RestoresRuntimeHandlers()
+    {
+        var syncEvents = new List<RuleScriptRuntimeEventKind>();
+        var asyncEvents = new List<RuleScriptRuntimeEventKind>();
+        var engine = new RuleScriptEngine();
+        engine.RuntimeEventHandler = runtimeEvent =>
+        {
+            syncEvents.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+        engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
+        {
+            await Task.Yield();
+            asyncEvents.Add(runtimeEvent.Kind);
+            return RuleScriptExecutionDirective.Continue;
+        };
+        engine.AddBreakpoint(1);
+        var session = new RuleScriptDebugSession(engine);
+
+        var runTask = session.RunAsync("""
+            result = 1;
+            """);
+        await session.WaitForPauseAsync(TestTimeout());
+
+        session.Stop();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+
+        await engine.ExecuteAsync("Print(1);").WaitAsync(TestTimeout());
+
+        Assert.Contains(RuleScriptRuntimeEventKind.Print, asyncEvents);
+        Assert.DoesNotContain(RuleScriptRuntimeEventKind.Print, syncEvents);
+    }
+
+    [Fact]
+    public async Task Stop_IsIdempotentAndCancelsPendingPauseWait()
+    {
+        var engine = new RuleScriptEngine();
+        var session = new RuleScriptDebugSession(engine);
+        var waitTask = session.WaitForPauseAsync();
+
+        session.Stop();
+        session.Stop();
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => waitTask.WaitAsync(TestTimeout()));
+        Assert.False(session.IsPaused);
+        Assert.Null(session.CurrentPause);
+    }
+
+    [Fact]
     public async Task StepOver_AfterBreakpointPausesAtNextExecutableStatement()
     {
         using var project = new RuleScriptProject();

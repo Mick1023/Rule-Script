@@ -7,9 +7,11 @@ public sealed class RuleScriptDebugSession
 {
     private readonly RuleScriptEngine _engine;
     private readonly object _sync = new();
+    private CancellationTokenSource? _stopCancellation;
     private ManualResetEventSlim? _resumeSignal;
     private RuleScriptExecutionDirective _resumeDirective = RuleScriptExecutionDirective.Continue;
     private TaskCompletionSource<RuleScriptRuntimeEvent> _nextPause = CreatePauseCompletionSource();
+    private bool _stopRequested;
 
     /// <summary>
     /// Creates a debug session for an engine.
@@ -57,26 +59,33 @@ public sealed class RuleScriptDebugSession
         context ??= new RuntimeContext();
         Context = context;
         PrepareForRun();
+        var stopCancellation = CreateStopCancellation();
+        var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopCancellation.Token);
 
         return Task.Run(async () =>
         {
-            using var registration = cancellationToken.Register(Continue);
-            var previousHandler = _engine.RuntimeEventHandler;
-            var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+            using var stopRegistration = cancellationToken.Register(Stop);
+            using (stopCancellation)
+            using (linkedCancellation)
+            {
+                var previousHandler = _engine.RuntimeEventHandler;
+                var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
 
-            try
-            {
-                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
-                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
-                await _engine.ExecuteFileAsync(path, context, cancellationToken).ConfigureAwait(false);
-                return context;
+                try
+                {
+                    _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                    _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
+                    await _engine.ExecuteFileAsync(path, context, linkedCancellation.Token).ConfigureAwait(false);
+                    return context;
+                }
+                finally
+                {
+                    _engine.RuntimeEventHandler = previousHandler;
+                    _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+                    ClearStopCancellation(stopCancellation);
+                }
             }
-            finally
-            {
-                _engine.RuntimeEventHandler = previousHandler;
-                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
-            }
-        }, cancellationToken);
+        });
     }
 
     /// <summary>
@@ -93,26 +102,33 @@ public sealed class RuleScriptDebugSession
         context ??= new RuntimeContext();
         Context = context;
         PrepareForRun();
+        var stopCancellation = CreateStopCancellation();
+        var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopCancellation.Token);
 
         return Task.Run(async () =>
         {
-            using var registration = cancellationToken.Register(Continue);
-            var previousHandler = _engine.RuntimeEventHandler;
-            var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+            using var stopRegistration = cancellationToken.Register(Stop);
+            using (stopCancellation)
+            using (linkedCancellation)
+            {
+                var previousHandler = _engine.RuntimeEventHandler;
+                var previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
 
-            try
-            {
-                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
-                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
-                await _engine.ExecuteAsync(script, context, cancellationToken).ConfigureAwait(false);
-                return context;
+                try
+                {
+                    _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                    _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
+                    await _engine.ExecuteAsync(script, context, linkedCancellation.Token).ConfigureAwait(false);
+                    return context;
+                }
+                finally
+                {
+                    _engine.RuntimeEventHandler = previousHandler;
+                    _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+                    ClearStopCancellation(stopCancellation);
+                }
             }
-            finally
-            {
-                _engine.RuntimeEventHandler = previousHandler;
-                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
-            }
-        }, cancellationToken);
+        });
     }
 
     /// <summary>
@@ -151,6 +167,39 @@ public sealed class RuleScriptDebugSession
         Resume(RuleScriptExecutionDirective.StepOver);
     }
 
+    /// <summary>
+    /// Stops the current debug run and releases any active breakpoint or step pause.
+    /// </summary>
+    public void Stop()
+    {
+        ManualResetEventSlim? signal;
+        CancellationTokenSource? stopCancellation;
+        TaskCompletionSource<RuleScriptRuntimeEvent>? pauseCompletion;
+
+        lock (_sync)
+        {
+            _stopRequested = true;
+            IsPaused = false;
+            CurrentPause = null;
+            signal = _resumeSignal;
+            _resumeSignal = null;
+            stopCancellation = _stopCancellation;
+            pauseCompletion = _nextPause;
+            _nextPause = CreatePauseCompletionSource();
+        }
+
+        pauseCompletion.TrySetCanceled();
+        signal?.Set();
+
+        try
+        {
+            stopCancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private RuleScriptExecutionDirective HandleRuntimeEvent(
         RuleScriptRuntimeEvent runtimeEvent,
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler)
@@ -178,6 +227,11 @@ public sealed class RuleScriptDebugSession
 
         lock (_sync)
         {
+            if (_stopRequested)
+            {
+                throw new OperationCanceledException("Debug session was stopped.");
+            }
+
             return _resumeDirective;
         }
     }
@@ -218,6 +272,11 @@ public sealed class RuleScriptDebugSession
 
         lock (_sync)
         {
+            if (_stopRequested)
+            {
+                return;
+            }
+
             _resumeDirective = directive;
             signal = _resumeSignal;
 
@@ -241,7 +300,35 @@ public sealed class RuleScriptDebugSession
             CurrentPause = null;
             _resumeSignal = null;
             _resumeDirective = RuleScriptExecutionDirective.Continue;
+            _stopRequested = false;
             _nextPause = CreatePauseCompletionSource();
+        }
+    }
+
+    private CancellationTokenSource CreateStopCancellation()
+    {
+        var stopCancellation = new CancellationTokenSource();
+
+        lock (_sync)
+        {
+            _stopCancellation = stopCancellation;
+        }
+
+        return stopCancellation;
+    }
+
+    private void ClearStopCancellation(CancellationTokenSource stopCancellation)
+    {
+        lock (_sync)
+        {
+            if (ReferenceEquals(_stopCancellation, stopCancellation))
+            {
+                _stopCancellation = null;
+            }
+
+            IsPaused = false;
+            CurrentPause = null;
+            _resumeSignal = null;
         }
     }
 
