@@ -232,6 +232,46 @@ public sealed class ControlFlowTests
     }
 
     [Fact]
+    public void While_LoopIterationLimitCanBeDisabled()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxLoopIterations = 2,
+            LoopIterationLimitEnabled = false
+        };
+
+        var context = engine.Execute("""
+            var count = 0;
+            while count < 5:
+                count = count + 1;
+            endwhile
+            result = count;
+            """);
+
+        Assert.Equal(5d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task WhileAsync_LoopIterationLimitCanBeDisabled()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxLoopIterations = 2,
+            LoopIterationLimitEnabled = false
+        };
+
+        var context = await engine.ExecuteAsync("""
+            var count = 0;
+            while count < 5:
+                count = count + 1;
+            endwhile
+            result = count;
+            """);
+
+        Assert.Equal(5d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void While_WithHostFunctionConditionWorkflow()
     {
         var engine = new RuleScriptEngine();

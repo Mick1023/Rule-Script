@@ -26,6 +26,28 @@ public sealed class ModuleTests
     }
 
     [Fact]
+    public void ImportedFunction_CanCreateGlobalVariableInCallingContext()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("common.rules", """
+            function SetA():
+                global.A = 42;
+            endfunction
+            """);
+        project.Write("main.rules", """
+            import "common.rules";
+
+            SetA();
+            result = global.A;
+            """);
+
+        var context = ExecuteFile(project, "main.rules");
+
+        Assert.Equal(42d, context.Get<double>("A"));
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void AliasImport_FunctionCanBeCalledThroughAlias()
     {
         using var project = new RuleScriptProject();

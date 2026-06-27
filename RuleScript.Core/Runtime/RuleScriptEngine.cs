@@ -20,6 +20,12 @@ public sealed class RuleScriptEngine
     public int MaxLoopIterations { get; set; } = 100000;
 
     /// <summary>
+    /// Gets or sets whether <see cref="MaxLoopIterations"/> is enforced for while and foreach loops.
+    /// Disable this only when the host provides another way to stop long-running execution.
+    /// </summary>
+    public bool LoopIterationLimitEnabled { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the base directory used for relative <see cref="ExecuteFile(string)"/> paths.
     /// </summary>
     public string? WorkingDirectory { get; set; }
@@ -151,7 +157,7 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Strictly analyzes parseable script text without executing it and returns symbols for editor tooling.
+    /// Strictly analyzes parseable script text and available imports without executing them, then returns symbols for editor tooling.
     /// Syntax errors are reported by throwing <see cref="SyntaxException"/>.
     /// </summary>
     public RuleScriptAnalysisResult Analyze(string script)
@@ -165,6 +171,12 @@ public sealed class RuleScriptEngine
         var importAliases = new HashSet<string>(StringComparer.Ordinal);
 
         CollectSymbols(statements, variables, userFunctions, importAliases);
+        CollectImportedFunctionSymbols(
+            statements,
+            ResolveWorkingDirectory(),
+            userFunctions,
+            new Stack<string>(),
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
 
         return new RuleScriptAnalysisResult(
             variables,
@@ -175,7 +187,7 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Best-effort analyzes script text without executing it, returning diagnostics and partial symbols instead of throwing for syntax errors.
+    /// Best-effort analyzes script text and available imports without executing them, returning diagnostics and partial symbols instead of throwing for syntax errors.
     /// </summary>
     public RuleScriptAnalysisAttempt TryAnalyze(string script)
     {
@@ -443,6 +455,7 @@ public sealed class RuleScriptEngine
             _hostFunctions,
             _asyncHostFunctions,
             MaxLoopIterations,
+            LoopIterationLimitEnabled,
             module,
             NotifyRuntimeEvent,
             NotifyRuntimeEventAsync,
@@ -639,6 +652,106 @@ public sealed class RuleScriptEngine
         }
     }
 
+    private void CollectImportedFunctionSymbols(
+        IEnumerable<Statement> statements,
+        string baseDirectory,
+        ISet<string> userFunctions,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<string>> moduleCache)
+    {
+        foreach (var import in statements.OfType<ImportStatement>())
+        {
+            CollectImportedFunctionSymbols(import.Path, import.Alias, baseDirectory, userFunctions, importStack, moduleCache);
+        }
+    }
+
+    private void CollectImportedFunctionSymbols(
+        string path,
+        string? alias,
+        string baseDirectory,
+        ISet<string> userFunctions,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<string>> moduleCache)
+    {
+        var importPath = ResolveImportPath(path, baseDirectory);
+
+        // Analysis is also used while a project is being edited. Keep symbols from
+        // the current buffer available even when an imported file does not exist yet.
+        if (!ImportResolver.Exists(importPath))
+        {
+            return;
+        }
+
+        var importedFunctions = LoadImportedFunctionSymbols(importPath, importStack, moduleCache);
+
+        foreach (var function in importedFunctions)
+        {
+            userFunctions.Add(alias is null ? function : $"{alias}.{function}");
+        }
+    }
+
+    private IReadOnlyList<string> LoadImportedFunctionSymbols(
+        string path,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<string>> moduleCache)
+    {
+        path = ImportResolver.GetFullPath(path);
+
+        if (moduleCache.TryGetValue(path, out var cachedFunctions))
+        {
+            return cachedFunctions;
+        }
+
+        // Execution reports circular imports. Static analysis only needs a finite,
+        // best-effort symbol set, so stop walking a cycle at the repeated module.
+        if (importStack.Contains(path, StringComparer.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        importStack.Push(path);
+
+        try
+        {
+            IReadOnlyList<Statement> statements;
+
+            try
+            {
+                var script = ImportResolver.ReadAllText(path);
+                var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+                statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            }
+            catch (RuleScriptException exception)
+            {
+                AssignSourceFile(exception, path);
+                throw;
+            }
+
+            var functions = new HashSet<string>(StringComparer.Ordinal);
+            var baseDirectory = Path.GetDirectoryName(path) ?? ResolveWorkingDirectory();
+
+            foreach (var import in statements.OfType<ImportStatement>().Where(value => value.Alias is null))
+            {
+                var nestedPath = ResolveImportPath(import.Path, baseDirectory);
+
+                if (ImportResolver.Exists(nestedPath))
+                {
+                    functions.UnionWith(LoadImportedFunctionSymbols(nestedPath, importStack, moduleCache));
+                }
+            }
+
+            functions.UnionWith(statements.OfType<FunctionDeclarationStatement>().Select(function => function.Name));
+
+            var snapshot = functions.Order(StringComparer.Ordinal).ToArray();
+            moduleCache[path] = snapshot;
+            return snapshot;
+        }
+        finally
+        {
+            importStack.Pop();
+        }
+    }
+
     private RuleScriptAnalysisResult AnalyzeBestEffort(string script)
     {
         var variables = new HashSet<string>(StringComparer.Ordinal);
@@ -649,10 +762,12 @@ public sealed class RuleScriptEngine
         {
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             CollectSymbolsFromTokens(tokens, variables, userFunctions, importAliases);
+            CollectImportedFunctionSymbolsFromTokens(tokens, userFunctions);
         }
         catch (SyntaxException)
         {
             CollectSymbolsFromText(script, variables, userFunctions, importAliases);
+            CollectImportedFunctionSymbolsFromText(script, userFunctions);
         }
 
         return new RuleScriptAnalysisResult(
@@ -661,6 +776,83 @@ public sealed class RuleScriptEngine
             RegisteredFunctionNames,
             _builtinFunctions.Names,
             importAliases);
+    }
+
+    private void CollectImportedFunctionSymbolsFromTokens(IReadOnlyList<Token> tokens, ISet<string> userFunctions)
+    {
+        var importStack = new Stack<string>();
+        var moduleCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (tokens[i].Type != TokenType.Import
+                || !TryGetToken(tokens, i + 1, out var pathToken)
+                || pathToken.Type != TokenType.String)
+            {
+                continue;
+            }
+
+            string? alias = null;
+
+            for (var j = i + 2; j < tokens.Count && tokens[j].Type is not TokenType.Semicolon and not TokenType.EndOfFile; j++)
+            {
+                if (tokens[j].Type == TokenType.As && TryGetIdentifier(tokens, j + 1, out var name))
+                {
+                    alias = name;
+                    break;
+                }
+            }
+
+            TryCollectImportedFunctionSymbols(pathToken.Literal?.ToString() ?? pathToken.Lexeme, alias, userFunctions, importStack, moduleCache);
+        }
+    }
+
+    private void CollectImportedFunctionSymbolsFromText(string script, ISet<string> userFunctions)
+    {
+        var importStack = new Stack<string>();
+        var moduleCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawLine in script.Split(["\r\n", "\n"], StringSplitOptions.None))
+        {
+            var line = rawLine.Trim();
+
+            if (!line.StartsWith("import", StringComparison.Ordinal)
+                || line.Length <= "import".Length
+                || !char.IsWhiteSpace(line["import".Length]))
+            {
+                continue;
+            }
+
+            var quoteStart = line.IndexOf('"', "import".Length);
+            var quoteEnd = quoteStart < 0 ? -1 : line.IndexOf('"', quoteStart + 1);
+
+            if (quoteStart < 0 || quoteEnd < 0)
+            {
+                continue;
+            }
+
+            var path = line[(quoteStart + 1)..quoteEnd];
+            var suffix = line[(quoteEnd + 1)..].TrimStart();
+            var alias = TryReadIdentifierAfterKeyword(suffix, "as", out var name) ? name : null;
+            TryCollectImportedFunctionSymbols(path, alias, userFunctions, importStack, moduleCache);
+        }
+    }
+
+    private void TryCollectImportedFunctionSymbols(
+        string path,
+        string? alias,
+        ISet<string> userFunctions,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<string>> moduleCache)
+    {
+        try
+        {
+            CollectImportedFunctionSymbols(path, alias, ResolveWorkingDirectory(), userFunctions, importStack, moduleCache);
+        }
+        catch (RuleScriptException)
+        {
+            // The main parse diagnostic remains the useful result for best-effort analysis.
+        }
     }
 
     private static void CollectSymbolsFromTokens(

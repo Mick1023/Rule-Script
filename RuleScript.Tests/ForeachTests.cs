@@ -209,6 +209,46 @@ public sealed class ForeachTests
     }
 
     [Fact]
+    public void Foreach_LoopIterationLimitCanBeDisabled()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxLoopIterations = 2,
+            LoopIterationLimitEnabled = false
+        };
+
+        var context = engine.Execute("""
+            var sum = 0;
+            foreach item in [1, 2, 3, 4]:
+                sum = sum + item;
+            endforeach
+            result = sum;
+            """);
+
+        Assert.Equal(10d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task ForeachAsync_LoopIterationLimitCanBeDisabled()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxLoopIterations = 2,
+            LoopIterationLimitEnabled = false
+        };
+
+        var context = await engine.ExecuteAsync("""
+            var sum = 0;
+            foreach item in [1, 2, 3, 4]:
+                sum = sum + item;
+            endforeach
+            result = sum;
+            """);
+
+        Assert.Equal(10d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void Foreach_WithHostReturnedList()
     {
         var engine = new RuleScriptEngine();

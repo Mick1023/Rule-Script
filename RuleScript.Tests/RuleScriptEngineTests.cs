@@ -53,7 +53,7 @@ public sealed class RuleScriptEngineTests
     {
         var engine = new RuleScriptEngine
         {
-            MaxLoopIterations = int.MaxValue
+            LoopIterationLimitEnabled = false
         };
         var context = new RuntimeContext();
 

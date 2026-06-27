@@ -176,6 +176,59 @@ public sealed class PublicApiUsabilityTests
     }
 
     [Fact]
+    public void Analyze_IncludesFunctionsFromGlobalAndAliasImports()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "common.rules"), "function Shared(): return 1; endfunction");
+            File.WriteAllText(Path.Combine(directory, "robot.rules"), "function Read(): return 2; endfunction");
+
+            var engine = new RuleScriptEngine { WorkingDirectory = directory };
+            var result = engine.Analyze("""
+                import "common.rules";
+                import "robot.rules" as robot;
+                """);
+
+            Assert.Contains("Shared", result.UserFunctionNames);
+            Assert.Contains("robot.Read", result.UserFunctionNames);
+            Assert.Contains("Shared", result.FunctionNames);
+            Assert.Contains("robot.Read", result.FunctionNames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryAnalyze_IncompleteScript_IncludesImportedFunctions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "common.rules"), "function Shared(): return 1; endfunction");
+
+            var engine = new RuleScriptEngine { WorkingDirectory = directory };
+            var result = engine.TryAnalyze("""
+                import "common.rules";
+                var unfinished =
+                """);
+
+            Assert.False(result.Success);
+            Assert.Contains("Shared", result.Symbols.FunctionNames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TryAnalyze_ParseableScript_ReturnsSuccessfulAnalysis()
     {
         var engine = new RuleScriptEngine();

@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.5-blue)](docs/releases/v1.0.0-rc5.5.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.7-blue)](docs/releases/v1.0.0-rc5.7.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -154,6 +154,17 @@ var engine = new RuleScriptEngine
     MaxLoopIterations = 100000
 };
 ```
+
+For long-running polling or repeated-check workflows, the limit can be disabled for both `while` and `foreach`:
+
+```csharp
+var engine = new RuleScriptEngine
+{
+    LoopIterationLimitEnabled = false
+};
+```
+
+An unlimited loop still observes `RuleScriptEngine.Stop()` and async cancellation between iterations. Hosts should retain one of those stop mechanisms because an unconditional `while true` can otherwise run forever.
 
 Array and property access example:
 
@@ -331,6 +342,8 @@ Nested imports are supported, and circular imports throw `RuntimeException`. If 
 
 Import paths are resolved relative to the file that contains the import. Path normalization supports `./common.rules` and `modules/../common.rules`. Imported files may contain only `import` statements and function declarations; top-level executable statements are rejected in imported files.
 
+Imported functions use the same global `RuntimeContext` as the importing program. They can read an existing variable with `global.A`, or create/update it with `global.A = value;`; the importing program and host can then read `A`. A bare top-level declaration such as `var A = 1;` is still not allowed in an imported file, so global initialization must happen inside an imported function that the main program calls.
+
 Common import errors include missing files, duplicate aliases, unknown aliases, missing module functions, invalid alias syntax, executable statements in imported files, and circular imports. Error messages include the relevant alias, path, importing file, resolved full path, or import chain when available.
 
 ## User-Defined Functions
@@ -427,7 +440,7 @@ var functions = symbols.FunctionNames;
 var imports = symbols.ImportAliases;
 ```
 
-`Analyze` parses the script but does not execute it. The result includes script variables, user-defined functions, currently registered host functions, built-in functions, and import aliases. The script must be parseable.
+`Analyze` parses the script but does not execute it. The result includes script variables, user-defined functions, currently registered host functions, built-in functions, and import aliases. It also reads imports relative to `WorkingDirectory`: globally imported functions appear by name (for example, `Shared`), while alias-imported functions appear as qualified callable names (for example, `robot.Read`). Missing import files are skipped so autocomplete remains available while a project is being edited. The script and any imported files that exist must be parseable.
 
 For live editor input that may be incomplete, use best-effort analysis:
 

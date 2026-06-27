@@ -26,7 +26,7 @@ public sealed class RuleScriptAnalysisResult
     public IReadOnlyList<string> VariableNames { get; }
 
     /// <summary>
-    /// Gets user-defined function names declared in the script.
+    /// Gets user-defined function names declared in the script or exposed by imports. Alias-imported names are qualified with the alias.
     /// </summary>
     public IReadOnlyList<string> UserFunctionNames { get; }
 

@@ -13,6 +13,7 @@ public sealed class Interpreter
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions;
     private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
+    private readonly bool _loopIterationLimitEnabled;
     private readonly ScriptModule _mainModule;
     private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
     private readonly Func<RuleScriptSourceLocation, bool> _isBreakpoint;
@@ -38,6 +39,7 @@ public sealed class Interpreter
             hostFunctions,
             new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal),
             maxLoopIterations,
+            true,
             new ScriptModule("<script>", []),
             _ => RuleScriptExecutionDirective.Continue,
             (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue),
@@ -51,6 +53,7 @@ public sealed class Interpreter
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> asyncHostFunctions,
         int maxLoopIterations,
+        bool loopIterationLimitEnabled,
         ScriptModule mainModule,
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
         Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
@@ -70,6 +73,7 @@ public sealed class Interpreter
         _maxLoopIterations = maxLoopIterations > 0
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
+        _loopIterationLimitEnabled = loopIterationLimitEnabled;
     }
 
     public void Execute(IReadOnlyList<Statement> statements, RuntimeContext context)
@@ -312,7 +316,7 @@ public sealed class Interpreter
             {
                 _cancellationToken.ThrowIfCancellationRequested();
 
-                if (iterations >= _maxLoopIterations)
+                if (_loopIterationLimitEnabled && iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"while exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "while");
                 }
@@ -329,7 +333,10 @@ public sealed class Interpreter
                     break;
                 }
 
-                iterations++;
+                if (_loopIterationLimitEnabled)
+                {
+                    iterations++;
+                }
 
                 try
                 {
@@ -366,7 +373,7 @@ public sealed class Interpreter
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (iterations >= _maxLoopIterations)
+                if (_loopIterationLimitEnabled && iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"while exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "while");
                 }
@@ -383,7 +390,10 @@ public sealed class Interpreter
                     break;
                 }
 
-                iterations++;
+                if (_loopIterationLimitEnabled)
+                {
+                    iterations++;
+                }
 
                 try
                 {
@@ -428,12 +438,15 @@ public sealed class Interpreter
             {
                 _cancellationToken.ThrowIfCancellationRequested();
 
-                if (iterations >= _maxLoopIterations)
+                if (_loopIterationLimitEnabled && iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"foreach exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "foreach");
                 }
 
-                iterations++;
+                if (_loopIterationLimitEnabled)
+                {
+                    iterations++;
+                }
                 if (hasLocalScope)
                 {
                     localScope![statement.VariableName] = RuntimeValue.FromObject(item);
@@ -507,12 +520,15 @@ public sealed class Interpreter
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (iterations >= _maxLoopIterations)
+                if (_loopIterationLimitEnabled && iterations >= _maxLoopIterations)
                 {
                     throw new RuntimeException($"foreach exceeded max loop iterations limit {_maxLoopIterations}.", statement.Line, statement.Column, "foreach");
                 }
 
-                iterations++;
+                if (_loopIterationLimitEnabled)
+                {
+                    iterations++;
+                }
                 if (hasLocalScope)
                 {
                     localScope![statement.VariableName] = RuntimeValue.FromObject(item);
