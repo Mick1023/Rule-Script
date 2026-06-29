@@ -1,12 +1,14 @@
 using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Lexer;
 using RuleScript.Core.Parser.Ast;
+using RuleScript.Core.Runtime;
 
 namespace RuleScript.Core.Parser;
 
 public sealed class Parser
 {
     private readonly IReadOnlyList<Token> _tokens;
+    private List<SyntaxException>? _diagnostics;
     private int _current;
     private int _blockDepth;
 
@@ -17,6 +19,8 @@ public sealed class Parser
 
     public IReadOnlyList<Statement> Parse()
     {
+        Reset();
+
         if (_tokens.Count == 0 || (_tokens.Count == 1 && _tokens[0].Type == TokenType.EndOfFile))
         {
             return [];
@@ -30,6 +34,29 @@ public sealed class Parser
         }
 
         return statements;
+    }
+
+    /// <summary>
+    /// Parses as much of the token stream as possible and collects recoverable syntax errors.
+    /// </summary>
+    public RuleScriptParseResult ParseWithDiagnostics()
+    {
+        Reset();
+        _diagnostics = [];
+
+        if (_tokens.Count == 0 || (_tokens.Count == 1 && _tokens[0].Type == TokenType.EndOfFile))
+        {
+            return new RuleScriptParseResult([], []);
+        }
+
+        var statements = new List<Statement>();
+
+        while (!IsAtEnd())
+        {
+            ParseRecovering(statements);
+        }
+
+        return new RuleScriptParseResult(statements, _diagnostics);
     }
 
     private Statement ParseStatement()
@@ -104,6 +131,7 @@ public sealed class Parser
 
     private VarStatement ParseVarStatement()
     {
+        var start = Previous();
         var name = Consume(TokenType.Identifier, "Expected variable name after 'var'.");
         Expression? initializer = null;
 
@@ -113,16 +141,17 @@ public sealed class Parser
         }
 
         Consume(TokenType.Semicolon, "Expected ';' after variable declaration.");
-        return new VarStatement(name.Lexeme, initializer, name.Line, name.Column);
+        return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column), start);
     }
 
     private AssignmentStatement ParseAssignmentStatement()
     {
+        var start = Peek();
         var name = Consume(TokenType.Identifier, "Expected assignment target.");
         Consume(TokenType.Assign, "Expected '=' after assignment target.");
         var value = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after assignment.");
-        return new AssignmentStatement(name.Lexeme, value, name.Line, name.Column);
+        return Complete(new AssignmentStatement(name.Lexeme, value, name.Line, name.Column), start);
     }
 
     private ImportStatement ParseImportStatement()
@@ -137,25 +166,27 @@ public sealed class Parser
         }
 
         Consume(TokenType.Semicolon, "Expected ';' after import statement.");
-        return new ImportStatement(path.Literal?.ToString() ?? path.Lexeme, alias, importToken.Line, importToken.Column);
+        return Complete(new ImportStatement(path.Literal?.ToString() ?? path.Lexeme, alias, importToken.Line, importToken.Column), importToken);
     }
 
     private GlobalAssignmentStatement ParseGlobalAssignmentStatement()
     {
+        var start = Peek();
         var globalToken = Consume(TokenType.Identifier, "Expected 'global' assignment target.");
         Consume(TokenType.Dot, "Expected '.' after 'global'.");
         var name = Consume(TokenType.Identifier, "Expected global variable name after 'global.'.");
         Consume(TokenType.Assign, "Expected '=' after global assignment target.");
         var value = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after global assignment.");
-        return new GlobalAssignmentStatement(name.Lexeme, value, globalToken.Line, globalToken.Column);
+        return Complete(new GlobalAssignmentStatement(name.Lexeme, value, globalToken.Line, globalToken.Column), start);
     }
 
     private ExpressionStatement ParseExpressionStatement()
     {
+        var start = Peek();
         var expression = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after expression.");
-        return new ExpressionStatement(expression);
+        return Complete(new ExpressionStatement(expression), start);
     }
 
     private IfStatement ParseIfStatement()
@@ -175,7 +206,7 @@ public sealed class Parser
         }
 
         ConsumeBlockEnd(TokenType.EndIf, "endif", "if statement");
-        return new IfStatement(condition, thenBranch, elseBranch, ifToken.Line, ifToken.Column);
+        return Complete(new IfStatement(condition, thenBranch, elseBranch, ifToken.Line, ifToken.Column), ifToken);
     }
 
     private WhileStatement ParseWhileStatement()
@@ -187,7 +218,7 @@ public sealed class Parser
         var body = ParseBlock(TokenType.EndWhile, TokenType.End);
 
         ConsumeBlockEnd(TokenType.EndWhile, "endwhile", "while statement");
-        return new WhileStatement(condition, body, whileToken.Line, whileToken.Column);
+        return Complete(new WhileStatement(condition, body, whileToken.Line, whileToken.Column), whileToken);
     }
 
     private ForeachStatement ParseForeachStatement()
@@ -201,7 +232,7 @@ public sealed class Parser
         var body = ParseBlock(TokenType.EndForeach, TokenType.End);
 
         ConsumeBlockEnd(TokenType.EndForeach, "endforeach", "foreach statement");
-        return new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column);
+        return Complete(new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column), foreachToken);
     }
 
     private FunctionDeclarationStatement ParseFunctionDeclarationStatement()
@@ -211,6 +242,7 @@ public sealed class Parser
         Consume(TokenType.LeftParen, "Expected '(' after function name.");
 
         var parameters = new List<string>();
+        var parameterDefinitions = new List<FunctionParameterDefinition>();
 
         if (!Check(TokenType.RightParen))
         {
@@ -224,6 +256,21 @@ public sealed class Parser
                 }
 
                 parameters.Add(parameter.Lexeme);
+                string? typeName = null;
+
+                if (Match(TokenType.Colon))
+                {
+                    var typeToken = Consume(TokenType.Identifier, "Expected parameter type after ':'.");
+
+                    if (!RuleScriptTypeFacts.TryParse(typeToken.Lexeme, out _))
+                    {
+                        throw Error(typeToken, $"Unknown parameter type '{typeToken.Lexeme}'.");
+                    }
+
+                    typeName = typeToken.Lexeme;
+                }
+
+                parameterDefinitions.Add(new FunctionParameterDefinition(parameter.Lexeme, typeName));
             }
             while (Match(TokenType.Comma));
         }
@@ -234,21 +281,25 @@ public sealed class Parser
         var body = ParseBlock(TokenType.EndFunction, TokenType.End);
 
         ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
-        return new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column);
+        var declaration = new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column)
+        {
+            ParameterDefinitions = parameterDefinitions
+        };
+        return Complete(declaration, functionToken);
     }
 
     private BreakStatement ParseBreakStatement()
     {
         var breakToken = Previous();
         Consume(TokenType.Semicolon, "Expected ';' after break.");
-        return new BreakStatement(breakToken.Line, breakToken.Column);
+        return Complete(new BreakStatement(breakToken.Line, breakToken.Column), breakToken);
     }
 
     private ContinueStatement ParseContinueStatement()
     {
         var continueToken = Previous();
         Consume(TokenType.Semicolon, "Expected ';' after continue.");
-        return new ContinueStatement(continueToken.Line, continueToken.Column);
+        return Complete(new ContinueStatement(continueToken.Line, continueToken.Column), continueToken);
     }
 
     private ReturnStatement ParseReturnStatement()
@@ -257,7 +308,7 @@ public sealed class Parser
         var value = Check(TokenType.Semicolon) ? null : ParseExpression();
 
         Consume(TokenType.Semicolon, "Expected ';' after return.");
-        return new ReturnStatement(value, returnToken.Line, returnToken.Column);
+        return Complete(new ReturnStatement(value, returnToken.Line, returnToken.Column), returnToken);
     }
 
     private Statement[] ParseBlock(params TokenType[] terminators)
@@ -270,7 +321,14 @@ public sealed class Parser
         {
             while (!IsAtEnd() && !terminators.Contains(Peek().Type))
             {
-                statements.Add(ParseStatement());
+                if (_diagnostics is null)
+                {
+                    statements.Add(ParseStatement());
+                }
+                else
+                {
+                    ParseRecovering(statements, terminators);
+                }
             }
         }
         finally
@@ -576,9 +634,82 @@ public sealed class Parser
 
     private Token Previous() => _tokens[_current - 1];
 
+    private T Complete<T>(T statement, Token start) where T : Statement
+    {
+        var end = Previous();
+        statement.SourceSpan = new SourceSpan(start.Line, start.Column, end.EndLine, end.EndColumn);
+        return statement;
+    }
+
+    private void ParseRecovering(List<Statement> statements, IReadOnlyCollection<TokenType>? terminators = null)
+    {
+        try
+        {
+            statements.Add(ParseStatement());
+        }
+        catch (SyntaxException exception)
+        {
+            _diagnostics!.Add(exception);
+            Synchronize(terminators);
+        }
+    }
+
+    private void Synchronize(IReadOnlyCollection<TokenType>? terminators)
+    {
+        if (IsAtEnd())
+        {
+            return;
+        }
+
+        if (_current > 0 && Previous().Type == TokenType.Semicolon)
+        {
+            return;
+        }
+
+        while (!IsAtEnd())
+        {
+            if (terminators?.Contains(Peek().Type) == true || IsStatementStart(Peek().Type))
+            {
+                return;
+            }
+
+            if (Advance().Type == TokenType.Semicolon)
+            {
+                return;
+            }
+        }
+    }
+
+    private void Reset()
+    {
+        _current = 0;
+        _blockDepth = 0;
+        _diagnostics = null;
+    }
+
+    private static bool IsStatementStart(TokenType type)
+    {
+        return type is TokenType.Import
+            or TokenType.Function
+            or TokenType.Var
+            or TokenType.If
+            or TokenType.While
+            or TokenType.Foreach
+            or TokenType.Break
+            or TokenType.Continue
+            or TokenType.Return
+            or TokenType.Identifier;
+    }
+
     private static SyntaxException Error(Token token, string message)
     {
         var tokenText = token.Type == TokenType.EndOfFile ? "end of file" : token.Lexeme;
-        return new SyntaxException($"{message} Unexpected token '{tokenText}'.", token.Line, token.Column, tokenText);
+        return new SyntaxException(
+            $"{message} Unexpected token '{tokenText}'.",
+            token.Line,
+            token.Column,
+            tokenText,
+            endLine: token.EndLine,
+            endColumn: token.EndColumn);
     }
 }

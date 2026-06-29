@@ -11,12 +11,14 @@ public sealed class Interpreter
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions;
+    private readonly IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> _hostFunctionSignatures;
+    private readonly IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> _asyncHostFunctionSignatures;
     private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
     private readonly bool _loopIterationLimitEnabled;
     private readonly ScriptModule _mainModule;
     private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
-    private readonly Func<RuleScriptSourceLocation, bool> _isBreakpoint;
+    private readonly Func<RuleScriptSourceLocation, IReadOnlyList<RuleScriptBreakpoint>> _getBreakpoints;
     private readonly Func<bool> _isStepExecution;
     private readonly CancellationToken _cancellationToken;
     private readonly Stack<ScriptModule> _moduleStack = new();
@@ -38,12 +40,14 @@ public sealed class Interpreter
             builtinFunctions,
             hostFunctions,
             new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal),
+            new Dictionary<string, RuleScriptHostFunctionSymbol>(StringComparer.Ordinal),
+            new Dictionary<string, RuleScriptHostFunctionSymbol>(StringComparer.Ordinal),
             maxLoopIterations,
             true,
             new ScriptModule("<script>", []),
             _ => RuleScriptExecutionDirective.Continue,
             (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue),
-            _ => false,
+            _ => Array.Empty<RuleScriptBreakpoint>(),
             () => false)
     {
     }
@@ -52,22 +56,26 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> asyncHostFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctionSignatures,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> asyncHostFunctionSignatures,
         int maxLoopIterations,
         bool loopIterationLimitEnabled,
         ScriptModule mainModule,
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
         Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
-        Func<RuleScriptSourceLocation, bool> isBreakpoint,
+        Func<RuleScriptSourceLocation, IReadOnlyList<RuleScriptBreakpoint>> getBreakpoints,
         Func<bool> isStepExecution,
         CancellationToken cancellationToken = default)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
         _asyncHostFunctions = asyncHostFunctions ?? throw new ArgumentNullException(nameof(asyncHostFunctions));
+        _hostFunctionSignatures = hostFunctionSignatures ?? throw new ArgumentNullException(nameof(hostFunctionSignatures));
+        _asyncHostFunctionSignatures = asyncHostFunctionSignatures ?? throw new ArgumentNullException(nameof(asyncHostFunctionSignatures));
         _mainModule = mainModule ?? throw new ArgumentNullException(nameof(mainModule));
         _notifyRuntimeEvent = notifyRuntimeEvent ?? throw new ArgumentNullException(nameof(notifyRuntimeEvent));
         _notifyRuntimeEventAsync = notifyRuntimeEventAsync ?? throw new ArgumentNullException(nameof(notifyRuntimeEventAsync));
-        _isBreakpoint = isBreakpoint ?? throw new ArgumentNullException(nameof(isBreakpoint));
+        _getBreakpoints = getBreakpoints ?? throw new ArgumentNullException(nameof(getBreakpoints));
         _isStepExecution = isStepExecution ?? throw new ArgumentNullException(nameof(isStepExecution));
         _cancellationToken = cancellationToken;
         _maxLoopIterations = maxLoopIterations > 0
@@ -967,7 +975,8 @@ public sealed class Interpreter
 
         if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
         {
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, expression.Line, expression.Column);
+            _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
         }
 
         if (_asyncHostFunctions.ContainsKey(expression.Name))
@@ -1011,12 +1020,14 @@ public sealed class Interpreter
 
         if (_asyncHostFunctions.TryGetValue(expression.Name, out var asyncHostFunction))
         {
-            return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+            _asyncHostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, signature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
         }
 
         if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
         {
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, expression.Line, expression.Column);
+            _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
         }
 
         try
@@ -1096,6 +1107,8 @@ public sealed class Interpreter
             throw new RuntimeException($"Function '{function.Name}' expects {function.Parameters.Count} argument(s), but received {arguments.Count}.", line, column, function.Name);
         }
 
+        ValidateFunctionArgumentTypes(function, arguments, line, column);
+
         var callId = $"{userFunction.Module.Name}::{function.Name}";
 
         if (_callStack.Contains(callId, StringComparer.Ordinal))
@@ -1153,6 +1166,8 @@ public sealed class Interpreter
             throw new RuntimeException($"Function '{function.Name}' expects {function.Parameters.Count} argument(s), but received {arguments.Count}.", line, column, function.Name);
         }
 
+        ValidateFunctionArgumentTypes(function, arguments, line, column);
+
         var callId = $"{userFunction.Module.Name}::{function.Name}";
 
         if (_callStack.Contains(callId, StringComparer.Ordinal))
@@ -1209,23 +1224,54 @@ public sealed class Interpreter
         throw new RuntimeException($"Unknown alias '{alias}'.", line, column, alias);
     }
 
+    private static void ValidateFunctionArgumentTypes(
+        FunctionDeclarationStatement function,
+        IReadOnlyList<RuntimeValue> arguments,
+        int? line,
+        int? column)
+    {
+        for (var i = 0; i < function.ParameterDefinitions.Count; i++)
+        {
+            var parameter = function.ParameterDefinitions[i];
+
+            if (parameter.TypeName is null
+                || !RuleScriptTypeFacts.TryParse(parameter.TypeName, out var expectedType)
+                || RuleScriptTypeFacts.Accepts(expectedType, arguments[i].Value))
+            {
+                continue;
+            }
+
+            var actualType = RuleScriptTypeFacts.FromValue(arguments[i].Value);
+            throw new RuntimeException(
+                $"Function '{function.Name}' parameter '{parameter.Name}' expects {RuleScriptTypeFacts.ToDisplayName(expectedType)}, but received {RuleScriptTypeFacts.ToDisplayName(actualType)}.",
+                line,
+                column,
+                function.Name);
+        }
+    }
+
     private void ReportStatementLocation(Statement statement, RuntimeContext context)
     {
         var location = GetStatementLocation(statement);
+        var range = GetStatementRange(statement);
         context.CurrentLocation = location;
 
         _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
             RuleScriptRuntimeEventKind.CurrentLineChanged,
-            location));
+            location,
+            range: range));
 
-        var breakpointHit = _isBreakpoint(location);
+        var breakpoint = GetTriggeredBreakpoint(location, context);
+        var breakpointHit = breakpoint is not null;
 
         if (breakpointHit)
         {
             _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
                 RuleScriptRuntimeEventKind.BreakpointHit,
                 location,
-                $"Breakpoint hit at {location.File}:{location.Line}."));
+                $"Breakpoint hit at {location.File}:{location.Line}.",
+                range: range,
+                debugSnapshot: CreateDebugSnapshot(location, context)));
         }
 
         if (!breakpointHit && _isStepExecution())
@@ -1233,27 +1279,34 @@ public sealed class Interpreter
             _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
                 RuleScriptRuntimeEventKind.StepPaused,
                 location,
-                $"Step paused at {location.File}:{location.Line}."));
+                $"Step paused at {location.File}:{location.Line}.",
+                range: range,
+                debugSnapshot: CreateDebugSnapshot(location, context)));
         }
     }
 
     private async Task ReportStatementLocationAsync(Statement statement, RuntimeContext context, CancellationToken cancellationToken)
     {
         var location = GetStatementLocation(statement);
+        var range = GetStatementRange(statement);
         context.CurrentLocation = location;
 
         await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
             RuleScriptRuntimeEventKind.CurrentLineChanged,
-            location), cancellationToken).ConfigureAwait(false);
+            location,
+            range: range), cancellationToken).ConfigureAwait(false);
 
-        var breakpointHit = _isBreakpoint(location);
+        var breakpoint = GetTriggeredBreakpoint(location, context);
+        var breakpointHit = breakpoint is not null;
 
         if (breakpointHit)
         {
             await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
                 RuleScriptRuntimeEventKind.BreakpointHit,
                 location,
-                $"Breakpoint hit at {location.File}:{location.Line}."), cancellationToken).ConfigureAwait(false);
+                $"Breakpoint hit at {location.File}:{location.Line}.",
+                range: range,
+                debugSnapshot: CreateDebugSnapshot(location, context)), cancellationToken).ConfigureAwait(false);
         }
 
         if (!breakpointHit && _isStepExecution())
@@ -1261,7 +1314,9 @@ public sealed class Interpreter
             await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
                 RuleScriptRuntimeEventKind.StepPaused,
                 location,
-                $"Step paused at {location.File}:{location.Line}."), cancellationToken).ConfigureAwait(false);
+                $"Step paused at {location.File}:{location.Line}.",
+                range: range,
+                debugSnapshot: CreateDebugSnapshot(location, context)), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -1314,19 +1369,64 @@ public sealed class Interpreter
         return new RuleScriptSourceLocation(CurrentModule.Name, line, column);
     }
 
+    private RuleScriptSourceRange? GetStatementRange(Statement statement)
+    {
+        var span = statement.SourceSpan;
+        return span is null
+            ? null
+            : new RuleScriptSourceRange(CurrentModule.Name, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
+    }
+
+    private RuleScriptBreakpoint? GetTriggeredBreakpoint(RuleScriptSourceLocation location, RuntimeContext context)
+    {
+        foreach (var breakpoint in _getBreakpoints(location))
+        {
+            if (breakpoint.Condition is null || EvaluateBreakpointCondition(breakpoint.Condition, context))
+            {
+                return breakpoint;
+            }
+        }
+
+        return null;
+    }
+
+    private bool EvaluateBreakpointCondition(string condition, RuntimeContext context)
+    {
+        var tokens = new RuleScript.Core.Lexer.Lexer($"{condition};").Tokenize();
+        var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+        var expression = ((ExpressionStatement)statements[0]).Expression;
+        var value = Evaluate(expression, context).Value;
+
+        return value is bool boolean
+            ? boolean
+            : throw new RuntimeException("Breakpoint condition must evaluate to a boolean value.");
+    }
+
+    private RuleScriptDebugSnapshot CreateDebugSnapshot(RuleScriptSourceLocation location, RuntimeContext context)
+    {
+        IReadOnlyDictionary<string, RuntimeValue> locals = _localScopes.Count == 0
+            ? new Dictionary<string, RuntimeValue>(StringComparer.Ordinal)
+            : _localScopes.Peek();
+
+        return new RuleScriptDebugSnapshot(location, context.Variables, locals, _callStack.Reverse());
+    }
+
     private static RuntimeValue InvokeHostFunction(
         string name,
         Func<IReadOnlyList<object?>, object?> function,
         IReadOnlyList<RuntimeValue> arguments,
+        RuleScriptHostFunctionSymbol? signature,
         int? line,
         int? column)
     {
+        ValidateHostFunctionArguments(name, arguments, signature, line, column);
+
+        object? result;
+
         try
         {
             var hostArguments = arguments.Select(argument => argument.Value).ToArray();
-            var result = function(hostArguments);
-
-            return RuntimeValue.FromObject(result);
+            result = function(hostArguments);
         }
         catch (Exception exception) when (exception is not RuntimeException)
         {
@@ -1336,22 +1436,28 @@ public sealed class Interpreter
         {
             throw new RuntimeException($"Host function '{name}' failed: {exception.Message}", exception, line, column, name);
         }
+
+        ValidateHostFunctionReturn(name, result, signature, line, column);
+        return RuntimeValue.FromObject(result);
     }
 
     private static async Task<RuntimeValue> InvokeHostFunctionAsync(
         string name,
         Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
         IReadOnlyList<RuntimeValue> arguments,
+        RuleScriptHostFunctionSymbol? signature,
         int? line,
         int? column,
         CancellationToken cancellationToken)
     {
+        ValidateHostFunctionArguments(name, arguments, signature, line, column);
+
+        object? result;
+
         try
         {
             var hostArguments = arguments.Select(argument => argument.Value).ToArray();
-            var result = await function(hostArguments, cancellationToken).ConfigureAwait(false);
-
-            return RuntimeValue.FromObject(result);
+            result = await function(hostArguments, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not RuntimeException and not OperationCanceledException)
         {
@@ -1361,6 +1467,68 @@ public sealed class Interpreter
         {
             throw new RuntimeException($"Async host function '{name}' failed: {exception.Message}", exception, line, column, name);
         }
+
+        ValidateHostFunctionReturn(name, result, signature, line, column);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private static void ValidateHostFunctionArguments(
+        string name,
+        IReadOnlyList<RuntimeValue> arguments,
+        RuleScriptHostFunctionSymbol? signature,
+        int? line,
+        int? column)
+    {
+        if (signature is null)
+        {
+            return;
+        }
+
+        if (arguments.Count != signature.Parameters.Count)
+        {
+            throw new RuntimeException(
+                $"Host function '{name}' expects {signature.Parameters.Count} argument(s), but received {arguments.Count}.",
+                line,
+                column,
+                name);
+        }
+
+        for (var i = 0; i < signature.Parameters.Count; i++)
+        {
+            var parameter = signature.Parameters[i];
+
+            if (RuleScriptTypeFacts.Accepts(parameter.Type, arguments[i].Value))
+            {
+                continue;
+            }
+
+            var actualType = RuleScriptTypeFacts.FromValue(arguments[i].Value);
+            throw new RuntimeException(
+                $"Host function '{name}' parameter '{parameter.Name}' expects {RuleScriptTypeFacts.ToDisplayName(parameter.Type)}, but received {RuleScriptTypeFacts.ToDisplayName(actualType)}.",
+                line,
+                column,
+                name);
+        }
+    }
+
+    private static void ValidateHostFunctionReturn(
+        string name,
+        object? result,
+        RuleScriptHostFunctionSymbol? signature,
+        int? line,
+        int? column)
+    {
+        if (signature is null || RuleScriptTypeFacts.Accepts(signature.ReturnType, result))
+        {
+            return;
+        }
+
+        var actualType = RuleScriptTypeFacts.FromValue(result);
+        throw new RuntimeException(
+            $"Host function '{name}' must return {RuleScriptTypeFacts.ToDisplayName(signature.ReturnType)}, but returned {RuleScriptTypeFacts.ToDisplayName(actualType)}.",
+            line,
+            column,
+            name);
     }
 
     private static RuntimeValue Add(object? left, object? right, BinaryExpression expression)

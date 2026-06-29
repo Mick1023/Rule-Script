@@ -38,6 +38,11 @@ public sealed class RuleScriptDebugSession
     public RuleScriptRuntimeEvent? CurrentPause { get; private set; }
 
     /// <summary>
+    /// Gets the variables and call stack captured at the current pause point.
+    /// </summary>
+    public RuleScriptDebugSnapshot? CurrentSnapshot => CurrentPause?.DebugSnapshot;
+
+    /// <summary>
     /// Gets the runtime context used by the current or most recent run.
     /// </summary>
     public RuntimeContext? Context { get; private set; }

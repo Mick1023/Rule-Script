@@ -9,6 +9,8 @@ public sealed class RuleScriptEngine
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _hostFunctionSignatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _asyncHostFunctionSignatures = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private readonly object _executionSync = new();
     private IImportResolver _importResolver = new FileSystemImportResolver();
@@ -70,6 +72,16 @@ public sealed class RuleScriptEngine
             .ToArray();
 
     /// <summary>
+    /// Gets typed host function signatures registered on the engine.
+    /// </summary>
+    public IReadOnlyList<RuleScriptHostFunctionSymbol> RegisteredHostFunctions =>
+        _hostFunctionSignatures.Values
+            .Concat(_asyncHostFunctionSignatures.Values)
+            .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
+            .ThenBy(symbol => symbol.IsAsync)
+            .ToArray();
+
+    /// <summary>
     /// Notifies the host about runtime events. The returned directive controls step execution.
     /// </summary>
     public Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? RuntimeEventHandler { get; set; }
@@ -106,6 +118,22 @@ public sealed class RuleScriptEngine
         }
 
         _hostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
+        _hostFunctionSignatures.Remove(name);
+    }
+
+    /// <summary>
+    /// Registers or replaces a typed host function.
+    /// </summary>
+    public void RegisterFunction(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        Func<IReadOnlyList<object?>, object?> function)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: false);
+        _hostFunctions[name] = function;
+        _hostFunctionSignatures[name] = signature;
     }
 
     /// <summary>
@@ -119,6 +147,22 @@ public sealed class RuleScriptEngine
         }
 
         _asyncHostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
+        _asyncHostFunctionSignatures.Remove(name);
+    }
+
+    /// <summary>
+    /// Registers or replaces a typed async host function.
+    /// </summary>
+    public void RegisterFunctionAsync(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: true);
+        _asyncHostFunctions[name] = function;
+        _asyncHostFunctionSignatures[name] = signature;
     }
 
     /// <summary>
@@ -135,6 +179,19 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Registers or replaces a typed async host function.
+    /// </summary>
+    public void RegisterFunctionAsync(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        Func<IReadOnlyList<object?>, Task<object?>> function)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        RegisterFunctionAsync(name, parameters, returnType, (args, _) => function(args));
+    }
+
+    /// <summary>
     /// Removes a registered host function.
     /// </summary>
     public bool UnregisterFunction(string name)
@@ -145,7 +202,10 @@ public sealed class RuleScriptEngine
         }
 
         var removed = _hostFunctions.Remove(name);
-        return _asyncHostFunctions.Remove(name) || removed;
+        var asyncRemoved = _asyncHostFunctions.Remove(name);
+        _hostFunctionSignatures.Remove(name);
+        _asyncHostFunctionSignatures.Remove(name);
+        return asyncRemoved || removed;
     }
 
     /// <summary>
@@ -155,6 +215,8 @@ public sealed class RuleScriptEngine
     {
         _hostFunctions.Clear();
         _asyncHostFunctions.Clear();
+        _hostFunctionSignatures.Clear();
+        _asyncHostFunctionSignatures.Clear();
     }
 
     /// <summary>
@@ -172,6 +234,20 @@ public sealed class RuleScriptEngine
     /// </summary>
     public RuleScriptAnalysisResult Analyze(string script)
     {
+        return AnalyzeCore(script, cursorLine: null, cursorColumn: null);
+    }
+
+    /// <summary>
+    /// Analyzes script text and returns variables visible at the specified cursor position.
+    /// </summary>
+    public RuleScriptAnalysisResult Analyze(string script, int line, int column)
+    {
+        ValidateCursor(line, column);
+        return AnalyzeCore(script, line, column);
+    }
+
+    private RuleScriptAnalysisResult AnalyzeCore(string script, int? cursorLine, int? cursorColumn)
+    {
         ArgumentNullException.ThrowIfNull(script);
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
@@ -188,12 +264,13 @@ public sealed class RuleScriptEngine
             new Stack<string>(),
             new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
 
-        return new RuleScriptAnalysisResult(
+        return CreateAnalysisResult(
+            statements,
             variables,
             userFunctions,
-            RegisteredFunctionNames,
-            _builtinFunctions.Names,
-            importAliases);
+            importAliases,
+            cursorLine,
+            cursorColumn);
     }
 
     /// <summary>
@@ -201,21 +278,237 @@ public sealed class RuleScriptEngine
     /// </summary>
     public RuleScriptAnalysisAttempt TryAnalyze(string script)
     {
+        return TryAnalyzeCore(script, cursorLine: null, cursorColumn: null);
+    }
+
+    /// <summary>
+    /// Best-effort analyzes script text and returns variables visible at the specified cursor position.
+    /// </summary>
+    public RuleScriptAnalysisAttempt TryAnalyze(string script, int line, int column)
+    {
+        ValidateCursor(line, column);
+        return TryAnalyzeCore(script, line, column);
+    }
+
+    private RuleScriptAnalysisAttempt TryAnalyzeCore(string script, int? cursorLine, int? cursorColumn)
+    {
         ArgumentNullException.ThrowIfNull(script);
 
         try
         {
-            return new RuleScriptAnalysisAttempt(Analyze(script), [], success: true);
+            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+            var parseResult = new RuleScript.Core.Parser.Parser(tokens).ParseWithDiagnostics();
+            var variables = new HashSet<string>(StringComparer.Ordinal);
+            var userFunctions = new HashSet<string>(StringComparer.Ordinal);
+            var importAliases = new HashSet<string>(StringComparer.Ordinal);
+
+            CollectSymbols(parseResult.Statements, variables, userFunctions, importAliases);
+            CollectSymbolsFromTokens(tokens, variables, userFunctions, importAliases);
+            CollectImportedFunctionSymbolsFromTokens(tokens, userFunctions);
+
+            var symbols = CreateAnalysisResult(
+                parseResult.Statements,
+                variables,
+                userFunctions,
+                importAliases,
+                cursorLine,
+                cursorColumn,
+                fallbackVisibleToAll: !parseResult.Success);
+            var diagnostics = parseResult.Diagnostics.Select(CreateDiagnostic).ToArray();
+
+            return new RuleScriptAnalysisAttempt(symbols, diagnostics, parseResult.Success);
         }
         catch (SyntaxException exception)
         {
-            var diagnostics = new[]
-            {
-                new RuleScriptDiagnostic(exception.Message, exception.Line, exception.Column, exception.TokenText, exception.SourceFile)
-            };
-
-            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script), diagnostics, success: false);
+            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script), [CreateDiagnostic(exception)], success: false);
         }
+    }
+
+    private static void ValidateCursor(int line, int column)
+    {
+        if (line <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(line), "Cursor line must be greater than zero.");
+        }
+
+        if (column <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(column), "Cursor column must be greater than zero.");
+        }
+    }
+
+    private static RuleScriptDiagnostic CreateDiagnostic(SyntaxException exception)
+    {
+        RuleScriptSourceRange? range = null;
+
+        if (exception.Line.HasValue && exception.Column.HasValue)
+        {
+            var endLine = exception.EndLine ?? exception.Line.Value;
+            var endColumn = exception.EndColumn
+                ?? exception.Column.Value + Math.Max(exception.TokenText?.Length ?? 0, 1);
+            range = new RuleScriptSourceRange(
+                exception.SourceFile,
+                exception.Line.Value,
+                exception.Column.Value,
+                endLine,
+                endColumn);
+        }
+
+        return new RuleScriptDiagnostic(
+            exception.Message,
+            exception.Line,
+            exception.Column,
+            exception.TokenText,
+            exception.SourceFile,
+            range);
+    }
+
+    private RuleScriptAnalysisResult CreateAnalysisResult(
+        IReadOnlyList<Statement> statements,
+        IEnumerable<string> variableNames,
+        IEnumerable<string> userFunctionNames,
+        IEnumerable<string> importAliases,
+        int? cursorLine,
+        int? cursorColumn,
+        bool fallbackVisibleToAll = false)
+    {
+        var registeredHostFunctions = RegisteredHostFunctions;
+        var hostReturnTypes = registeredHostFunctions
+            .GroupBy(function => function.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Last().ReturnType,
+                StringComparer.Ordinal);
+        var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(statements, cursorLine, cursorColumn, hostReturnTypes);
+        var functionSymbols = typedSymbols.Functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
+        CollectImportedFunctionSignatures(
+            statements,
+            ResolveWorkingDirectory(),
+            functionSymbols,
+            new Stack<string>(),
+            new Dictionary<string, IReadOnlyList<RuleScriptFunctionSymbol>>(StringComparer.OrdinalIgnoreCase));
+        IEnumerable<RuleScriptVariableSymbol>? visibleVariables = typedSymbols.VisibleVariables;
+
+        if (fallbackVisibleToAll && cursorLine.HasValue && cursorColumn.HasValue)
+        {
+            visibleVariables = typedSymbols.Variables.Concat(
+                variableNames.Select(name => new RuleScriptVariableSymbol(name, RuleScriptValueType.Unknown)));
+        }
+
+        return new RuleScriptAnalysisResult(
+            variableNames,
+            userFunctionNames,
+            RegisteredFunctionNames,
+            _builtinFunctions.Names,
+            importAliases,
+            typedSymbols.Variables,
+            functionSymbols.Values,
+            visibleVariables,
+            registeredHostFunctions);
+    }
+
+    private void CollectImportedFunctionSignatures(
+        IEnumerable<Statement> statements,
+        string baseDirectory,
+        IDictionary<string, RuleScriptFunctionSymbol> functions,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<RuleScriptFunctionSymbol>> moduleCache)
+    {
+        foreach (var import in statements.OfType<ImportStatement>())
+        {
+            var path = ResolveImportPath(import.Path, baseDirectory);
+
+            if (!ImportResolver.Exists(path))
+            {
+                continue;
+            }
+
+            IReadOnlyList<RuleScriptFunctionSymbol> importedFunctions;
+
+            try
+            {
+                importedFunctions = LoadImportedFunctionSignatures(path, importStack, moduleCache);
+            }
+            catch (RuleScriptException)
+            {
+                continue;
+            }
+
+            foreach (var function in importedFunctions)
+            {
+                var name = import.Alias is null ? function.Name : $"{import.Alias}.{function.Name}";
+                functions[name] = new RuleScriptFunctionSymbol(name, function.Parameters);
+            }
+        }
+    }
+
+    private IReadOnlyList<RuleScriptFunctionSymbol> LoadImportedFunctionSignatures(
+        string path,
+        Stack<string> importStack,
+        IDictionary<string, IReadOnlyList<RuleScriptFunctionSymbol>> moduleCache)
+    {
+        path = ImportResolver.GetFullPath(path);
+
+        if (moduleCache.TryGetValue(path, out var cached))
+        {
+            return cached;
+        }
+
+        if (importStack.Contains(path, StringComparer.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        importStack.Push(path);
+
+        try
+        {
+            var script = ImportResolver.ReadAllText(path);
+            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+            var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+            var functions = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
+            var baseDirectory = Path.GetDirectoryName(path) ?? ResolveWorkingDirectory();
+
+            foreach (var import in statements.OfType<ImportStatement>().Where(value => value.Alias is null))
+            {
+                var nestedPath = ResolveImportPath(import.Path, baseDirectory);
+
+                if (!ImportResolver.Exists(nestedPath))
+                {
+                    continue;
+                }
+
+                foreach (var function in LoadImportedFunctionSignatures(nestedPath, importStack, moduleCache))
+                {
+                    functions[function.Name] = function;
+                }
+            }
+
+            foreach (var declaration in statements.OfType<FunctionDeclarationStatement>())
+            {
+                functions[declaration.Name] = CreateFunctionSymbol(declaration);
+            }
+
+            var snapshot = functions.Values.OrderBy(function => function.Name, StringComparer.Ordinal).ToArray();
+            moduleCache[path] = snapshot;
+            return snapshot;
+        }
+        finally
+        {
+            importStack.Pop();
+        }
+    }
+
+    private static RuleScriptFunctionSymbol CreateFunctionSymbol(FunctionDeclarationStatement declaration)
+    {
+        var parameters = declaration.ParameterDefinitions.Select(parameter =>
+        {
+            var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
+                ? parsed
+                : RuleScriptValueType.Unknown;
+            return new RuleScriptParameterSymbol(parameter.Name, type);
+        });
+        return new RuleScriptFunctionSymbol(declaration.Name, parameters);
     }
 
     /// <summary>
@@ -227,16 +520,33 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Adds a conditional breakpoint for any source file at the specified line.
+    /// </summary>
+    public void AddBreakpoint(int line, string condition)
+    {
+        AddBreakpoint(null, line, condition);
+    }
+
+    /// <summary>
     /// Adds a breakpoint for the specified source file and line.
     /// </summary>
     public void AddBreakpoint(string? file, int line)
+    {
+        AddBreakpoint(file, line, condition: null);
+    }
+
+    /// <summary>
+    /// Adds a conditional breakpoint for the specified source file and line.
+    /// </summary>
+    public void AddBreakpoint(string? file, int line, string? condition)
     {
         if (line <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(line), "Breakpoint line must be greater than zero.");
         }
 
-        var breakpoint = new RuleScriptBreakpoint(NormalizeBreakpointFile(file), line);
+        condition = NormalizeBreakpointCondition(condition);
+        var breakpoint = new RuleScriptBreakpoint(NormalizeBreakpointFile(file), line, condition);
 
         if (!_breakpoints.Contains(breakpoint))
         {
@@ -257,8 +567,9 @@ public sealed class RuleScriptEngine
     /// </summary>
     public bool RemoveBreakpoint(string? file, int line)
     {
-        var breakpoint = new RuleScriptBreakpoint(NormalizeBreakpointFile(file), line);
-        return _breakpoints.Remove(breakpoint);
+        var normalizedFile = NormalizeBreakpointFile(file);
+        return _breakpoints.RemoveAll(value =>
+            value.Line == line && string.Equals(value.File, normalizedFile, StringComparison.OrdinalIgnoreCase)) > 0;
     }
 
     /// <summary>
@@ -464,14 +775,57 @@ public sealed class RuleScriptEngine
             _builtinFunctions,
             _hostFunctions,
             _asyncHostFunctions,
+            _hostFunctionSignatures,
+            _asyncHostFunctionSignatures,
             MaxLoopIterations,
             LoopIterationLimitEnabled,
             module,
             NotifyRuntimeEvent,
             NotifyRuntimeEventAsync,
-            IsBreakpoint,
+            GetBreakpoints,
             () => StepExecution,
             cancellationToken);
+    }
+
+    private static RuleScriptHostFunctionSymbol CreateHostFunctionSignature(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        bool isAsync)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Function name cannot be empty.", nameof(name));
+        }
+
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        if (returnType == RuleScriptValueType.Unknown || !Enum.IsDefined(returnType))
+        {
+            throw new ArgumentException("Host function return type must be a known RuleScript type or Any.", nameof(returnType));
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var parameter in parameters)
+        {
+            if (parameter is null || string.IsNullOrWhiteSpace(parameter.Name))
+            {
+                throw new ArgumentException("Host function parameter names cannot be empty.", nameof(parameters));
+            }
+
+            if (!names.Add(parameter.Name))
+            {
+                throw new ArgumentException($"Duplicate host function parameter name '{parameter.Name}'.", nameof(parameters));
+            }
+
+            if (parameter.Type == RuleScriptValueType.Unknown || !Enum.IsDefined(parameter.Type))
+            {
+                throw new ArgumentException($"Host function parameter '{parameter.Name}' must use a known RuleScript type or Any.", nameof(parameters));
+            }
+        }
+
+        return new RuleScriptHostFunctionSymbol(name, parameters, returnType, isAsync);
     }
 
     private CancellationTokenSource CreateStopCancellation()
@@ -904,11 +1258,18 @@ public sealed class RuleScriptEngine
             return;
         }
 
+        var expectName = true;
+
         for (var i = start + 1; i < tokens.Count && tokens[i].Type is not TokenType.RightParen and not TokenType.EndOfFile; i++)
         {
-            if (tokens[i].Type == TokenType.Identifier)
+            if (expectName && tokens[i].Type == TokenType.Identifier)
             {
                 variables.Add(tokens[i].Lexeme);
+                expectName = false;
+            }
+            else if (tokens[i].Type == TokenType.Comma)
+            {
+                expectName = true;
             }
         }
     }
@@ -1039,7 +1400,7 @@ public sealed class RuleScriptEngine
 
         foreach (var part in line.Substring(open + 1, close - open - 1).Split(','))
         {
-            var parameter = part.Trim();
+            var parameter = part.Split(':', 2)[0].Trim();
 
             if (IsValidIdentifier(parameter))
             {
@@ -1175,16 +1536,41 @@ public sealed class RuleScriptEngine
             exception: exception), cancellationToken);
     }
 
-    private bool IsBreakpoint(RuleScriptSourceLocation location)
+    private IReadOnlyList<RuleScriptBreakpoint> GetBreakpoints(RuleScriptSourceLocation location)
     {
         if (!location.Line.HasValue)
         {
-            return false;
+            return [];
         }
 
-        return _breakpoints.Any(breakpoint =>
-            breakpoint.Line == location.Line.Value
-            && (breakpoint.File is null || string.Equals(breakpoint.File, NormalizeLocationFile(location.File), StringComparison.OrdinalIgnoreCase)));
+        return _breakpoints.Where(breakpoint =>
+                breakpoint.Line == location.Line.Value
+                && (breakpoint.File is null || string.Equals(breakpoint.File, NormalizeLocationFile(location.File), StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+    }
+
+    private static string? NormalizeBreakpointCondition(string? condition)
+    {
+        if (condition is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(condition))
+        {
+            throw new ArgumentException("Breakpoint condition cannot be empty.", nameof(condition));
+        }
+
+        var normalized = condition.Trim();
+        var tokens = new RuleScript.Core.Lexer.Lexer($"{normalized};").Tokenize();
+        var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+
+        if (statements.Count != 1 || statements[0] is not ExpressionStatement)
+        {
+            throw new ArgumentException("Breakpoint condition must be a single expression.", nameof(condition));
+        }
+
+        return normalized;
     }
 
     private static void AssignSourceFile(RuleScriptException exception, string sourceFile)

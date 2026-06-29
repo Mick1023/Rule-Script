@@ -25,7 +25,7 @@ public sealed class RuntimeException : RuleScriptException
     /// Creates a runtime exception with source location and an inner exception.
     /// </summary>
     public RuntimeException(string message, Exception innerException, int? line, int? column, string? tokenText = null, string? sourceFile = null)
-        : base(FormatRuntimeMessage(message), line, column, tokenText, sourceFile, innerException)
+        : base(FormatRuntimeMessage(message), line, column, tokenText, sourceFile, innerException: innerException)
     {
     }
 

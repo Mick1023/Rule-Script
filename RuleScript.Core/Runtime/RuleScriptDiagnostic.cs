@@ -8,4 +8,5 @@ public sealed record RuleScriptDiagnostic(
     int? Line = null,
     int? Column = null,
     string? TokenText = null,
-    string? SourceFile = null);
+    string? SourceFile = null,
+    RuleScriptSourceRange? Range = null);

@@ -13,6 +13,8 @@ public abstract class RuleScriptException : Exception
         int? column = null,
         string? tokenText = null,
         string? sourceFile = null,
+        int? endLine = null,
+        int? endColumn = null,
         Exception? innerException = null)
         : base(message, innerException)
     {
@@ -21,6 +23,8 @@ public abstract class RuleScriptException : Exception
         Column = column;
         TokenText = tokenText;
         SourceFile = sourceFile;
+        EndLine = endLine;
+        EndColumn = endColumn;
     }
 
     /// <inheritdoc />
@@ -35,6 +39,16 @@ public abstract class RuleScriptException : Exception
     /// Gets the 1-based source column when available.
     /// </summary>
     public int? Column { get; }
+
+    /// <summary>
+    /// Gets the 1-based ending source line when available.
+    /// </summary>
+    public int? EndLine { get; }
+
+    /// <summary>
+    /// Gets the exclusive 1-based ending source column when available.
+    /// </summary>
+    public int? EndColumn { get; }
 
     /// <summary>
     /// Gets the token text or source text associated with the failure when available.

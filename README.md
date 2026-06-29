@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](docs/releases/v1.0.0.md)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](docs/releases/v1.1.0.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -47,6 +47,22 @@ var context = engine.Execute("""
     result = a + b;
     """);
 ```
+
+Host functions can optionally register the same parameter metadata and runtime type validation used by typed user functions:
+
+```csharp
+engine.RegisterFunction(
+    "Add",
+    parameters:
+    [
+        new("left", RuleScriptValueType.Number),
+        new("right", RuleScriptValueType.Number)
+    ],
+    returnType: RuleScriptValueType.Number,
+    function: args => Convert.ToDouble(args[0]) + Convert.ToDouble(args[1]));
+```
+
+Typed registrations validate argument count and types before invoking host code, then validate the returned value. `RegisterFunctionAsync` provides equivalent overloads for both cancellation-aware and simple async delegates. Existing registrations without metadata remain unvalidated and backward compatible.
 
 Run a project file:
 
@@ -382,6 +398,19 @@ endfunction
 var result = Add(10, 20);
 ```
 
+Function parameters can optionally declare a runtime-validated type:
+
+```rulescript
+function Format(value: number, prefix: string, enabled: bool):
+    if enabled then:
+        return prefix + ToString(value);
+    endif
+    return prefix;
+endfunction
+```
+
+Supported parameter types are `number`, `string`, `bool`/`boolean`, `array`, `object`, `null`, and `any`. Untyped parameters remain backward compatible and accept any supported value. A typed call with a mismatched value throws `RuntimeException` before the function body runs.
+
 `return expression;` returns a value. `return;` returns `null`, and a function that reaches `endfunction` without returning also returns `null`.
 
 Functions use a local scope. Parameters and `var` declarations stay local and do not leak into `RuntimeContext`. A function can read global values from `RuntimeContext`.
@@ -452,7 +481,7 @@ engine.UnregisterFunction("Value");
 engine.ClearFunctions();
 ```
 
-`engine.RegisteredFunctionNames` returns a sorted snapshot of host function names registered with `RegisterFunction` and `RegisterFunctionAsync`. `engine.GetVariableNames(context)` returns the current `RuntimeContext` variable names after execution.
+`engine.RegisteredFunctionNames` returns a sorted snapshot of every host function name. `engine.RegisteredHostFunctions` returns typed signatures, including parameters, return types, and whether each registration is async. `engine.GetVariableNames(context)` returns the current `RuntimeContext` variable names after execution.
 
 For editor autocomplete before execution, use static analysis:
 
@@ -460,11 +489,21 @@ For editor autocomplete before execution, use static analysis:
 var symbols = engine.Analyze(script);
 
 var variables = symbols.VariableNames;
+var typedVariables = symbols.Variables;       // Name + inferred RuleScriptValueType
 var functions = symbols.FunctionNames;
+var userFunctions = symbols.UserFunctions;   // Name + input parameter names/types
+var hostFunctions = symbols.HostFunctions;   // Parameters + return type + async flag
 var imports = symbols.ImportAliases;
 ```
 
 `Analyze` parses the script but does not execute it. The result includes script variables, user-defined functions, currently registered host functions, built-in functions, and import aliases. It also reads imports relative to `WorkingDirectory`: globally imported functions appear by name (for example, `Shared`), while alias-imported functions appear as qualified callable names (for example, `robot.Read`). Missing import files are skipped so autocomplete remains available while a project is being edited. The script and any imported files that exist must be parseable.
+
+For cursor-aware completion, pass a 1-based line and column. Inside a function, `VisibleVariables` includes globals, that function's parameters, and its local variables without leaking locals from other functions:
+
+```csharp
+var symbolsAtCursor = engine.Analyze(script, line, column);
+var suggestions = symbolsAtCursor.VisibleVariables;
+```
 
 For live editor input that may be incomplete, use best-effort analysis:
 
@@ -475,9 +514,11 @@ var variables = attempt.Symbols.VariableNames;
 var diagnostics = attempt.Diagnostics;
 ```
 
-`TryAnalyze` does not throw for syntax errors. `Success` is `false` when parsing fails, but `Symbols` still contains names collected from the partial script when possible.
+`TryAnalyze(script, line, column)` provides the same cursor-aware symbols for live, potentially incomplete editor input.
 
-Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Current supported return values are `number`, `string`, `bool`, and `null`. Other return types throw `RuntimeException`.
+`TryAnalyze` does not throw for syntax errors. `Success` is `false` when parsing fails, but `Symbols` still contains names collected from the partial script when possible. Recoverable parser errors are returned together instead of stopping after the first error. Each diagnostic exposes a half-open `Range` with start and end positions for editor highlighting.
+
+Host functions receive evaluated arguments as `IReadOnlyList<object?>` and return `object?`. Typed signatures use `RuleScriptValueType`; metadata mismatches throw `RuntimeException` with the function and parameter names.
 
 Timing and external wait behavior should be implemented as host functions instead of syntax.
 For UI applications and I/O waits, prefer async host functions with `ExecuteAsync`:
@@ -547,7 +588,7 @@ engine.RuntimeEventHandler = runtimeEvent =>
 };
 ```
 
-Runtime events include current-line changes, `Print` calls, breakpoint hits, step pauses, and errors. Event locations include file, line, and column when available.
+Runtime events include current-line changes, `Print` calls, breakpoint hits, step pauses, and errors. Event locations include file, line, and column when available. Statement events also expose the complete multi-token source `Range` when available.
 
 Async runtime events can await UI dispatch, logging, or external tooling work:
 
@@ -594,11 +635,16 @@ var engine = new RuleScriptEngine
 };
 
 engine.AddBreakpoint("main.rules", 2);
+engine.AddBreakpoint("main.rules", 4, "retryCount >= 3");
 
 var session = new RuleScriptDebugSession(engine);
 var runTask = session.RunFileAsync("main.rules");
 
 var pause = await session.WaitForPauseAsync();
+var snapshot = session.CurrentSnapshot;
+var globals = snapshot?.Globals;
+var locals = snapshot?.Locals;
+var callStack = snapshot?.CallStack;
 session.StepOver();
 
 pause = await session.WaitForPauseAsync();
@@ -643,6 +689,6 @@ Runtime error: Builtin function 'ToString' expects 1 argument(s), but received 2
 - Package manager
 - Generic collections
 - Built-in `delay` / `waitfor` syntax
-- Multi-error parser recovery
-- Multi-token source ranges
+- Step Into
+- Step Out
 

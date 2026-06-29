@@ -15,18 +15,24 @@ public sealed class RuleScriptRuntimeEvent
     /// <param name="message">An optional human-readable message.</param>
     /// <param name="value">An optional event value, such as a printed value.</param>
     /// <param name="exception">The exception associated with an error event.</param>
+    /// <param name="range">The full source range associated with the event.</param>
+    /// <param name="debugSnapshot">The debugger state captured for a pause event.</param>
     public RuleScriptRuntimeEvent(
         RuleScriptRuntimeEventKind kind,
         RuleScriptSourceLocation location,
         string? message = null,
         object? value = null,
-        RuleScriptException? exception = null)
+        RuleScriptException? exception = null,
+        RuleScriptSourceRange? range = null,
+        RuleScriptDebugSnapshot? debugSnapshot = null)
     {
         Kind = kind;
         Location = location;
         Message = message;
         Value = value;
         Exception = exception;
+        Range = range;
+        DebugSnapshot = debugSnapshot;
     }
 
     /// <summary>
@@ -53,4 +59,14 @@ public sealed class RuleScriptRuntimeEvent
     /// Gets the exception associated with an error event.
     /// </summary>
     public RuleScriptException? Exception { get; }
+
+    /// <summary>
+    /// Gets the full source range associated with the event when available.
+    /// </summary>
+    public RuleScriptSourceRange? Range { get; }
+
+    /// <summary>
+    /// Gets the debugger state captured for a pause event when available.
+    /// </summary>
+    public RuleScriptDebugSnapshot? DebugSnapshot { get; }
 }
