@@ -165,16 +165,16 @@ public sealed class Parser
         Consume(TokenType.Then, "Expected 'then' after if condition.");
         Consume(TokenType.Colon, "Expected ':' after 'then'.");
 
-        var thenBranch = ParseBlock(TokenType.Else, TokenType.EndIf);
+        var thenBranch = ParseBlock(TokenType.Else, TokenType.EndIf, TokenType.End);
         var elseBranch = Array.Empty<Statement>();
 
         if (Match(TokenType.Else))
         {
             Consume(TokenType.Colon, "Expected ':' after 'else'.");
-            elseBranch = ParseBlock(TokenType.EndIf);
+            elseBranch = ParseBlock(TokenType.EndIf, TokenType.End);
         }
 
-        Consume(TokenType.EndIf, "Expected 'endif' after if statement.");
+        ConsumeBlockEnd(TokenType.EndIf, "endif", "if statement");
         return new IfStatement(condition, thenBranch, elseBranch, ifToken.Line, ifToken.Column);
     }
 
@@ -184,9 +184,9 @@ public sealed class Parser
         var condition = ParseExpression();
         Consume(TokenType.Colon, "Expected ':' after while condition.");
 
-        var body = ParseBlock(TokenType.EndWhile);
+        var body = ParseBlock(TokenType.EndWhile, TokenType.End);
 
-        Consume(TokenType.EndWhile, "Expected 'endwhile' after while statement.");
+        ConsumeBlockEnd(TokenType.EndWhile, "endwhile", "while statement");
         return new WhileStatement(condition, body, whileToken.Line, whileToken.Column);
     }
 
@@ -198,9 +198,9 @@ public sealed class Parser
         var iterable = ParseExpression();
         Consume(TokenType.Colon, "Expected ':' after foreach iterable expression.");
 
-        var body = ParseBlock(TokenType.EndForeach);
+        var body = ParseBlock(TokenType.EndForeach, TokenType.End);
 
-        Consume(TokenType.EndForeach, "Expected 'endforeach' after foreach statement.");
+        ConsumeBlockEnd(TokenType.EndForeach, "endforeach", "foreach statement");
         return new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column);
     }
 
@@ -231,9 +231,9 @@ public sealed class Parser
         Consume(TokenType.RightParen, "Expected ')' after function parameters.");
         Consume(TokenType.Colon, "Expected ':' after function declaration.");
 
-        var body = ParseBlock(TokenType.EndFunction);
+        var body = ParseBlock(TokenType.EndFunction, TokenType.End);
 
-        Consume(TokenType.EndFunction, "Expected 'endfunction' after function declaration.");
+        ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
         return new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column);
     }
 
@@ -534,6 +534,16 @@ public sealed class Parser
         }
 
         throw Error(Peek(), message);
+    }
+
+    private Token ConsumeBlockEnd(TokenType specificType, string specificKeyword, string blockName)
+    {
+        if (Check(specificType) || Check(TokenType.End))
+        {
+            return Advance();
+        }
+
+        throw Error(Peek(), $"Expected '{specificKeyword}' or 'end' after {blockName}.");
     }
 
     private bool Check(TokenType type) => !IsAtEnd() && Peek().Type == type;

@@ -6,6 +6,37 @@ namespace RuleScript.Tests;
 public sealed class ModuleTests
 {
     [Fact]
+    public void ExtensionlessImport_UsesDefaultScriptFileExtension()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("common.rules", "function Value(): return 42; endfunction");
+        project.Write("main.rules", "import \"common\"; result = Value();");
+
+        var context = ExecuteFile(project, "main.rules");
+
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public void CustomScriptFileExtension_AppliesToExecuteFileAndNestedImports()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("shared.rule", "function Value(): return 42; endfunction");
+        project.Write("common.rule", "import \"shared\"; function Read(): return Value(); endfunction");
+        project.Write("main.rule", "import \"common\"; result = Read();");
+        var engine = new RuleScriptEngine
+        {
+            WorkingDirectory = project.DirectoryPath,
+            ScriptFileExtension = "rule"
+        };
+
+        var context = engine.ExecuteFile("main");
+
+        Assert.Equal(".rule", engine.ScriptFileExtension);
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void GlobalImport_FunctionCanBeCalledDirectly()
     {
         using var project = new RuleScriptProject();
@@ -277,6 +308,8 @@ public sealed class ModuleTests
     private sealed class RuleScriptProject : IDisposable
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(), $"rulescript-{Guid.NewGuid():N}");
+
+        public string DirectoryPath => _directory;
 
         public RuleScriptProject()
         {

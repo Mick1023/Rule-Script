@@ -6,6 +6,16 @@ namespace RuleScript.Tests;
 public sealed class PublicApiUsabilityTests
 {
     [Fact]
+    public void ScriptFileExtension_DefaultsToRulesAndRejectsInvalidValues()
+    {
+        var engine = new RuleScriptEngine();
+
+        Assert.Equal(".rules", engine.ScriptFileExtension);
+        Assert.Throws<ArgumentException>(() => engine.ScriptFileExtension = " ");
+        Assert.Throws<ArgumentException>(() => engine.ScriptFileExtension = "folder/file");
+    }
+
+    [Fact]
     public void Execute_ReturnsRuntimeContext()
     {
         var engine = new RuleScriptEngine();
@@ -196,6 +206,31 @@ public sealed class PublicApiUsabilityTests
             Assert.Contains("robot.Read", result.UserFunctionNames);
             Assert.Contains("Shared", result.FunctionNames);
             Assert.Contains("robot.Read", result.FunctionNames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Analyze_ExtensionlessImport_UsesConfiguredScriptFileExtension()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "common.rule"), "function Shared(): return 1; endfunction");
+            var engine = new RuleScriptEngine
+            {
+                WorkingDirectory = directory,
+                ScriptFileExtension = ".rule"
+            };
+
+            var result = engine.Analyze("import \"common\";");
+
+            Assert.Contains("Shared", result.FunctionNames);
         }
         finally
         {

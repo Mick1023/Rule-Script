@@ -5,6 +5,15 @@ namespace RuleScript.Tests;
 public sealed class LexerTests
 {
     [Fact]
+    public void Tokenize_End_ReturnsGenericBlockEndToken()
+    {
+        var tokens = new Lexer("end").Tokenize();
+
+        Assert.Equal(TokenType.End, tokens[0].Type);
+        Assert.Equal(TokenType.EndOfFile, tokens[1].Type);
+    }
+
+    [Fact]
     public void Tokenize_SkipsLineCommentsAndReadsPhaseOneTokens()
     {
         var lexer = new Lexer("""

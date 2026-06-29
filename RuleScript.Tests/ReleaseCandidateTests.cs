@@ -6,6 +6,34 @@ namespace RuleScript.Tests;
 public sealed class ReleaseCandidateTests
 {
     [Fact]
+    public void GenericEnd_ClosesAllBlockTypes()
+    {
+        var context = new RuleScriptEngine().Execute("""
+            function Sum(values):
+                var total = 0;
+
+                foreach item in values:
+                    while item > 0:
+                        if item == 2 then:
+                            total = total + 2;
+                        else:
+                            total = total + 1;
+                        end
+
+                        item = item - 1;
+                    end
+                end
+
+                return total;
+            end
+
+            result = Sum([2, 1]);
+            """);
+
+        Assert.Equal(4d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void AlarmProject_FullWorkflow_Works()
     {
         using var project = new RuleScriptProject();

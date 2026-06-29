@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.7-blue)](docs/releases/v1.0.0-rc5.7.md)
+[![Version](https://img.shields.io/badge/version-v1.0.0--rc5.8-blue)](docs/releases/v1.0.0-rc5.8.md)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -56,7 +56,7 @@ var engine = new RuleScriptEngine
     WorkingDirectory = @"C:\rules"
 };
 
-var context = engine.ExecuteFile("main.rules");
+var context = engine.ExecuteFile("main");
 var result = context.Get("result");
 ```
 
@@ -71,18 +71,18 @@ var result = context.Get("result");
 - Boolean operators: `and`, `or`
 - Grouping with `( expression )`
 - Unary operators: `!`, `-`
-- `if` / `else` / `endif`
-- `while` / `endwhile`
+- `if` / `else` / `end` (`endif` is also supported)
+- `while` / `end` (`endwhile` is also supported)
 - `break`
 - `continue`
-- `foreach` / `endforeach`
+- `foreach` / `end` (`endforeach` is also supported)
 - Array literals: `[1, 2, 3]`
 - Array index access: `values[0]`
 - Object property access: `robot.Status`, `robot.Position.X`
 - Function calls in expression statements and expressions
-- User-defined functions with `function` / `return` / `endfunction`
+- User-defined functions with `function` / `return` / `end` (`endfunction` is also supported)
 - Explicit global access with `global.name`
-- Project imports with `import "file.rules";` and `import "file.rules" as alias;`
+- Project imports with `import "file";` and `import "file" as alias;`
 
 ## Supported Features
 
@@ -94,6 +94,18 @@ var result = context.Get("result");
 - JSON functions
 - Import system with aliases
 - Host functions
+
+All block statements can use the same `end` keyword. The specific `endif`, `endwhile`, `endforeach`, and `endfunction` keywords remain supported for existing scripts.
+
+```rulescript
+function IsAlarm(value):
+    if value > 500 then:
+        return true;
+    else:
+        return false;
+    end
+end
+```
 
 ## Examples
 
@@ -301,10 +313,22 @@ var engine = new RuleScriptEngine
     WorkingDirectory = @"C:\rules"
 };
 
-var context = engine.ExecuteFile("main.rules");
+var context = engine.ExecuteFile("main");
 ```
 
-Relative `ExecuteFile` paths are resolved from `RuleScriptEngine.WorkingDirectory`. If `WorkingDirectory` is `null`, RuleScript uses `Environment.CurrentDirectory`. Absolute `ExecuteFile` paths ignore `WorkingDirectory`.
+Relative `ExecuteFile` paths are resolved from `RuleScriptEngine.WorkingDirectory`. If `WorkingDirectory` is `null`, RuleScript uses `Environment.CurrentDirectory`. Absolute `ExecuteFile` paths ignore `WorkingDirectory`. Paths without an extension use `.rules` by default.
+
+Hosts can choose a different script extension. Both `rule` and `.rule` are accepted and normalized to `.rule`:
+
+```csharp
+var engine = new RuleScriptEngine
+{
+    WorkingDirectory = @"C:\rules",
+    ScriptFileExtension = ".rule"
+};
+
+var context = engine.ExecuteFile("main"); // Resolves main.rule
+```
 
 Project example:
 
@@ -319,7 +343,7 @@ rules/
 Global imports merge imported functions into the current file's function table:
 
 ```rulescript
-import "common.rules";
+import "common";
 
 result = IsAlarm(600);
 ```
@@ -327,8 +351,8 @@ result = IsAlarm(600);
 Alias imports keep functions isolated behind a module namespace:
 
 ```rulescript
-import "robot.rules" as robot;
-import "port.rules" as port;
+import "robot" as robot;
+import "port" as port;
 
 var a = robot.GetSensor();
 var b = port.GetSensor();
@@ -340,7 +364,7 @@ Alias imports do not expose functions globally. In the example above, `GetSensor
 
 Nested imports are supported, and circular imports throw `RuntimeException`. If multiple global imports provide the same function name, later global imports override earlier ones. Functions declared in the current file override globally imported functions. Alias imports are recommended when different modules use the same function names.
 
-Import paths are resolved relative to the file that contains the import. Path normalization supports `./common.rules` and `modules/../common.rules`. Imported files may contain only `import` statements and function declarations; top-level executable statements are rejected in imported files.
+Import paths are resolved relative to the file that contains the import. Extensionless paths automatically use `ScriptFileExtension`; paths that already have an extension are preserved. Path normalization supports `./common` and `modules/../common`. Imported files may contain only `import` statements and function declarations; top-level executable statements are rejected in imported files.
 
 Imported functions use the same global `RuntimeContext` as the importing program. They can read an existing variable with `global.A`, or create/update it with `global.A = value;`; the importing program and host can then read `A`. A bare top-level declaration such as `var A = 1;` is still not allowed in an imported file, so global initialization must happen inside an imported function that the main program calls.
 

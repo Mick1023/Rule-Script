@@ -12,6 +12,7 @@ public sealed class RuleScriptEngine
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private readonly object _executionSync = new();
     private IImportResolver _importResolver = new FileSystemImportResolver();
+    private string _scriptFileExtension = ".rules";
     private CancellationTokenSource? _stopCancellation;
 
     /// <summary>
@@ -29,6 +30,15 @@ public sealed class RuleScriptEngine
     /// Gets or sets the base directory used for relative <see cref="ExecuteFile(string)"/> paths.
     /// </summary>
     public string? WorkingDirectory { get; set; }
+
+    /// <summary>
+    /// Gets or sets the file extension appended to extensionless script and import paths.
+    /// </summary>
+    public string ScriptFileExtension
+    {
+        get => _scriptFileExtension;
+        set => _scriptFileExtension = NormalizeScriptFileExtension(value);
+    }
 
     /// <summary>
     /// Gets or sets the import resolver used by <see cref="ExecuteFile(string)"/> and import statements.
@@ -1076,6 +1086,7 @@ public sealed class RuleScriptEngine
 
     private string ResolveImportPath(string path, string baseDirectory)
     {
+        path = AppendScriptFileExtension(path);
         return ImportResolver.GetFullPath(Path.IsPathRooted(path)
             ? path
             : Path.Combine(baseDirectory, path));
@@ -1083,9 +1094,32 @@ public sealed class RuleScriptEngine
 
     private string ResolveExecuteFilePath(string path)
     {
+        path = AppendScriptFileExtension(path);
         return ImportResolver.GetFullPath(Path.IsPathRooted(path)
             ? path
             : Path.Combine(ResolveWorkingDirectory(), path));
+    }
+
+    private string AppendScriptFileExtension(string path)
+    {
+        return Path.HasExtension(path) ? path : path + ScriptFileExtension;
+    }
+
+    private static string NormalizeScriptFileExtension(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException("Script file extension cannot be empty.", nameof(value));
+        }
+
+        value = value.Trim();
+
+        if (value.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+        {
+            throw new ArgumentException("Script file extension cannot contain directory separators.", nameof(value));
+        }
+
+        return value.StartsWith('.') ? value : $".{value}";
     }
 
     private string ResolveWorkingDirectory()
