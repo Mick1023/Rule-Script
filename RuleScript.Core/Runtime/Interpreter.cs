@@ -1259,7 +1259,11 @@ public sealed class Interpreter
         _notifyRuntimeEvent(new RuleScriptRuntimeEvent(
             RuleScriptRuntimeEventKind.CurrentLineChanged,
             location,
-            range: range));
+            message: null,
+            value: null,
+            exception: null,
+            range: range,
+            debugSnapshot: null));
 
         var breakpoint = GetTriggeredBreakpoint(location, context);
         var breakpointHit = breakpoint is not null;
@@ -1270,6 +1274,8 @@ public sealed class Interpreter
                 RuleScriptRuntimeEventKind.BreakpointHit,
                 location,
                 $"Breakpoint hit at {location.File}:{location.Line}.",
+                value: null,
+                exception: null,
                 range: range,
                 debugSnapshot: CreateDebugSnapshot(location, context)));
         }
@@ -1280,6 +1286,8 @@ public sealed class Interpreter
                 RuleScriptRuntimeEventKind.StepPaused,
                 location,
                 $"Step paused at {location.File}:{location.Line}.",
+                value: null,
+                exception: null,
                 range: range,
                 debugSnapshot: CreateDebugSnapshot(location, context)));
         }
@@ -1294,7 +1302,11 @@ public sealed class Interpreter
         await _notifyRuntimeEventAsync(new RuleScriptRuntimeEvent(
             RuleScriptRuntimeEventKind.CurrentLineChanged,
             location,
-            range: range), cancellationToken).ConfigureAwait(false);
+            message: null,
+            value: null,
+            exception: null,
+            range: range,
+            debugSnapshot: null), cancellationToken).ConfigureAwait(false);
 
         var breakpoint = GetTriggeredBreakpoint(location, context);
         var breakpointHit = breakpoint is not null;
@@ -1305,6 +1317,8 @@ public sealed class Interpreter
                 RuleScriptRuntimeEventKind.BreakpointHit,
                 location,
                 $"Breakpoint hit at {location.File}:{location.Line}.",
+                value: null,
+                exception: null,
                 range: range,
                 debugSnapshot: CreateDebugSnapshot(location, context)), cancellationToken).ConfigureAwait(false);
         }
@@ -1315,6 +1329,8 @@ public sealed class Interpreter
                 RuleScriptRuntimeEventKind.StepPaused,
                 location,
                 $"Step paused at {location.File}:{location.Line}.",
+                value: null,
+                exception: null,
                 range: range,
                 debugSnapshot: CreateDebugSnapshot(location, context)), cancellationToken).ConfigureAwait(false);
         }

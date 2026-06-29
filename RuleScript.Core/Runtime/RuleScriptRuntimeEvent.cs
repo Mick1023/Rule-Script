@@ -15,16 +15,27 @@ public sealed class RuleScriptRuntimeEvent
     /// <param name="message">An optional human-readable message.</param>
     /// <param name="value">An optional event value, such as a printed value.</param>
     /// <param name="exception">The exception associated with an error event.</param>
-    /// <param name="range">The full source range associated with the event.</param>
-    /// <param name="debugSnapshot">The debugger state captured for a pause event.</param>
     public RuleScriptRuntimeEvent(
         RuleScriptRuntimeEventKind kind,
         RuleScriptSourceLocation location,
         string? message = null,
         object? value = null,
-        RuleScriptException? exception = null,
-        RuleScriptSourceRange? range = null,
-        RuleScriptDebugSnapshot? debugSnapshot = null)
+        RuleScriptException? exception = null)
+        : this(kind, location, message, value, exception, null, null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a runtime event with a full source range and debugger snapshot.
+    /// </summary>
+    public RuleScriptRuntimeEvent(
+        RuleScriptRuntimeEventKind kind,
+        RuleScriptSourceLocation location,
+        string? message,
+        object? value,
+        RuleScriptException? exception,
+        RuleScriptSourceRange? range,
+        RuleScriptDebugSnapshot? debugSnapshot)
     {
         Kind = kind;
         Location = location;

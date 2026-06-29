@@ -13,9 +13,20 @@ public abstract class RuleScriptException : Exception
         int? column = null,
         string? tokenText = null,
         string? sourceFile = null,
-        int? endLine = null,
-        int? endColumn = null,
         Exception? innerException = null)
+        : this(message, line, column, tokenText, sourceFile, null, null, innerException)
+    {
+    }
+
+    protected RuleScriptException(
+        string message,
+        int? line,
+        int? column,
+        string? tokenText,
+        string? sourceFile,
+        int? endLine,
+        int? endColumn,
+        Exception? innerException)
         : base(message, innerException)
     {
         _message = message;

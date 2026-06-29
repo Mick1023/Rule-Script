@@ -134,6 +134,7 @@ jobs:
         with:
           name: RuleScript ${{ github.ref_name }}
           body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           overwrite_files: true
           files: |
             artifacts/*.nupkg

@@ -5,5 +5,16 @@ namespace RuleScript.Core.Runtime;
 /// </summary>
 /// <param name="File">The source file for the breakpoint, or <see langword="null"/> to match any file.</param>
 /// <param name="Line">The 1-based source line for the breakpoint.</param>
-/// <param name="Condition">An optional RuleScript boolean expression that must be true to pause.</param>
-public sealed record RuleScriptBreakpoint(string? File, int Line, string? Condition = null);
+public sealed record RuleScriptBreakpoint(string? File, int Line)
+{
+    public RuleScriptBreakpoint(string? file, int line, string? condition)
+        : this(file, line)
+    {
+        Condition = condition;
+    }
+
+    /// <summary>
+    /// Gets an optional RuleScript boolean expression that must be true to pause.
+    /// </summary>
+    public string? Condition { get; init; }
+}

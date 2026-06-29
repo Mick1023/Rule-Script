@@ -13,10 +13,23 @@ public sealed class SyntaxException : RuleScriptException
         int? line = null,
         int? column = null,
         string? tokenText = null,
-        string? sourceFile = null,
-        int? endLine = null,
-        int? endColumn = null)
-        : base(FormatSyntaxMessage(message), line, column, tokenText, sourceFile, endLine, endColumn)
+        string? sourceFile = null)
+        : base(FormatSyntaxMessage(message), line, column, tokenText, sourceFile)
+    {
+    }
+
+    /// <summary>
+    /// Creates a syntax exception with a full source range.
+    /// </summary>
+    public SyntaxException(
+        string message,
+        int? line,
+        int? column,
+        string? tokenText,
+        string? sourceFile,
+        int? endLine,
+        int? endColumn)
+        : base(FormatSyntaxMessage(message), line, column, tokenText, sourceFile, endLine, endColumn, null)
     {
     }
 

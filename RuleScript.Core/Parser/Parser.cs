@@ -709,6 +709,7 @@ public sealed class Parser
             token.Line,
             token.Column,
             tokenText,
+            sourceFile: null,
             endLine: token.EndLine,
             endColumn: token.EndColumn);
     }

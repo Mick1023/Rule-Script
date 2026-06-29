@@ -1,5 +1,6 @@
 using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Runtime;
+using System.Reflection;
 
 namespace RuleScript.Tests;
 
@@ -439,5 +440,28 @@ public sealed class PublicApiUsabilityTests
 
         Assert.Throws<RuntimeException>(() => engine.Execute("result = A();"));
         Assert.Throws<RuntimeException>(() => engine.Execute("result = B();"));
+    }
+
+    [Fact]
+    public void Version100_PublicConstructorSignatures_RemainAvailable()
+    {
+        Assert.NotNull(typeof(RuleScriptBreakpoint).GetConstructor([typeof(string), typeof(int)]));
+        Assert.NotNull(typeof(RuleScriptDiagnostic).GetConstructor(
+            [typeof(string), typeof(int?), typeof(int?), typeof(string), typeof(string)]));
+        Assert.NotNull(typeof(RuleScriptRuntimeEvent).GetConstructor(
+            [
+                typeof(RuleScriptRuntimeEventKind),
+                typeof(RuleScriptSourceLocation),
+                typeof(string),
+                typeof(object),
+                typeof(RuleScriptException)
+            ]));
+        Assert.NotNull(typeof(SyntaxException).GetConstructor(
+            [typeof(string), typeof(int?), typeof(int?), typeof(string), typeof(string)]));
+        Assert.NotNull(typeof(RuleScriptException).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(string), typeof(int?), typeof(int?), typeof(string), typeof(string), typeof(Exception)],
+            modifiers: null));
     }
 }
