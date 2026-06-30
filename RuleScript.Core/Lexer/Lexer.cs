@@ -32,10 +32,16 @@ public sealed class Lexer
         ["as"] = TokenType.As,
         ["break"] = TokenType.Break,
         ["continue"] = TokenType.Continue,
+        ["switch"] = TokenType.Switch,
+        ["case"] = TokenType.Case,
+        ["default"] = TokenType.Default,
+        ["when"] = TokenType.When,
+        ["endswitch"] = TokenType.EndSwitch,
         ["and"] = TokenType.And,
         ["or"] = TokenType.Or,
         ["true"] = TokenType.True,
-        ["false"] = TokenType.False
+        ["false"] = TokenType.False,
+        ["null"] = TokenType.Null
     };
 
     public Lexer(string source)

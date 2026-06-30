@@ -121,6 +121,24 @@ internal static class RuleScriptSymbolAnalyzer
                 }
 
                 break;
+            case SwitchStatement switchStatement:
+                foreach (var switchCase in switchStatement.Cases)
+                {
+                    foreach (var child in switchCase.Body)
+                    {
+                        CollectStatement(child, scope, globals, allVariables, hostFunctionReturnTypes);
+                    }
+                }
+
+                if (switchStatement.DefaultBranch is not null)
+                {
+                    foreach (var child in switchStatement.DefaultBranch)
+                    {
+                        CollectStatement(child, scope, globals, allVariables, hostFunctionReturnTypes);
+                    }
+                }
+
+                break;
             case WhileStatement loop:
                 foreach (var child in loop.Body)
                 {

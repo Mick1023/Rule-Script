@@ -101,6 +101,11 @@ public sealed class Parser
             return ParseForeachStatement();
         }
 
+        if (Match(TokenType.Switch))
+        {
+            return ParseSwitchStatement();
+        }
+
         if (Match(TokenType.Break))
         {
             return ParseBreakStatement();
@@ -233,6 +238,91 @@ public sealed class Parser
 
         ConsumeBlockEnd(TokenType.EndForeach, "endforeach", "foreach statement");
         return Complete(new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column), foreachToken);
+    }
+
+    private SwitchStatement ParseSwitchStatement()
+    {
+        var switchToken = Previous();
+        var value = ParseExpression();
+        Consume(TokenType.Colon, "Expected ':' after switch expression.");
+
+        var cases = new List<SwitchCase>();
+        var pendingLabels = new List<SwitchLabel>();
+        Statement[]? defaultBranch = null;
+
+        while (!IsAtEnd() && !Check(TokenType.EndSwitch) && !Check(TokenType.End))
+        {
+            if (Match(TokenType.Case))
+            {
+                var labels = new List<(Expression Value, Token Token)>();
+
+                do
+                {
+                    var labelToken = Peek();
+                    labels.Add((ParseExpression(), labelToken));
+                }
+                while (Match(TokenType.Comma));
+
+                var guard = Match(TokenType.When) ? ParseExpression() : null;
+
+                pendingLabels.AddRange(labels.Select(label => new SwitchLabel(
+                    label.Value,
+                    guard,
+                    label.Token.Line,
+                    label.Token.Column,
+                    label.Token.Lexeme)));
+
+                Consume(TokenType.Colon, "Expected ':' after case expression.");
+                var body = ParseBlock(TokenType.Case, TokenType.Default, TokenType.EndSwitch, TokenType.End);
+
+                if (body.Length > 0)
+                {
+                    cases.Add(new SwitchCase([.. pendingLabels], body));
+                    pendingLabels.Clear();
+                }
+
+                continue;
+            }
+
+            if (Match(TokenType.Default))
+            {
+                if (defaultBranch is not null)
+                {
+                    throw Error(Previous(), "A switch statement can contain only one default branch.");
+                }
+
+                if (pendingLabels.Count > 0)
+                {
+                    cases.Add(new SwitchCase([.. pendingLabels], []));
+                    pendingLabels.Clear();
+                }
+
+                Consume(TokenType.Colon, "Expected ':' after 'default'.");
+                defaultBranch = ParseBlock(TokenType.Case, TokenType.Default, TokenType.EndSwitch, TokenType.End);
+
+                if (Check(TokenType.Case))
+                {
+                    throw Error(Peek(), "The default branch must be the last branch in a switch statement.");
+                }
+
+                continue;
+            }
+
+            throw Error(Peek(), "Expected 'case', 'default', 'endswitch', or 'end' in switch statement.");
+        }
+
+        if (pendingLabels.Count > 0)
+        {
+            cases.Add(new SwitchCase([.. pendingLabels], []));
+        }
+
+        if (cases.Count == 0 && defaultBranch is null)
+        {
+            throw Error(Peek(), "Switch statement must contain at least one case or default branch.");
+        }
+
+        ConsumeBlockEnd(TokenType.EndSwitch, "endswitch", "switch statement");
+        return Complete(new SwitchStatement(value, cases, defaultBranch, switchToken.Line, switchToken.Column), switchToken);
     }
 
     private FunctionDeclarationStatement ParseFunctionDeclarationStatement()
@@ -527,6 +617,11 @@ public sealed class Parser
             return new LiteralExpression(true);
         }
 
+        if (Match(TokenType.Null))
+        {
+            return new LiteralExpression(null);
+        }
+
         if (Match(TokenType.Number, TokenType.String))
         {
             return new LiteralExpression(Previous().Literal);
@@ -704,6 +799,7 @@ public sealed class Parser
             or TokenType.If
             or TokenType.While
             or TokenType.Foreach
+            or TokenType.Switch
             or TokenType.Break
             or TokenType.Continue
             or TokenType.Return
