@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.1.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.1.0)
+[![Stable Version](https://img.shields.io/badge/stable-v1.2.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.2.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the stable package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.1.0
+dotnet add package RuleScript.Core --version 1.2.0
 ```
 
 ## Quick Start
@@ -73,13 +73,7 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main).
-
-Install the v1.2.0 release candidate for semantic diagnostics and additional runtime limits:
-
-```bash
-dotnet add package RuleScript.Core --version 1.2.0-rc1.0
-```
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.2.0 release notes](docs/releases/v1.2.0.md) for semantic diagnostics, host-provided analysis symbols, and additional runtime limits.
 
 ```bash
 dotnet build RuleScript.sln
