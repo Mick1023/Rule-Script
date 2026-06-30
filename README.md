@@ -64,14 +64,22 @@ var context = engine.Execute("result = GetDistance();");
 
 Detailed syntax, Host integration, debugging, analysis, and version-specific behavior are maintained in the [RuleScript Wiki](https://github.com/Mick1023/Rule-Script/wiki).
 
-- [v1.0.0 Stable Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Overview)
-- [v1.0.0 Language Guide](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Language-Guide)
-- [v1.0.0 Built-in Function Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Built-in-Functions)
-- [v1.1.0 Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.1.0-Overview)
+- [Getting Started](https://github.com/Mick1023/Rule-Script/wiki/Getting-Started)
+- [Language Guide](https://github.com/Mick1023/Rule-Script/wiki/Language-Guide)
+- [Built-in Function Reference](https://github.com/Mick1023/Rule-Script/wiki/Built-in-Functions)
+- [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
+- [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
+- [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
 
 ## Development
 
 The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main).
+
+Install the v1.2.0 release candidate for semantic diagnostics and additional runtime limits:
+
+```bash
+dotnet add package RuleScript.Core --version 1.2.0-rc1.0
+```
 
 ```bash
 dotnet build RuleScript.sln
