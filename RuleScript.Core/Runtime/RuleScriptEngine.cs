@@ -11,6 +11,7 @@ public sealed class RuleScriptEngine
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _hostFunctionSignatures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _asyncHostFunctionSignatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptValueType> _knownVariables = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private readonly object _executionSync = new();
     private IImportResolver _importResolver = new FileSystemImportResolver();
@@ -27,6 +28,36 @@ public sealed class RuleScriptEngine
     /// Disable this only when the host provides another way to stop long-running execution.
     /// </summary>
     public bool LoopIterationLimitEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the maximum elapsed execution time.
+    /// </summary>
+    public TimeSpan ExecutionTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Gets or sets whether <see cref="ExecutionTimeout"/> is enforced.
+    /// </summary>
+    public bool ExecutionTimeoutEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the maximum number of active user-function calls.
+    /// </summary>
+    public int MaxCallDepth { get; set; } = 100;
+
+    /// <summary>
+    /// Gets or sets whether <see cref="MaxCallDepth"/> is enforced.
+    /// </summary>
+    public bool CallDepthLimitEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the maximum number of statements executed in one run.
+    /// </summary>
+    public long MaxExecutedStatements { get; set; } = 1000000;
+
+    /// <summary>
+    /// Gets or sets whether <see cref="MaxExecutedStatements"/> is enforced.
+    /// </summary>
+    public bool StatementExecutionLimitEnabled { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the base directory used for relative <see cref="ExecuteFile(string)"/> paths.
@@ -79,6 +110,15 @@ public sealed class RuleScriptEngine
             .Concat(_asyncHostFunctionSignatures.Values)
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.IsAsync)
+            .ToArray();
+
+    /// <summary>
+    /// Gets variables supplied by the host for semantic analysis.
+    /// </summary>
+    public IReadOnlyList<RuleScriptVariableSymbol> KnownVariables =>
+        _knownVariables
+            .Select(variable => new RuleScriptVariableSymbol(variable.Key, variable.Value))
+            .OrderBy(variable => variable.Name, StringComparer.Ordinal)
             .ToArray();
 
     /// <summary>
@@ -220,6 +260,45 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Adds or replaces a host-provided variable for semantic analysis.
+    /// </summary>
+    public void SetKnownVariable(string name, RuleScriptValueType type = RuleScriptValueType.Unknown)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Variable name cannot be empty.", nameof(name));
+        }
+
+        if (!Enum.IsDefined(type))
+        {
+            throw new ArgumentOutOfRangeException(nameof(type));
+        }
+
+        _knownVariables[name] = type;
+    }
+
+    /// <summary>
+    /// Removes a host-provided variable from semantic analysis.
+    /// </summary>
+    public bool RemoveKnownVariable(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Variable name cannot be empty.", nameof(name));
+        }
+
+        return _knownVariables.Remove(name);
+    }
+
+    /// <summary>
+    /// Removes all host-provided variables from semantic analysis.
+    /// </summary>
+    public void ClearKnownVariables()
+    {
+        _knownVariables.Clear();
+    }
+
+    /// <summary>
     /// Gets a read-only snapshot of variable names from a runtime context.
     /// </summary>
     public IReadOnlyList<string> GetVariableNames(RuntimeContext context)
@@ -314,9 +393,14 @@ public sealed class RuleScriptEngine
                 cursorLine,
                 cursorColumn,
                 fallbackVisibleToAll: !parseResult.Success);
-            var diagnostics = parseResult.Diagnostics.Select(CreateDiagnostic).ToArray();
+            var diagnostics = parseResult.Diagnostics
+                .Select(CreateDiagnostic)
+                .Concat(symbols.Diagnostics)
+                .ToArray();
+            var success = parseResult.Success
+                && diagnostics.All(diagnostic => diagnostic.Severity != RuleScriptDiagnosticSeverity.Error);
 
-            return new RuleScriptAnalysisAttempt(symbols, diagnostics, parseResult.Success);
+            return new RuleScriptAnalysisAttempt(symbols, diagnostics, success);
         }
         catch (SyntaxException exception)
         {
@@ -354,13 +438,21 @@ public sealed class RuleScriptEngine
                 endColumn);
         }
 
+        var code = exception.Message.Contains("Duplicate parameter name", StringComparison.Ordinal)
+            ? RuleScriptDiagnosticCodes.DuplicateParameter
+            : RuleScriptDiagnosticCodes.SyntaxError;
+
         return new RuleScriptDiagnostic(
             exception.Message,
             exception.Line,
             exception.Column,
             exception.TokenText,
             exception.SourceFile,
-            range);
+            range)
+        {
+            Code = code,
+            Severity = RuleScriptDiagnosticSeverity.Error
+        };
     }
 
     private RuleScriptAnalysisResult CreateAnalysisResult(
@@ -379,7 +471,7 @@ public sealed class RuleScriptEngine
                 group => group.Key,
                 group => group.Last().ReturnType,
                 StringComparer.Ordinal);
-        var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(statements, cursorLine, cursorColumn, hostReturnTypes);
+        var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(statements, cursorLine, cursorColumn, hostReturnTypes, _knownVariables);
         var functionSymbols = typedSymbols.Functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
         CollectImportedFunctionSignatures(
             statements,
@@ -395,6 +487,20 @@ public sealed class RuleScriptEngine
                 variableNames.Select(name => new RuleScriptVariableSymbol(name, RuleScriptValueType.Unknown)));
         }
 
+        var availableFunctions = new HashSet<string>(userFunctionNames, StringComparer.Ordinal);
+        availableFunctions.UnionWith(functionSymbols.Keys);
+        availableFunctions.UnionWith(RegisteredFunctionNames);
+        availableFunctions.UnionWith(_builtinFunctions.Names);
+        var hostSymbols = registeredHostFunctions
+            .GroupBy(function => function.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
+            statements,
+            _knownVariables,
+            availableFunctions,
+            functionSymbols,
+            hostSymbols);
+
         return new RuleScriptAnalysisResult(
             variableNames,
             userFunctionNames,
@@ -404,7 +510,8 @@ public sealed class RuleScriptEngine
             typedSymbols.Variables,
             functionSymbols.Values,
             visibleVariables,
-            registeredHostFunctions);
+            registeredHostFunctions,
+            semanticDiagnostics);
     }
 
     private void CollectImportedFunctionSignatures(
@@ -779,6 +886,12 @@ public sealed class RuleScriptEngine
             _asyncHostFunctionSignatures,
             MaxLoopIterations,
             LoopIterationLimitEnabled,
+            ExecutionTimeout,
+            ExecutionTimeoutEnabled,
+            MaxCallDepth,
+            CallDepthLimitEnabled,
+            MaxExecutedStatements,
+            StatementExecutionLimitEnabled,
             module,
             NotifyRuntimeEvent,
             NotifyRuntimeEventAsync,

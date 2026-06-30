@@ -643,6 +643,8 @@ public sealed class Parser
 
     private void ParseRecovering(List<Statement> statements, IReadOnlyCollection<TokenType>? terminators = null)
     {
+        var start = _current;
+
         try
         {
             statements.Add(ParseStatement());
@@ -651,6 +653,13 @@ public sealed class Parser
         {
             _diagnostics!.Add(exception);
             Synchronize(terminators);
+
+            if (_current == start
+                && !IsAtEnd()
+                && terminators?.Contains(Peek().Type) != true)
+            {
+                Advance();
+            }
         }
     }
 

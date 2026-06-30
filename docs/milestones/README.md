@@ -4,6 +4,10 @@ This folder tracks planned release milestones and the work that must be complete
 
 ## Active Milestones
 
+- [v1.2.0](v1.2.0.md)
+
+## Completed Milestones
+
 - [v1.1.0](v1.1.0.md)
 
 ## Planning Notes

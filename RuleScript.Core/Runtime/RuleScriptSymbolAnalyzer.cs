@@ -14,11 +14,13 @@ internal static class RuleScriptSymbolAnalyzer
         IReadOnlyList<Statement> statements,
         int? cursorLine,
         int? cursorColumn,
-        IReadOnlyDictionary<string, RuleScriptValueType>? hostFunctionReturnTypes = null)
+        IReadOnlyDictionary<string, RuleScriptValueType>? hostFunctionReturnTypes = null,
+        IReadOnlyDictionary<string, RuleScriptValueType>? knownVariables = null)
     {
         hostFunctionReturnTypes ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
-        var globals = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
-        var allVariables = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
+        knownVariables ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
+        var globals = new Dictionary<string, RuleScriptValueType>(knownVariables, StringComparer.Ordinal);
+        var allVariables = new Dictionary<string, RuleScriptValueType>(knownVariables, StringComparer.Ordinal);
         var functions = new List<RuleScriptFunctionSymbol>();
         Dictionary<string, RuleScriptValueType>? cursorLocals = null;
 
