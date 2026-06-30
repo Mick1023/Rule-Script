@@ -237,6 +237,9 @@ public sealed class Interpreter
                 case IfStatement ifStatement:
                     ExecuteIfStatement(ifStatement, context);
                     break;
+                case SwitchStatement switchStatement:
+                    ExecuteSwitchStatement(switchStatement, context);
+                    break;
                 case WhileStatement whileStatement:
                     ExecuteWhileStatement(whileStatement, context);
                     break;
@@ -292,6 +295,9 @@ public sealed class Interpreter
                 case IfStatement ifStatement:
                     await ExecuteIfStatementAsync(ifStatement, context, cancellationToken).ConfigureAwait(false);
                     break;
+                case SwitchStatement switchStatement:
+                    await ExecuteSwitchStatementAsync(switchStatement, context, cancellationToken).ConfigureAwait(false);
+                    break;
                 case WhileStatement whileStatement:
                     await ExecuteWhileStatementAsync(whileStatement, context, cancellationToken).ConfigureAwait(false);
                     break;
@@ -343,6 +349,115 @@ public sealed class Interpreter
         }
 
         var branch = conditionValue ? statement.ThenBranch : statement.ElseBranch;
+
+        foreach (var childStatement in branch)
+        {
+            await ExecuteStatementAsync(childStatement, context, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void ExecuteSwitchStatement(SwitchStatement statement, RuntimeContext context)
+    {
+        var value = Evaluate(statement.Value, context).Value;
+        IReadOnlyList<Statement>? branch = null;
+
+        foreach (var candidate in statement.Cases)
+        {
+            foreach (var label in candidate.Labels)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+
+                if (!AreEqual(value, Evaluate(label.Value, context).Value))
+                {
+                    continue;
+                }
+
+                if (label.Guard is not null)
+                {
+                    var guard = Evaluate(label.Guard, context).Value;
+
+                    if (guard is not bool guardValue)
+                    {
+                        throw new RuntimeException("Switch case guard must evaluate to a bool value.", label.Line, label.Column, "when");
+                    }
+
+                    if (!guardValue)
+                    {
+                        continue;
+                    }
+                }
+
+                branch = candidate.Body;
+                break;
+            }
+
+            if (branch is not null)
+            {
+                break;
+            }
+        }
+
+        branch ??= statement.DefaultBranch;
+
+        if (branch is null)
+        {
+            return;
+        }
+
+        foreach (var childStatement in branch)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            ExecuteStatement(childStatement, context);
+        }
+    }
+
+    private async Task ExecuteSwitchStatementAsync(SwitchStatement statement, RuntimeContext context, CancellationToken cancellationToken)
+    {
+        var value = (await EvaluateAsync(statement.Value, context, cancellationToken).ConfigureAwait(false)).Value;
+        IReadOnlyList<Statement>? branch = null;
+
+        foreach (var candidate in statement.Cases)
+        {
+            foreach (var label in candidate.Labels)
+            {
+                var labelValue = (await EvaluateAsync(label.Value, context, cancellationToken).ConfigureAwait(false)).Value;
+
+                if (!AreEqual(value, labelValue))
+                {
+                    continue;
+                }
+
+                if (label.Guard is not null)
+                {
+                    var guard = (await EvaluateAsync(label.Guard, context, cancellationToken).ConfigureAwait(false)).Value;
+
+                    if (guard is not bool guardValue)
+                    {
+                        throw new RuntimeException("Switch case guard must evaluate to a bool value.", label.Line, label.Column, "when");
+                    }
+
+                    if (!guardValue)
+                    {
+                        continue;
+                    }
+                }
+
+                branch = candidate.Body;
+                break;
+            }
+
+            if (branch is not null)
+            {
+                break;
+            }
+        }
+
+        branch ??= statement.DefaultBranch;
+
+        if (branch is null)
+        {
+            return;
+        }
 
         foreach (var childStatement in branch)
         {

@@ -2,7 +2,9 @@
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
 [![Stable Version](https://img.shields.io/badge/stable-v1.2.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.2.0)
+[![Preview Version](https://img.shields.io/badge/preview-v1.3.0--rc1.0-orange)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.3.0-rc1.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
+[![NuGet Preview](https://img.shields.io/nuget/vpre/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
 RuleScript is a lightweight, embeddable .NET 8 scripting engine for rule-oriented workflows, automation, validation, JSON processing, and host-controlled execution.
@@ -15,6 +17,12 @@ Install the stable package from NuGet:
 
 ```bash
 dotnet add package RuleScript.Core --version 1.2.0
+```
+
+Install the v1.3.0 release candidate:
+
+```bash
+dotnet add package RuleScript.Core --version 1.3.0-rc1.0
 ```
 
 ## Quick Start
@@ -70,10 +78,12 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
+- [v1.3.0 Overview](https://github.com/Mick1023/Rule-Script/wiki/v1.3.0-Overview)
+- [v1.3.0 API Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.3.0-API-Reference)
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.2.0 release notes](docs/releases/v1.2.0.md) for semantic diagnostics, host-provided analysis symbols, and additional runtime limits.
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.3.0-rc1.0 release notes](docs/releases/v1.3.0-rc1.0.md) for switch statements, guarded cases, the `null` literal, and new diagnostics.
 
 ```bash
 dotnet build RuleScript.sln

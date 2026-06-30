@@ -9,6 +9,7 @@ public enum TokenType
     String,
     True,
     False,
+    Null,
 
     Var,
     If,
@@ -28,6 +29,11 @@ public enum TokenType
     As,
     Break,
     Continue,
+    Switch,
+    Case,
+    Default,
+    When,
+    EndSwitch,
 
     Plus,
     Minus,

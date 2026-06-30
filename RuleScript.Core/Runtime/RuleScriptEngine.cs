@@ -1110,6 +1110,18 @@ public sealed class RuleScriptEngine
                     CollectSymbols(ifStatement.ThenBranch, variables, userFunctions, importAliases);
                     CollectSymbols(ifStatement.ElseBranch, variables, userFunctions, importAliases);
                     break;
+                case SwitchStatement switchStatement:
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        CollectSymbols(switchCase.Body, variables, userFunctions, importAliases);
+                    }
+
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        CollectSymbols(switchStatement.DefaultBranch, variables, userFunctions, importAliases);
+                    }
+
+                    break;
                 case WhileStatement whileStatement:
                     CollectSymbols(whileStatement.Body, variables, userFunctions, importAliases);
                     break;

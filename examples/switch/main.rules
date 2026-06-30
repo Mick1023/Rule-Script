@@ -1,0 +1,15 @@
+var status = "warning";
+var retryCount = 4;
+
+switch status:
+    case "ok":
+        result = "Continue";
+    case "warning" when retryCount > 3:
+        result = "Escalate";
+    case "warning", "error":
+        result = "Inspect";
+    case null:
+        result = "Missing status";
+    default:
+        result = "Unknown status";
+endswitch

@@ -152,6 +152,79 @@ internal static class RuleScriptSemanticAnalyzer
                 AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
                 break;
 
+            case SwitchStatement switchStatement:
+                var switchType = AnalyzeExpression(switchStatement.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var constants = new Dictionary<SwitchConstant, bool>();
+                var analyzedGuards = new HashSet<Expression>(ReferenceEqualityComparer.Instance);
+
+                foreach (var switchCase in switchStatement.Cases)
+                {
+                    foreach (var label in switchCase.Labels)
+                    {
+                        var labelType = AnalyzeExpression(label.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                        if (label.Guard is not null && analyzedGuards.Add(label.Guard))
+                        {
+                            RequireType(
+                                AnalyzeExpression(label.Guard, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions),
+                                RuleScriptValueType.Boolean,
+                                "Switch case guard",
+                                label.Line,
+                                label.Column,
+                                "when",
+                                null,
+                                diagnostics);
+                        }
+
+                        if (IsKnown(switchType) && IsKnown(labelType) && switchType != labelType)
+                        {
+                            diagnostics.Add(Create(
+                                RuleScriptDiagnosticCodes.TypeMismatch,
+                                RuleScriptDiagnosticSeverity.Error,
+                                $"Switch value has type {RuleScriptTypeFacts.ToDisplayName(switchType)}, but case label has type {RuleScriptTypeFacts.ToDisplayName(labelType)}.",
+                                label.Line,
+                                label.Column,
+                                label.TokenText));
+                        }
+
+                        if (TryGetSwitchConstant(label.Value, out var constant))
+                        {
+                            if (constants.TryGetValue(constant, out var hasUnguardedLabel) && hasUnguardedLabel)
+                            {
+                                diagnostics.Add(Create(
+                                    RuleScriptDiagnosticCodes.DuplicateCase,
+                                    RuleScriptDiagnosticSeverity.Error,
+                                    $"Case label '{label.TokenText}' is unreachable because an earlier unguarded label has the same value.",
+                                    label.Line,
+                                    label.Column,
+                                    label.TokenText));
+                            }
+
+                            constants[constant] = hasUnguardedLabel || label.Guard is null;
+                        }
+                    }
+
+                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                }
+
+                if (switchStatement.DefaultBranch is not null)
+                {
+                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                }
+                else
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.MissingDefaultBranch,
+                        RuleScriptDiagnosticSeverity.Warning,
+                        "Switch statement has no default branch.",
+                        switchStatement.Line,
+                        switchStatement.Column,
+                        "switch",
+                        switchStatement.SourceSpan));
+                }
+
+                break;
+
             case WhileStatement loop:
                 RequireType(
                     AnalyzeExpression(loop.Condition, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions),
@@ -460,6 +533,39 @@ internal static class RuleScriptSemanticAnalyzer
 
     private static bool IsKnown(RuleScriptValueType type) =>
         type is not RuleScriptValueType.Unknown and not RuleScriptValueType.Any;
+
+    private static bool TryGetSwitchConstant(Expression expression, out SwitchConstant constant)
+    {
+        object? value = expression switch
+        {
+            LiteralExpression literal => literal.Value,
+            UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: double number } } => -number,
+            _ => null
+        };
+
+        if (expression is not LiteralExpression
+            && expression is not UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: double } })
+        {
+            constant = default;
+            return false;
+        }
+
+        var type = RuleScriptTypeFacts.FromValue(value);
+
+        if (type is not RuleScriptValueType.Null
+            and not RuleScriptValueType.Number
+            and not RuleScriptValueType.String
+            and not RuleScriptValueType.Boolean)
+        {
+            constant = default;
+            return false;
+        }
+
+        constant = new SwitchConstant(type, value);
+        return true;
+    }
+
+    private readonly record struct SwitchConstant(RuleScriptValueType Type, object? Value);
 
     private static RuleScriptDiagnostic Create(
         string code,

@@ -11,4 +11,6 @@ public static class RuleScriptDiagnosticCodes
     public const string TypeMismatch = "RS2003";
     public const string DuplicateDeclaration = "RS2004";
     public const string DuplicateParameter = "RS2005";
+    public const string DuplicateCase = "RS2006";
+    public const string MissingDefaultBranch = "RS2007";
 }
