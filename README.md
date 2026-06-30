@@ -67,7 +67,7 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [v1.0.0 Stable Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Overview)
 - [v1.0.0 Language Guide](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Language-Guide)
 - [v1.0.0 Built-in Function Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Built-in-Functions)
-- [v1.1.0 Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.1.0-Development)
+- [v1.1.0 Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.1.0-Overview)
 
 ## Development
 
