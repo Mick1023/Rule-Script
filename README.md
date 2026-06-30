@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.0.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.0.0)
+[![Stable Version](https://img.shields.io/badge/stable-v1.1.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.1.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the stable package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.0.0
+dotnet add package RuleScript.Core --version 1.1.0
 ```
 
 ## Quick Start
@@ -67,11 +67,11 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [v1.0.0 Stable Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Overview)
 - [v1.0.0 Language Guide](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Language-Guide)
 - [v1.0.0 Built-in Function Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.0.0-Built-in-Functions)
-- [v1.1.0 Development Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.1.0-Development)
+- [v1.1.0 Documentation](https://github.com/Mick1023/Rule-Script/wiki/v1.1.0-Development)
 
 ## Development
 
-The unreleased v1.1.0 work is available on [`feature/v1.1.0`](https://github.com/Mick1023/Rule-Script/tree/feature/v1.1.0).
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main).
 
 ```bash
 dotnet build RuleScript.sln
