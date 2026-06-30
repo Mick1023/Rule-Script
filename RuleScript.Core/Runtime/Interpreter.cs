@@ -2,6 +2,7 @@ using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Lexer;
 using RuleScript.Core.Parser.Ast;
 using System.Collections;
+using System.Diagnostics;
 using System.Reflection;
 
 namespace RuleScript.Core.Runtime;
@@ -16,6 +17,12 @@ public sealed class Interpreter
     private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
     private readonly bool _loopIterationLimitEnabled;
+    private readonly TimeSpan _executionTimeout;
+    private readonly bool _executionTimeoutEnabled;
+    private readonly int _maxCallDepth;
+    private readonly bool _callDepthLimitEnabled;
+    private readonly long _maxExecutedStatements;
+    private readonly bool _statementExecutionLimitEnabled;
     private readonly ScriptModule _mainModule;
     private readonly Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> _notifyRuntimeEvent;
     private readonly Func<RuleScriptSourceLocation, IReadOnlyList<RuleScriptBreakpoint>> _getBreakpoints;
@@ -26,6 +33,8 @@ public sealed class Interpreter
     private readonly Stack<int> _functionLoopBoundaries = new();
     private readonly Stack<string> _callStack = new();
     private int _loopDepth;
+    private long _executionStartedTimestamp;
+    private long _executedStatements;
 
     public Interpreter(BuiltinFunctions builtinFunctions)
         : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal), 100000)
@@ -44,6 +53,12 @@ public sealed class Interpreter
             new Dictionary<string, RuleScriptHostFunctionSymbol>(StringComparer.Ordinal),
             maxLoopIterations,
             true,
+            TimeSpan.FromSeconds(30),
+            true,
+            100,
+            true,
+            1000000,
+            true,
             new ScriptModule("<script>", []),
             _ => RuleScriptExecutionDirective.Continue,
             (_, _) => Task.FromResult(RuleScriptExecutionDirective.Continue),
@@ -60,6 +75,12 @@ public sealed class Interpreter
         IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> asyncHostFunctionSignatures,
         int maxLoopIterations,
         bool loopIterationLimitEnabled,
+        TimeSpan executionTimeout,
+        bool executionTimeoutEnabled,
+        int maxCallDepth,
+        bool callDepthLimitEnabled,
+        long maxExecutedStatements,
+        bool statementExecutionLimitEnabled,
         ScriptModule mainModule,
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective> notifyRuntimeEvent,
         Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
@@ -82,6 +103,18 @@ public sealed class Interpreter
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
         _loopIterationLimitEnabled = loopIterationLimitEnabled;
+        _executionTimeout = executionTimeout > TimeSpan.Zero
+            ? executionTimeout
+            : throw new ArgumentOutOfRangeException(nameof(executionTimeout), "Execution timeout must be greater than zero.");
+        _executionTimeoutEnabled = executionTimeoutEnabled;
+        _maxCallDepth = maxCallDepth > 0
+            ? maxCallDepth
+            : throw new ArgumentOutOfRangeException(nameof(maxCallDepth), "Max call depth must be greater than zero.");
+        _callDepthLimitEnabled = callDepthLimitEnabled;
+        _maxExecutedStatements = maxExecutedStatements > 0
+            ? maxExecutedStatements
+            : throw new ArgumentOutOfRangeException(nameof(maxExecutedStatements), "Max executed statements must be greater than zero.");
+        _statementExecutionLimitEnabled = statementExecutionLimitEnabled;
     }
 
     public void Execute(IReadOnlyList<Statement> statements, RuntimeContext context)
@@ -107,6 +140,7 @@ public sealed class Interpreter
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(context);
 
+        BeginExecution();
         _moduleStack.Push(module);
 
         try
@@ -150,6 +184,7 @@ public sealed class Interpreter
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(context);
 
+        BeginExecution();
         _moduleStack.Push(module);
 
         try
@@ -172,11 +207,12 @@ public sealed class Interpreter
 
     private void ExecuteStatement(Statement statement, RuntimeContext context)
     {
-        _cancellationToken.ThrowIfCancellationRequested();
-        ReportStatementLocation(statement, context);
-
         try
         {
+            _cancellationToken.ThrowIfCancellationRequested();
+            CheckExecutionLimits(statement);
+            ReportStatementLocation(statement, context);
+
             switch (statement)
             {
                 case VarStatement varStatement:
@@ -226,11 +262,12 @@ public sealed class Interpreter
 
     private async Task ExecuteStatementAsync(Statement statement, RuntimeContext context, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        await ReportStatementLocationAsync(statement, context, cancellationToken).ConfigureAwait(false);
-
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            CheckExecutionLimits(statement);
+            await ReportStatementLocationAsync(statement, context, cancellationToken).ConfigureAwait(false);
+
             switch (statement)
             {
                 case VarStatement varStatement:
@@ -1111,6 +1148,8 @@ public sealed class Interpreter
 
         var callId = $"{userFunction.Module.Name}::{function.Name}";
 
+        CheckCallDepth(function.Name, line, column);
+
         if (_callStack.Contains(callId, StringComparer.Ordinal))
         {
             throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
@@ -1170,6 +1209,8 @@ public sealed class Interpreter
 
         var callId = $"{userFunction.Module.Name}::{function.Name}";
 
+        CheckCallDepth(function.Name, line, column);
+
         if (_callStack.Contains(callId, StringComparer.Ordinal))
         {
             throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
@@ -1206,6 +1247,50 @@ public sealed class Interpreter
             _localScopes.Pop();
             _moduleStack.Pop();
             _callStack.Pop();
+        }
+    }
+
+    private void BeginExecution()
+    {
+        _executionStartedTimestamp = Stopwatch.GetTimestamp();
+        _executedStatements = 0;
+    }
+
+    private void CheckExecutionLimits(Statement statement)
+    {
+        var location = GetStatementLocation(statement);
+
+        if (_executionTimeoutEnabled
+            && Stopwatch.GetElapsedTime(_executionStartedTimestamp) > _executionTimeout)
+        {
+            throw new RuntimeException(
+                $"Execution timeout limit of {_executionTimeout} was exceeded.",
+                location.Line,
+                location.Column,
+                "ExecutionTimeout");
+        }
+
+        _executedStatements++;
+
+        if (_statementExecutionLimitEnabled && _executedStatements > _maxExecutedStatements)
+        {
+            throw new RuntimeException(
+                $"Statement execution limit of {_maxExecutedStatements} was exceeded.",
+                location.Line,
+                location.Column,
+                "MaxExecutedStatements");
+        }
+    }
+
+    private void CheckCallDepth(string functionName, int? line, int? column)
+    {
+        if (_callDepthLimitEnabled && _callStack.Count >= _maxCallDepth)
+        {
+            throw new RuntimeException(
+                $"Call depth limit of {_maxCallDepth} was exceeded while calling function '{functionName}'.",
+                line,
+                column,
+                functionName);
         }
     }
 

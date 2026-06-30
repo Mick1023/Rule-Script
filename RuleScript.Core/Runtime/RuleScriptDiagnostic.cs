@@ -26,4 +26,14 @@ public sealed record RuleScriptDiagnostic(
     /// Gets the full source range associated with the diagnostic when available.
     /// </summary>
     public RuleScriptSourceRange? Range { get; init; }
+
+    /// <summary>
+    /// Gets the stable machine-readable diagnostic code.
+    /// </summary>
+    public string Code { get; init; } = RuleScriptDiagnosticCodes.SyntaxError;
+
+    /// <summary>
+    /// Gets the diagnostic severity.
+    /// </summary>
+    public RuleScriptDiagnosticSeverity Severity { get; init; } = RuleScriptDiagnosticSeverity.Error;
 }

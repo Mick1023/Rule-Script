@@ -14,7 +14,8 @@ public sealed class RuleScriptAnalysisResult
         IEnumerable<RuleScriptVariableSymbol>? variables = null,
         IEnumerable<RuleScriptFunctionSymbol>? userFunctions = null,
         IEnumerable<RuleScriptVariableSymbol>? visibleVariables = null,
-        IEnumerable<RuleScriptHostFunctionSymbol>? hostFunctions = null)
+        IEnumerable<RuleScriptHostFunctionSymbol>? hostFunctions = null,
+        IEnumerable<RuleScriptDiagnostic>? diagnostics = null)
     {
         VariableNames = Snapshot(variableNames);
         UserFunctionNames = Snapshot(userFunctionNames);
@@ -29,6 +30,7 @@ public sealed class RuleScriptAnalysisResult
             : SnapshotVariables(visibleVariables, []);
         VisibleVariableNames = Snapshot(VisibleVariables.Select(variable => variable.Name));
         HostFunctions = SnapshotHostFunctions(hostFunctions);
+        Diagnostics = diagnostics?.ToArray() ?? [];
     }
 
     /// <summary>
@@ -86,6 +88,11 @@ public sealed class RuleScriptAnalysisResult
     /// Gets import aliases declared in the script.
     /// </summary>
     public IReadOnlyList<string> ImportAliases { get; }
+
+    /// <summary>
+    /// Gets semantic diagnostics produced from the current script text.
+    /// </summary>
+    public IReadOnlyList<RuleScriptDiagnostic> Diagnostics { get; }
 
     private static IReadOnlyList<string> Snapshot(IEnumerable<string> names)
     {
