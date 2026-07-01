@@ -142,7 +142,11 @@ public sealed class RuleScriptAnalysisResult
         {
             foreach (var symbol in symbols)
             {
-                byName[symbol.Name] = new RuleScriptFunctionSymbol(symbol.Name, symbol.Parameters);
+                byName[symbol.Name] = new RuleScriptFunctionSymbol(
+                    symbol.Name,
+                    symbol.Parameters,
+                    symbol.ReturnType,
+                    symbol.IsReturnTypeNullable);
             }
         }
 

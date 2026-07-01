@@ -6,7 +6,16 @@ namespace RuleScript.Core.Runtime;
 internal sealed record RuleScriptTypedSymbols(
     IReadOnlyList<RuleScriptVariableSymbol> Variables,
     IReadOnlyList<RuleScriptFunctionSymbol> Functions,
-    IReadOnlyList<RuleScriptVariableSymbol>? VisibleVariables);
+    IReadOnlyList<RuleScriptVariableSymbol>? VisibleVariables,
+    IReadOnlyList<RuleScriptDiagnostic> Diagnostics);
+
+internal sealed record RuleScriptFunctionReturnAnalysis(
+    RuleScriptTypeInfo Type,
+    bool HasIncompatibleReturns);
+
+internal sealed record RuleScriptReturnFlow(
+    IReadOnlyList<RuleScriptTypeInfo> ReturnTypes,
+    bool AlwaysReturns);
 
 internal static class RuleScriptSymbolAnalyzer
 {
@@ -29,7 +38,25 @@ internal static class RuleScriptSymbolAnalyzer
             StringComparer.Ordinal);
         var globals = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
         var allVariables = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
-        var functions = new List<RuleScriptFunctionSymbol>();
+        var functionDeclarations = statements
+            .OfType<FunctionDeclarationStatement>()
+            .GroupBy(function => function.Name, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToArray();
+        var functionParameters = functionDeclarations.ToDictionary(
+            function => function.Name,
+            function => function.ParameterDefinitions.Select(parameter =>
+            {
+                var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
+                    ? parsed
+                    : RuleScriptValueType.Unknown;
+                return new RuleScriptParameterSymbol(parameter.Name, type);
+            }).ToArray(),
+            StringComparer.Ordinal);
+        var functionReturnTypes = functionDeclarations.ToDictionary(
+            function => function.Name,
+            _ => RuleScriptTypeInfo.Unknown,
+            StringComparer.Ordinal);
         Dictionary<string, RuleScriptTypeInfo>? cursorLocals = null;
 
         foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
@@ -37,16 +64,73 @@ internal static class RuleScriptSymbolAnalyzer
             CollectStatement(statement, globals, globals, allVariables, hostReturnTypes);
         }
 
-        foreach (var function in statements.OfType<FunctionDeclarationStatement>())
+        for (var iteration = 0; iteration <= functionDeclarations.Length; iteration++)
         {
-            var parameters = function.ParameterDefinitions.Select(parameter =>
+            var changed = false;
+            var callableReturnTypes = new Dictionary<string, RuleScriptTypeInfo>(hostReturnTypes, StringComparer.Ordinal);
+            foreach (var returnType in functionReturnTypes)
             {
-                var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
-                    ? parsed
-                    : RuleScriptValueType.Unknown;
-                return new RuleScriptParameterSymbol(parameter.Name, type);
-            }).ToArray();
-            functions.Add(new RuleScriptFunctionSymbol(function.Name, parameters));
+                callableReturnTypes[returnType.Key] = returnType.Value;
+            }
+
+            foreach (var function in functionDeclarations)
+            {
+                var analysis = InferFunctionReturnType(
+                    function,
+                    functionParameters[function.Name],
+                    globals,
+                    callableReturnTypes);
+                if (!TypesEquivalent(functionReturnTypes[function.Name], analysis.Type))
+                {
+                    functionReturnTypes[function.Name] = analysis.Type;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+            {
+                break;
+            }
+        }
+
+        var finalCallableReturnTypes = new Dictionary<string, RuleScriptTypeInfo>(hostReturnTypes, StringComparer.Ordinal);
+        foreach (var returnType in functionReturnTypes)
+        {
+            finalCallableReturnTypes[returnType.Key] = returnType.Value;
+        }
+
+        foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
+        {
+            CollectStatement(statement, globals, globals, allVariables, finalCallableReturnTypes);
+        }
+
+        var functions = functionDeclarations.Select(function =>
+        {
+            var returnType = functionReturnTypes[function.Name];
+            return new RuleScriptFunctionSymbol(
+                function.Name,
+                functionParameters[function.Name],
+                returnType.Kind,
+                returnType.IsNullable);
+        }).ToList();
+        var diagnostics = new List<RuleScriptDiagnostic>();
+
+        foreach (var function in functionDeclarations)
+        {
+            var parameters = functionParameters[function.Name];
+            var finalAnalysis = InferFunctionReturnType(function, parameters, globals, finalCallableReturnTypes);
+            if (finalAnalysis.HasIncompatibleReturns)
+            {
+                diagnostics.Add(new RuleScriptDiagnostic(
+                    $"Function '{function.Name}' returns incompatible value types.",
+                    function.Line,
+                    function.Column,
+                    function.Name)
+                {
+                    Code = RuleScriptDiagnosticCodes.TypeMismatch,
+                    Severity = RuleScriptDiagnosticSeverity.Error
+                });
+            }
 
             var locals = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
 
@@ -58,7 +142,7 @@ internal static class RuleScriptSymbolAnalyzer
 
             foreach (var statement in function.Body)
             {
-                CollectStatement(statement, locals, globals, allVariables, hostReturnTypes);
+                CollectStatement(statement, locals, globals, allVariables, finalCallableReturnTypes);
             }
 
             if (cursorLine.HasValue
@@ -86,7 +170,172 @@ internal static class RuleScriptSymbolAnalyzer
             visible = ToSymbols(visibleTypes);
         }
 
-        return new RuleScriptTypedSymbols(ToSymbols(allVariables), functions, visible);
+        return new RuleScriptTypedSymbols(ToSymbols(allVariables), functions, visible, diagnostics);
+    }
+
+    private static RuleScriptFunctionReturnAnalysis InferFunctionReturnType(
+        FunctionDeclarationStatement function,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> callableReturnTypes)
+    {
+        var locals = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            locals[parameter.Name] = RuleScriptTypeInfo.From(parameter.Type);
+        }
+
+        var functionGlobals = new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal);
+        var flow = AnalyzeReturnBlock(function.Body, locals, functionGlobals, callableReturnTypes);
+        return MergeReturnTypes(flow.ReturnTypes, flow.AlwaysReturns);
+    }
+
+    private static RuleScriptReturnFlow AnalyzeReturnBlock(
+        IReadOnlyList<Statement> statements,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> callableReturnTypes)
+    {
+        var returnTypes = new List<RuleScriptTypeInfo>();
+        var alwaysReturns = false;
+
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case ReturnStatement returnStatement:
+                    returnTypes.Add(Infer(returnStatement.Value, scope, globals, callableReturnTypes));
+                    alwaysReturns = true;
+                    break;
+
+                case IfStatement conditional:
+                    var thenFlow = AnalyzeReturnBlock(
+                        conditional.ThenBranch,
+                        new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal),
+                        new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                        callableReturnTypes);
+                    var elseFlow = AnalyzeReturnBlock(
+                        conditional.ElseBranch,
+                        new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal),
+                        new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                        callableReturnTypes);
+                    returnTypes.AddRange(thenFlow.ReturnTypes);
+                    returnTypes.AddRange(elseFlow.ReturnTypes);
+                    alwaysReturns = conditional.ElseBranch.Count > 0
+                        && thenFlow.AlwaysReturns
+                        && elseFlow.AlwaysReturns;
+                    CollectStatement(statement, scope, globals, scope, callableReturnTypes);
+                    break;
+
+                case SwitchStatement switchStatement:
+                    var switchAlwaysReturns = switchStatement.DefaultBranch is not null;
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        var caseFlow = AnalyzeReturnBlock(
+                            switchCase.Body,
+                            new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal),
+                            new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                            callableReturnTypes);
+                        returnTypes.AddRange(caseFlow.ReturnTypes);
+                        switchAlwaysReturns &= caseFlow.AlwaysReturns;
+                    }
+
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        var defaultFlow = AnalyzeReturnBlock(
+                            switchStatement.DefaultBranch,
+                            new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal),
+                            new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                            callableReturnTypes);
+                        returnTypes.AddRange(defaultFlow.ReturnTypes);
+                        switchAlwaysReturns &= defaultFlow.AlwaysReturns;
+                    }
+
+                    alwaysReturns = switchAlwaysReturns;
+                    CollectStatement(statement, scope, globals, scope, callableReturnTypes);
+                    break;
+
+                case WhileStatement loop:
+                    var whileFlow = AnalyzeReturnBlock(
+                        loop.Body,
+                        new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal),
+                        new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                        callableReturnTypes);
+                    returnTypes.AddRange(whileFlow.ReturnTypes);
+                    CollectStatement(statement, scope, globals, scope, callableReturnTypes);
+                    break;
+
+                case ForeachStatement loop:
+                    var loopScope = new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal);
+                    loopScope[loop.VariableName] = Infer(loop.Iterable, scope, globals, callableReturnTypes).ElementType
+                        ?? RuleScriptTypeInfo.Unknown;
+                    var foreachFlow = AnalyzeReturnBlock(
+                        loop.Body,
+                        loopScope,
+                        new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal),
+                        callableReturnTypes);
+                    returnTypes.AddRange(foreachFlow.ReturnTypes);
+                    CollectStatement(statement, scope, globals, scope, callableReturnTypes);
+                    break;
+
+                default:
+                    CollectStatement(statement, scope, globals, scope, callableReturnTypes);
+                    break;
+            }
+
+            if (alwaysReturns)
+            {
+                break;
+            }
+        }
+
+        return new RuleScriptReturnFlow(returnTypes, alwaysReturns);
+    }
+
+    private static RuleScriptFunctionReturnAnalysis MergeReturnTypes(
+        IReadOnlyList<RuleScriptTypeInfo> returnTypes,
+        bool alwaysReturns)
+    {
+        if (returnTypes.Count == 0)
+        {
+            return new RuleScriptFunctionReturnAnalysis(
+                RuleScriptTypeInfo.From(RuleScriptValueType.Null),
+                false);
+        }
+
+        var nullable = !alwaysReturns || returnTypes.Any(type => type.Kind == RuleScriptValueType.Null || type.IsNullable);
+        var knownTypes = returnTypes
+            .Select(type => type.WithoutNull())
+            .Where(type => type.Kind is not RuleScriptValueType.Null and not RuleScriptValueType.Unknown)
+            .ToArray();
+
+        if (knownTypes.Length == 0)
+        {
+            var type = returnTypes.All(value => value.Kind == RuleScriptValueType.Null)
+                ? RuleScriptTypeInfo.From(RuleScriptValueType.Null)
+                : RuleScriptTypeInfo.Unknown;
+            return new RuleScriptFunctionReturnAnalysis(type, false);
+        }
+
+        if (knownTypes.Any(type => type.Kind == RuleScriptValueType.Any))
+        {
+            var anyType = RuleScriptTypeInfo.From(RuleScriptValueType.Any);
+            return new RuleScriptFunctionReturnAnalysis(nullable ? anyType.MakeNullable() : anyType, false);
+        }
+
+        var distinctKinds = knownTypes.Select(type => type.Kind).Distinct().ToArray();
+        if (distinctKinds.Length > 1)
+        {
+            return new RuleScriptFunctionReturnAnalysis(RuleScriptTypeInfo.Unknown, true);
+        }
+
+        var inferred = knownTypes[0];
+        return new RuleScriptFunctionReturnAnalysis(nullable ? inferred.MakeNullable() : inferred, false);
+    }
+
+    private static bool TypesEquivalent(RuleScriptTypeInfo left, RuleScriptTypeInfo right)
+    {
+        return left.Kind == right.Kind && left.IsNullable == right.IsNullable;
     }
 
     private static void CollectStatement(

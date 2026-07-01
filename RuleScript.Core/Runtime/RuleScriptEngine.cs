@@ -513,7 +513,9 @@ public sealed class RuleScriptEngine
             _knownVariables,
             availableFunctions,
             functionSymbols,
-            hostSymbols);
+            hostSymbols)
+            .Concat(typedSymbols.Diagnostics)
+            .ToArray();
 
         return new RuleScriptAnalysisResult(
             variableNames,
@@ -559,7 +561,11 @@ public sealed class RuleScriptEngine
             foreach (var function in importedFunctions)
             {
                 var name = import.Alias is null ? function.Name : $"{import.Alias}.{function.Name}";
-                functions[name] = new RuleScriptFunctionSymbol(name, function.Parameters);
+                functions[name] = new RuleScriptFunctionSymbol(
+                    name,
+                    function.Parameters,
+                    function.ReturnType,
+                    function.IsReturnTypeNullable);
             }
         }
     }
@@ -606,9 +612,10 @@ public sealed class RuleScriptEngine
                 }
             }
 
-            foreach (var declaration in statements.OfType<FunctionDeclarationStatement>())
+            var analyzedFunctions = RuleScriptSymbolAnalyzer.Analyze(statements, null, null).Functions;
+            foreach (var function in analyzedFunctions)
             {
-                functions[declaration.Name] = CreateFunctionSymbol(declaration);
+                functions[function.Name] = function;
             }
 
             var snapshot = functions.Values.OrderBy(function => function.Name, StringComparer.Ordinal).ToArray();

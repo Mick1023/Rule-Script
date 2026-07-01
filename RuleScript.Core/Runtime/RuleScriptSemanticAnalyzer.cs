@@ -816,6 +816,8 @@ internal static class RuleScriptSemanticAnalyzer
         if (userFunctions.TryGetValue(name, out var userFunction))
         {
             ValidateArguments(name, argumentTypes, userFunction.Parameters, line, column, diagnostics);
+            var returnType = RuleScriptTypeInfo.From(userFunction.ReturnType);
+            return userFunction.IsReturnTypeNullable ? returnType.MakeNullable() : returnType;
         }
 
         if (hostFunctions.TryGetValue(name, out var hostFunction))
