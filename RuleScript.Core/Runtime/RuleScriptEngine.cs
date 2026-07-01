@@ -1111,6 +1111,12 @@ public sealed class RuleScriptEngine
                 case VarStatement varStatement:
                     variables.Add(varStatement.Name);
                     break;
+                case DestructuringVarStatement destructuring:
+                    foreach (var name in destructuring.Pattern.Names)
+                    {
+                        variables.Add(name);
+                    }
+                    break;
                 case AssignmentStatement assignmentStatement:
                     variables.Add(assignmentStatement.Name);
                     break;

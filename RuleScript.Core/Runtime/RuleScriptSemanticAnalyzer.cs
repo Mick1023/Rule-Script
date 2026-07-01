@@ -121,6 +121,18 @@ internal static class RuleScriptSemanticAnalyzer
                 scope[variable.Name] = variableType;
                 break;
 
+            case DestructuringVarStatement destructuring:
+                AnalyzeDestructuringStatement(
+                    destructuring,
+                    scope,
+                    globals,
+                    declarations,
+                    diagnostics,
+                    availableFunctions,
+                    userFunctions,
+                    hostFunctions);
+                break;
+
             case AssignmentStatement assignment:
                 var assignedType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
                 ReportAssignmentMismatch(assignment.Name, assignedType, scope, assignment.Line, assignment.Column, assignment.SourceSpan, diagnostics);
@@ -284,6 +296,94 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 break;
+        }
+    }
+
+    private static void AnalyzeDestructuringStatement(
+        DestructuringVarStatement statement,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ISet<string> declarations,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IReadOnlySet<string> availableFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+    {
+        var initializerType = AnalyzeExpression(
+            statement.Initializer,
+            scope,
+            globals,
+            diagnostics,
+            availableFunctions,
+            userFunctions,
+            hostFunctions);
+        var expectedType = statement.Pattern is ArrayDestructuringPattern
+            ? RuleScriptValueType.Array
+            : RuleScriptValueType.Object;
+        RequireType(
+            initializerType,
+            expectedType,
+            "Destructuring initializer",
+            statement.Line,
+            statement.Column,
+            statement.Pattern is ArrayDestructuringPattern ? "[" : "{",
+            statement.SourceSpan,
+            diagnostics);
+
+        if (statement.Pattern is ArrayDestructuringPattern
+            && statement.Initializer is ArrayExpression array
+            && array.Elements.Count < statement.Pattern.Names.Count)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.InvalidAssignment,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Array destructuring requires {statement.Pattern.Names.Count} value(s), but found {array.Elements.Count}.",
+                statement.Line,
+                statement.Column,
+                "[",
+                statement.SourceSpan));
+        }
+
+        for (var index = 0; index < statement.Pattern.Names.Count; index++)
+        {
+            var name = statement.Pattern.Names[index];
+
+            if (!declarations.Add(name))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.DuplicateDeclaration,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Variable '{name}' is declared more than once in the same scope.",
+                    statement.Line,
+                    statement.Column,
+                    name,
+                    statement.SourceSpan));
+            }
+
+            var type = statement.Pattern switch
+            {
+                ArrayDestructuringPattern when initializerType.ElementTypes is not null && index < initializerType.ElementTypes.Count
+                    => initializerType.ElementTypes[index],
+                ArrayDestructuringPattern => initializerType.ElementType ?? RuleScriptTypeInfo.Unknown,
+                ObjectDestructuringPattern when initializerType.TryGetProperty(name, out var propertyType) => propertyType,
+                _ => RuleScriptTypeInfo.Unknown
+            };
+
+            if (statement.Pattern is ObjectDestructuringPattern
+                && initializerType.Properties is not null
+                && !initializerType.Properties.ContainsKey(name))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.PropertyNotFound,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Property '{name}' was not found.",
+                    statement.Line,
+                    statement.Column,
+                    name,
+                    statement.SourceSpan));
+            }
+
+            scope[name] = type;
         }
     }
 

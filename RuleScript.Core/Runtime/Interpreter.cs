@@ -218,6 +218,9 @@ public sealed class Interpreter
                 case VarStatement varStatement:
                     DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context), context);
                     break;
+                case DestructuringVarStatement destructuring:
+                    ExecuteDestructuring(destructuring, Evaluate(destructuring.Initializer, context), context);
+                    break;
                 case AssignmentStatement assignmentStatement:
                     AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
                     break;
@@ -278,6 +281,12 @@ public sealed class Interpreter
             {
                 case VarStatement varStatement:
                     DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : await EvaluateAsync(varStatement.Initializer, context, cancellationToken).ConfigureAwait(false), context);
+                    break;
+                case DestructuringVarStatement destructuring:
+                    ExecuteDestructuring(
+                        destructuring,
+                        await EvaluateAsync(destructuring.Initializer, context, cancellationToken).ConfigureAwait(false),
+                        context);
                     break;
                 case AssignmentStatement assignmentStatement:
                     AssignVariable(assignmentStatement.Name, await EvaluateAsync(assignmentStatement.Value, context, cancellationToken).ConfigureAwait(false), context);
@@ -1018,6 +1027,47 @@ public sealed class Interpreter
         }
 
         context.SetValue(name, value);
+    }
+
+    private void ExecuteDestructuring(
+        DestructuringVarStatement statement,
+        RuntimeValue initializer,
+        RuntimeContext context)
+    {
+        switch (statement.Pattern)
+        {
+            case ArrayDestructuringPattern arrayPattern:
+                if (initializer.Value is not IList values)
+                {
+                    throw new RuntimeException(
+                        "Array destructuring expects an array value.",
+                        statement.Line,
+                        statement.Column,
+                        "[");
+                }
+
+                if (values.Count < arrayPattern.Names.Count)
+                {
+                    throw new RuntimeException(
+                        $"Array destructuring requires {arrayPattern.Names.Count} value(s), but found {values.Count}.",
+                        statement.Line,
+                        statement.Column,
+                        "[");
+                }
+
+                for (var index = 0; index < arrayPattern.Names.Count; index++)
+                {
+                    DeclareVariable(arrayPattern.Names[index], RuntimeValue.FromObject(values[index]), context);
+                }
+                break;
+
+            case ObjectDestructuringPattern objectPattern:
+                foreach (var name in objectPattern.Names)
+                {
+                    DeclareVariable(name, ReadMember(initializer.Value, name, statement.Line, statement.Column), context);
+                }
+                break;
+        }
     }
 
     private void AssignVariable(string name, RuntimeValue value, RuntimeContext context)

@@ -101,6 +101,9 @@ internal static class RuleScriptSymbolAnalyzer
             case VarStatement variable:
                 SetVariable(scope, allVariables, variable.Name, Infer(variable.Initializer, scope, globals, hostFunctionReturnTypes));
                 break;
+            case DestructuringVarStatement destructuring:
+                CollectDestructuringStatement(destructuring, scope, globals, allVariables, hostFunctionReturnTypes);
+                break;
             case AssignmentStatement assignment:
                 SetVariable(scope, allVariables, assignment.Name, Infer(assignment.Value, scope, globals, hostFunctionReturnTypes));
                 break;
@@ -162,6 +165,30 @@ internal static class RuleScriptSymbolAnalyzer
                 }
 
                 break;
+        }
+    }
+
+    private static void CollectDestructuringStatement(
+        DestructuringVarStatement statement,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IDictionary<string, RuleScriptTypeInfo> allVariables,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        var initializerType = Infer(statement.Initializer, scope, globals, hostFunctionReturnTypes);
+
+        for (var index = 0; index < statement.Pattern.Names.Count; index++)
+        {
+            var name = statement.Pattern.Names[index];
+            var type = statement.Pattern switch
+            {
+                ArrayDestructuringPattern when initializerType.ElementTypes is not null && index < initializerType.ElementTypes.Count
+                    => initializerType.ElementTypes[index],
+                ArrayDestructuringPattern => initializerType.ElementType ?? RuleScriptTypeInfo.Unknown,
+                ObjectDestructuringPattern when initializerType.TryGetProperty(name, out var propertyType) => propertyType,
+                _ => RuleScriptTypeInfo.Unknown
+            };
+            SetVariable(scope, allVariables, name, type);
         }
     }
 
