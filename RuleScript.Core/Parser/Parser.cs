@@ -86,6 +86,16 @@ public sealed class Parser
             return ParseVarStatement();
         }
 
+        if (Match(TokenType.Const))
+        {
+            return ParseConstStatement();
+        }
+
+        if (Match(TokenType.Export))
+        {
+            return ParseExportStatement();
+        }
+
         if (Match(TokenType.If))
         {
             return ParseIfStatement();
@@ -162,6 +172,31 @@ public sealed class Parser
 
         Consume(TokenType.Semicolon, "Expected ';' after variable declaration.");
         return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+    }
+
+    private ConstStatement ParseConstStatement()
+    {
+        var start = Previous();
+        var name = Consume(TokenType.Identifier, "Expected constant name after 'const'.");
+        Consume(TokenType.Assign, "Expected '=' after constant name.");
+        var initializer = ParseExpression();
+        Consume(TokenType.Semicolon, "Expected ';' after constant declaration.");
+        return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+    }
+
+    private Statement ParseExportStatement()
+    {
+        if (Match(TokenType.Function))
+        {
+            return ParseFunctionDeclarationStatement() with { IsExported = true };
+        }
+
+        if (Match(TokenType.Const))
+        {
+            return ParseConstStatement() with { IsExported = true };
+        }
+
+        throw Error(Peek(), "Expected 'function' or 'const' after 'export'.");
     }
 
     private DestructuringPattern ParseDestructuringPattern()
@@ -931,6 +966,8 @@ public sealed class Parser
         return type is TokenType.Import
             or TokenType.Function
             or TokenType.Var
+            or TokenType.Const
+            or TokenType.Export
             or TokenType.If
             or TokenType.While
             or TokenType.Foreach

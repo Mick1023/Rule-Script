@@ -12,6 +12,8 @@ public enum TokenType
     Null,
 
     Var,
+    Const,
+    Export,
     If,
     Then,
     Else,

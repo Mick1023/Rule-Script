@@ -15,6 +15,8 @@ public sealed class Lexer
     private static readonly Dictionary<string, TokenType> Keywords = new(StringComparer.Ordinal)
     {
         ["var"] = TokenType.Var,
+        ["const"] = TokenType.Const,
+        ["export"] = TokenType.Export,
         ["if"] = TokenType.If,
         ["then"] = TokenType.Then,
         ["else"] = TokenType.Else,

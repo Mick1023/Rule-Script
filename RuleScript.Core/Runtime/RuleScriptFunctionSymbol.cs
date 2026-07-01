@@ -14,7 +14,8 @@ public sealed class RuleScriptFunctionSymbol
         string name,
         IEnumerable<RuleScriptParameterSymbol> parameters,
         RuleScriptValueType returnType,
-        bool isReturnTypeNullable = false)
+        bool isReturnTypeNullable = false,
+        bool isExported = false)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -25,6 +26,7 @@ public sealed class RuleScriptFunctionSymbol
         Parameters = parameters?.ToArray() ?? throw new ArgumentNullException(nameof(parameters));
         ReturnType = returnType;
         IsReturnTypeNullable = isReturnTypeNullable;
+        IsExported = isExported;
     }
 
     public string Name { get; }
@@ -34,4 +36,6 @@ public sealed class RuleScriptFunctionSymbol
     public RuleScriptValueType ReturnType { get; }
 
     public bool IsReturnTypeNullable { get; }
+
+    public bool IsExported { get; }
 }

@@ -146,7 +146,8 @@ public sealed class RuleScriptAnalysisResult
                     symbol.Name,
                     symbol.Parameters,
                     symbol.ReturnType,
-                    symbol.IsReturnTypeNullable);
+                    symbol.IsReturnTypeNullable,
+                    symbol.IsExported);
             }
         }
 

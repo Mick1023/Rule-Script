@@ -10,7 +10,8 @@ internal static class RuleScriptSemanticAnalyzer
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
         var globals = knownVariables.ToDictionary(
@@ -18,6 +19,14 @@ internal static class RuleScriptSemanticAnalyzer
             value => RuleScriptTypeInfo.From(value.Value),
             StringComparer.Ordinal);
         var globalDeclarations = new HashSet<string>(StringComparer.Ordinal);
+        if (knownTypeInfos is not null)
+        {
+            foreach (var knownType in knownTypeInfos)
+            {
+                globals[knownType.Key] = knownType.Value;
+            }
+        }
+
         var functionDeclarations = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
@@ -88,6 +97,15 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
+        var readonlyNames = statements.OfType<ConstStatement>()
+            .Select(constant => constant.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (knownTypeInfos is not null)
+        {
+            readonlyNames.UnionWith(knownTypeInfos.Keys);
+        }
+        ReportReadonlyAssignments(statements, readonlyNames, diagnostics);
+
         return diagnostics;
     }
 
@@ -119,6 +137,22 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 scope[variable.Name] = variableType;
+                break;
+
+            case ConstStatement constant:
+                var constantType = AnalyzeExpression(constant.Initializer, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                if (!declarations.Add(constant.Name))
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.DuplicateDeclaration,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Constant '{constant.Name}' is declared more than once in the same scope.",
+                        constant.Line,
+                        constant.Column,
+                        constant.Name,
+                        constant.SourceSpan));
+                }
+                scope[constant.Name] = constantType;
                 break;
 
             case DestructuringVarStatement destructuring:
@@ -384,6 +418,71 @@ internal static class RuleScriptSemanticAnalyzer
             }
 
             scope[name] = type;
+        }
+    }
+
+    private static void ReportReadonlyAssignments(
+        IEnumerable<Statement> statements,
+        IReadOnlySet<string> readonlyNames,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        foreach (var statement in statements)
+        {
+            string? assignedName = statement switch
+            {
+                AssignmentStatement assignment => assignment.Name,
+                TargetAssignmentStatement { Target: IdentifierExpression identifier } => identifier.Name,
+                _ => null
+            };
+
+            if (assignedName is not null && readonlyNames.Contains(assignedName))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.CannotAssignToReadonly,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Cannot assign to readonly constant '{assignedName}'.",
+                    statement switch
+                    {
+                        AssignmentStatement assignment => assignment.Line,
+                        TargetAssignmentStatement assignment => assignment.Line,
+                        _ => null
+                    },
+                    statement switch
+                    {
+                        AssignmentStatement assignment => assignment.Column,
+                        TargetAssignmentStatement assignment => assignment.Column,
+                        _ => null
+                    },
+                    assignedName,
+                    statement.SourceSpan));
+            }
+
+            switch (statement)
+            {
+                case FunctionDeclarationStatement function:
+                    ReportReadonlyAssignments(function.Body, readonlyNames, diagnostics);
+                    break;
+                case IfStatement conditional:
+                    ReportReadonlyAssignments(conditional.ThenBranch, readonlyNames, diagnostics);
+                    ReportReadonlyAssignments(conditional.ElseBranch, readonlyNames, diagnostics);
+                    break;
+                case SwitchStatement switchStatement:
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        ReportReadonlyAssignments(switchCase.Body, readonlyNames, diagnostics);
+                    }
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        ReportReadonlyAssignments(switchStatement.DefaultBranch, readonlyNames, diagnostics);
+                    }
+                    break;
+                case WhileStatement loop:
+                    ReportReadonlyAssignments(loop.Body, readonlyNames, diagnostics);
+                    break;
+                case ForeachStatement loop:
+                    ReportReadonlyAssignments(loop.Body, readonlyNames, diagnostics);
+                    break;
+            }
         }
     }
 

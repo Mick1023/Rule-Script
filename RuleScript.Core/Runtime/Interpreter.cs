@@ -32,6 +32,8 @@ public sealed class Interpreter
     private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
     private readonly Stack<int> _functionLoopBoundaries = new();
     private readonly Stack<string> _callStack = new();
+    private readonly Dictionary<ModuleConstant, RuntimeValue> _constantValues = [];
+    private readonly HashSet<ModuleConstant> _evaluatingConstants = [];
     private int _loopDepth;
     private long _executionStartedTimestamp;
     private long _executedStatements;
@@ -128,7 +130,15 @@ public sealed class Interpreter
         {
             if (statement is FunctionDeclarationStatement functionDeclaration)
             {
-                module.Functions[functionDeclaration.Name] = new UserFunction(functionDeclaration, module);
+                var function = new UserFunction(functionDeclaration, module);
+                module.Functions[functionDeclaration.Name] = function;
+                module.PublicFunctions[functionDeclaration.Name] = function;
+            }
+            else if (statement is ConstStatement constantStatement)
+            {
+                var constant = new ModuleConstant(constantStatement, module);
+                module.Constants[constantStatement.Name] = constant;
+                module.PublicConstants[constantStatement.Name] = constant;
             }
         }
 
@@ -218,6 +228,9 @@ public sealed class Interpreter
                 case VarStatement varStatement:
                     DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : Evaluate(varStatement.Initializer, context), context);
                     break;
+                case ConstStatement constant:
+                    DeclareVariable(constant.Name, EvaluateConstant(CurrentModule.Constants[constant.Name], context), context);
+                    break;
                 case DestructuringVarStatement destructuring:
                     ExecuteDestructuring(destructuring, Evaluate(destructuring.Initializer, context), context);
                     break;
@@ -281,6 +294,10 @@ public sealed class Interpreter
             {
                 case VarStatement varStatement:
                     DeclareVariable(varStatement.Name, varStatement.Initializer is null ? RuntimeValue.Null : await EvaluateAsync(varStatement.Initializer, context, cancellationToken).ConfigureAwait(false), context);
+                    break;
+                case ConstStatement constant:
+                    DeclareVariable(constant.Name, await EvaluateConstantAsync(
+                        CurrentModule.Constants[constant.Name], context, cancellationToken).ConfigureAwait(false), context);
                     break;
                 case DestructuringVarStatement destructuring:
                     ExecuteDestructuring(
@@ -1072,6 +1089,11 @@ public sealed class Interpreter
 
     private void AssignVariable(string name, RuntimeValue value, RuntimeContext context)
     {
+        if (CurrentModule.Constants.ContainsKey(name))
+        {
+            throw new RuntimeException($"Cannot assign to readonly constant '{name}'.");
+        }
+
         if (TryGetCurrentLocalScope(out var localScope))
         {
             localScope![name] = value;
@@ -1091,6 +1113,12 @@ public sealed class Interpreter
         if (TryGetCurrentLocalScope(out var localScope) && localScope!.TryGetValue(name, out var runtimeValue))
         {
             value = runtimeValue.Value;
+            return true;
+        }
+
+        if (CurrentModule.Constants.TryGetValue(name, out var constant))
+        {
+            value = EvaluateConstant(constant, context).Value;
             return true;
         }
 
@@ -1274,12 +1302,26 @@ public sealed class Interpreter
 
     private RuntimeValue EvaluateMemberAccess(MemberAccessExpression expression, RuntimeContext context)
     {
+        if (expression.Target is IdentifierExpression alias
+            && CurrentModule.Aliases.TryGetValue(alias.Name, out var module)
+            && module.PublicConstants.TryGetValue(expression.MemberName, out var constant))
+        {
+            return EvaluateConstant(constant, context);
+        }
+
         var target = Evaluate(expression.Target, context).Value;
         return ReadMember(target, expression.MemberName, expression.Line, expression.Column);
     }
 
     private async Task<RuntimeValue> EvaluateMemberAccessAsync(MemberAccessExpression expression, RuntimeContext context, CancellationToken cancellationToken)
     {
+        if (expression.Target is IdentifierExpression alias
+            && CurrentModule.Aliases.TryGetValue(alias.Name, out var module)
+            && module.PublicConstants.TryGetValue(expression.MemberName, out var constant))
+        {
+            return await EvaluateConstantAsync(constant, context, cancellationToken).ConfigureAwait(false);
+        }
+
         var target = (await EvaluateAsync(expression.Target, context, cancellationToken).ConfigureAwait(false)).Value;
         return ReadMember(target, expression.MemberName, expression.Line, expression.Column);
     }
@@ -1342,6 +1384,61 @@ public sealed class Interpreter
         }
 
         throw new RuntimeException($"Property '{memberName}' was not found.", line, column, memberName);
+    }
+
+    private RuntimeValue EvaluateConstant(ModuleConstant constant, RuntimeContext context)
+    {
+        if (_constantValues.TryGetValue(constant, out var value))
+        {
+            return value;
+        }
+
+        if (!_evaluatingConstants.Add(constant))
+        {
+            throw new RuntimeException($"Circular constant initialization detected for '{constant.Declaration.Name}'.");
+        }
+
+        _moduleStack.Push(constant.Module);
+        try
+        {
+            value = Evaluate(constant.Declaration.Initializer, context);
+            _constantValues[constant] = value;
+            return value;
+        }
+        finally
+        {
+            _moduleStack.Pop();
+            _evaluatingConstants.Remove(constant);
+        }
+    }
+
+    private async Task<RuntimeValue> EvaluateConstantAsync(
+        ModuleConstant constant,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        if (_constantValues.TryGetValue(constant, out var value))
+        {
+            return value;
+        }
+
+        if (!_evaluatingConstants.Add(constant))
+        {
+            throw new RuntimeException($"Circular constant initialization detected for '{constant.Declaration.Name}'.");
+        }
+
+        _moduleStack.Push(constant.Module);
+        try
+        {
+            value = await EvaluateAsync(constant.Declaration.Initializer, context, cancellationToken).ConfigureAwait(false);
+            _constantValues[constant] = value;
+            return value;
+        }
+        finally
+        {
+            _moduleStack.Pop();
+            _evaluatingConstants.Remove(constant);
+        }
     }
 
     private RuntimeValue EvaluateNullCoalescing(NullCoalescingExpression expression, RuntimeContext context)
@@ -1553,7 +1650,7 @@ public sealed class Interpreter
 
         var module = ResolveAlias(expression.ModuleName, expression.Line, expression.Column);
 
-        if (!module.Functions.TryGetValue(expression.FunctionName, out var userFunction))
+        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunction))
         {
             throw new RuntimeException(
                 $"Module alias '{expression.ModuleName}' function not found: '{expression.FunctionName}'.",
@@ -1576,7 +1673,7 @@ public sealed class Interpreter
 
         var module = ResolveAlias(expression.ModuleName, expression.Line, expression.Column);
 
-        if (!module.Functions.TryGetValue(expression.FunctionName, out var userFunction))
+        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunction))
         {
             throw new RuntimeException(
                 $"Module alias '{expression.ModuleName}' function not found: '{expression.FunctionName}'.",
@@ -1712,6 +1809,8 @@ public sealed class Interpreter
     {
         _executionStartedTimestamp = Stopwatch.GetTimestamp();
         _executedStatements = 0;
+        _constantValues.Clear();
+        _evaluatingConstants.Clear();
     }
 
     private void CheckExecutionLimits(Statement statement)

@@ -24,7 +24,8 @@ internal static class RuleScriptSymbolAnalyzer
         int? cursorLine,
         int? cursorColumn,
         IReadOnlyDictionary<string, RuleScriptValueType>? hostFunctionReturnTypes = null,
-        IReadOnlyDictionary<string, RuleScriptValueType>? knownVariables = null)
+        IReadOnlyDictionary<string, RuleScriptValueType>? knownVariables = null,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
     {
         hostFunctionReturnTypes ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
         knownVariables ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
@@ -36,6 +37,13 @@ internal static class RuleScriptSymbolAnalyzer
             value => value.Key,
             value => RuleScriptTypeInfo.From(value.Value),
             StringComparer.Ordinal);
+        if (knownTypeInfos is not null)
+        {
+            foreach (var knownType in knownTypeInfos)
+            {
+                knownTypes[knownType.Key] = knownType.Value;
+            }
+        }
         var globals = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
         var allVariables = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
         var functionDeclarations = statements
@@ -111,7 +119,8 @@ internal static class RuleScriptSymbolAnalyzer
                 function.Name,
                 functionParameters[function.Name],
                 returnType.Kind,
-                returnType.IsNullable);
+                returnType.IsNullable,
+                function.IsExported);
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -170,7 +179,17 @@ internal static class RuleScriptSymbolAnalyzer
             visible = ToSymbols(visibleTypes);
         }
 
-        return new RuleScriptTypedSymbols(ToSymbols(allVariables), functions, visible, diagnostics);
+        var constantDeclarations = statements.OfType<ConstStatement>()
+            .GroupBy(constant => constant.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var variables = ToSymbols(allVariables)
+            .Select(variable => constantDeclarations.TryGetValue(variable.Name, out var constant)
+                ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: constant.IsExported)
+                : knownTypeInfos?.ContainsKey(variable.Name) == true
+                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true)
+                    : variable)
+            .ToArray();
+        return new RuleScriptTypedSymbols(variables, functions, visible, diagnostics);
     }
 
     private static RuleScriptFunctionReturnAnalysis InferFunctionReturnType(
@@ -349,6 +368,9 @@ internal static class RuleScriptSymbolAnalyzer
         {
             case VarStatement variable:
                 SetVariable(scope, allVariables, variable.Name, Infer(variable.Initializer, scope, globals, hostFunctionReturnTypes));
+                break;
+            case ConstStatement constant:
+                SetVariable(scope, allVariables, constant.Name, Infer(constant.Initializer, scope, globals, hostFunctionReturnTypes));
                 break;
             case DestructuringVarStatement destructuring:
                 CollectDestructuringStatement(destructuring, scope, globals, allVariables, hostFunctionReturnTypes);
