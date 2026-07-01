@@ -53,19 +53,32 @@ public sealed class RuleScriptEngineTests
     {
         var engine = new RuleScriptEngine
         {
-            LoopIterationLimitEnabled = false
+            LoopIterationLimitEnabled = false,
+            ExecutionTimeoutEnabled = false,
+            StatementExecutionLimitEnabled = false
         };
         var context = new RuntimeContext();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var runTask = Task.Run(() => engine.Execute("""
-            var i = 0;
-            while true:
-                i = i + 1;
-            endwhile
-            result = i;
-            """, context));
+        engine.RuntimeEventHandler = _ =>
+        {
+            started.TrySetResult();
+            return RuleScriptExecutionDirective.Continue;
+        };
 
-        await Task.Delay(50);
+        var runTask = Task.Factory.StartNew(
+            () => engine.Execute("""
+                var i = 0;
+                while true:
+                    i = i + 1;
+                endwhile
+                result = i;
+                """, context),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+        await started.Task.WaitAsync(TestTimeout());
         engine.Stop();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
