@@ -197,21 +197,35 @@ public sealed class Parser
     private IfStatement ParseIfStatement()
     {
         var ifToken = Previous();
+        var statement = ParseIfClause(ifToken);
+
+        ConsumeBlockEnd(TokenType.EndIf, "endif", "if statement");
+        return Complete(statement, ifToken);
+    }
+
+    private IfStatement ParseIfClause(Token clauseToken)
+    {
         var condition = ParseExpression();
         Consume(TokenType.Then, "Expected 'then' after if condition.");
         Consume(TokenType.Colon, "Expected ':' after 'then'.");
 
-        var thenBranch = ParseBlock(TokenType.Else, TokenType.EndIf, TokenType.End);
+        var thenBranch = ParseBlock(TokenType.ElseIf, TokenType.Else, TokenType.EndIf, TokenType.End);
         var elseBranch = Array.Empty<Statement>();
 
-        if (Match(TokenType.Else))
+        if (Match(TokenType.ElseIf))
+        {
+            var elseIfToken = Previous();
+            elseBranch = [ParseIfClause(elseIfToken)];
+        }
+        else if (Match(TokenType.Else))
         {
             Consume(TokenType.Colon, "Expected ':' after 'else'.");
             elseBranch = ParseBlock(TokenType.EndIf, TokenType.End);
         }
 
-        ConsumeBlockEnd(TokenType.EndIf, "endif", "if statement");
-        return Complete(new IfStatement(condition, thenBranch, elseBranch, ifToken.Line, ifToken.Column), ifToken);
+        return Complete(
+            new IfStatement(condition, thenBranch, elseBranch, clauseToken.Line, clauseToken.Column),
+            clauseToken);
     }
 
     private WhileStatement ParseWhileStatement()
