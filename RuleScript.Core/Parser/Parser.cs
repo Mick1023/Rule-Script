@@ -186,10 +186,22 @@ public sealed class Parser
         return Complete(new GlobalAssignmentStatement(name.Lexeme, value, globalToken.Line, globalToken.Column), start);
     }
 
-    private ExpressionStatement ParseExpressionStatement()
+    private Statement ParseExpressionStatement()
     {
         var start = Peek();
         var expression = ParseExpression();
+
+        if (Match(TokenType.Assign))
+        {
+            var value = ParseExpression();
+            Consume(TokenType.Semicolon, "Expected ';' after assignment.");
+            return Complete(new TargetAssignmentStatement(
+                expression,
+                value,
+                start.Line,
+                start.Column), start);
+        }
+
         Consume(TokenType.Semicolon, "Expected ';' after expression.");
         return Complete(new ExpressionStatement(expression), start);
     }

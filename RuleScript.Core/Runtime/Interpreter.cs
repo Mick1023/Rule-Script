@@ -221,6 +221,9 @@ public sealed class Interpreter
                 case AssignmentStatement assignmentStatement:
                     AssignVariable(assignmentStatement.Name, Evaluate(assignmentStatement.Value, context), context);
                     break;
+                case TargetAssignmentStatement assignmentStatement:
+                    ExecuteTargetAssignment(assignmentStatement, context);
+                    break;
                 case GlobalAssignmentStatement globalAssignmentStatement:
                     AssignGlobalVariable(globalAssignmentStatement.Name, Evaluate(globalAssignmentStatement.Value, context), context);
                     break;
@@ -278,6 +281,9 @@ public sealed class Interpreter
                     break;
                 case AssignmentStatement assignmentStatement:
                     AssignVariable(assignmentStatement.Name, await EvaluateAsync(assignmentStatement.Value, context, cancellationToken).ConfigureAwait(false), context);
+                    break;
+                case TargetAssignmentStatement assignmentStatement:
+                    await ExecuteTargetAssignmentAsync(assignmentStatement, context, cancellationToken).ConfigureAwait(false);
                     break;
                 case GlobalAssignmentStatement globalAssignmentStatement:
                     AssignGlobalVariable(globalAssignmentStatement.Name, await EvaluateAsync(globalAssignmentStatement.Value, context, cancellationToken).ConfigureAwait(false), context);
@@ -781,6 +787,226 @@ public sealed class Interpreter
 
         var value = statement.Value is null ? RuntimeValue.Null : await EvaluateAsync(statement.Value, context, cancellationToken).ConfigureAwait(false);
         throw new ReturnSignalException(value);
+    }
+
+    private void ExecuteTargetAssignment(TargetAssignmentStatement statement, RuntimeContext context)
+    {
+        var assign = ResolveAssignmentTarget(statement.Target, context, statement.Line, statement.Column);
+        assign(Evaluate(statement.Value, context));
+    }
+
+    private async Task ExecuteTargetAssignmentAsync(
+        TargetAssignmentStatement statement,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var assign = await ResolveAssignmentTargetAsync(
+            statement.Target,
+            context,
+            cancellationToken,
+            statement.Line,
+            statement.Column).ConfigureAwait(false);
+        assign(await EvaluateAsync(statement.Value, context, cancellationToken).ConfigureAwait(false));
+    }
+
+    private Action<RuntimeValue> ResolveAssignmentTarget(
+        Expression target,
+        RuntimeContext context,
+        int? line,
+        int? column)
+    {
+        return target switch
+        {
+            IdentifierExpression identifier => value => AssignVariable(identifier.Name, value, context),
+            GlobalIdentifierExpression identifier => value => AssignGlobalVariable(identifier.Name, value, context),
+            MemberAccessExpression member => CreateMemberSetter(Evaluate(member.Target, context).Value, member),
+            IndexExpression index => CreateIndexSetter(
+                Evaluate(index.Target, context).Value,
+                Evaluate(index.Index, context).Value,
+                index),
+            _ => throw new RuntimeException(
+                $"Expression '{target.GetType().Name}' is not assignable.",
+                line,
+                column)
+        };
+    }
+
+    private async Task<Action<RuntimeValue>> ResolveAssignmentTargetAsync(
+        Expression target,
+        RuntimeContext context,
+        CancellationToken cancellationToken,
+        int? line,
+        int? column)
+    {
+        switch (target)
+        {
+            case IdentifierExpression identifier:
+                return value => AssignVariable(identifier.Name, value, context);
+            case GlobalIdentifierExpression identifier:
+                return value => AssignGlobalVariable(identifier.Name, value, context);
+            case MemberAccessExpression member:
+                var receiver = await EvaluateAsync(member.Target, context, cancellationToken).ConfigureAwait(false);
+                return CreateMemberSetter(receiver.Value, member);
+            case IndexExpression index:
+                var collection = await EvaluateAsync(index.Target, context, cancellationToken).ConfigureAwait(false);
+                var indexValue = await EvaluateAsync(index.Index, context, cancellationToken).ConfigureAwait(false);
+                return CreateIndexSetter(collection.Value, indexValue.Value, index);
+            default:
+                throw new RuntimeException(
+                    $"Expression '{target.GetType().Name}' is not assignable.",
+                    line,
+                    column);
+        }
+    }
+
+    private static Action<RuntimeValue> CreateMemberSetter(object? receiver, MemberAccessExpression member)
+    {
+        if (receiver is null)
+        {
+            throw new RuntimeException(
+                $"Cannot assign property '{member.MemberName}' on null.",
+                member.Line,
+                member.Column,
+                member.MemberName);
+        }
+
+        if (receiver is IDictionary<string, object?> dictionary)
+        {
+            if (dictionary.IsReadOnly)
+            {
+                throw new RuntimeException(
+                    $"Cannot assign to readonly property '{member.MemberName}'.",
+                    member.Line,
+                    member.Column,
+                    member.MemberName);
+            }
+
+            return value =>
+            {
+                try
+                {
+                    dictionary[member.MemberName] = value.Value;
+                }
+                catch (NotSupportedException)
+                {
+                    throw new RuntimeException(
+                        $"Cannot assign to readonly property '{member.MemberName}'.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName);
+                }
+            };
+        }
+
+        if (receiver is IReadOnlyDictionary<string, object?>)
+        {
+            throw new RuntimeException(
+                $"Cannot assign to readonly property '{member.MemberName}'.",
+                member.Line,
+                member.Column,
+                member.MemberName);
+        }
+
+        var property = receiver.GetType().GetProperty(
+            member.MemberName,
+            BindingFlags.Instance | BindingFlags.Public);
+
+        if (property is null)
+        {
+            throw new RuntimeException(
+                $"Property '{member.MemberName}' was not found.",
+                member.Line,
+                member.Column,
+                member.MemberName);
+        }
+
+        if (property.SetMethod is not { IsPublic: true })
+        {
+            throw new RuntimeException(
+                $"Cannot assign to readonly property '{member.MemberName}'.",
+                member.Line,
+                member.Column,
+                member.MemberName);
+        }
+
+        return value =>
+        {
+            try
+            {
+                property.SetValue(receiver, value.Value);
+            }
+            catch (ArgumentException)
+            {
+                throw new RuntimeException(
+                    $"Value cannot be assigned to property '{member.MemberName}'.",
+                    member.Line,
+                    member.Column,
+                    member.MemberName);
+            }
+        };
+    }
+
+    private static Action<RuntimeValue> CreateIndexSetter(object? receiver, object? indexValue, IndexExpression expression)
+    {
+        if (!TryGetInteger(indexValue, out var index))
+        {
+            throw new RuntimeException(
+                "Array index must be an int value.",
+                expression.Line,
+                expression.Column,
+                "[");
+        }
+
+        if (receiver is not IList list)
+        {
+            throw new RuntimeException(
+                "Index assignment requires an array value.",
+                expression.Line,
+                expression.Column,
+                "[");
+        }
+
+        if (index < 0 || index >= list.Count)
+        {
+            throw new RuntimeException(
+                $"Array index {index} is outside the array bounds.",
+                expression.Line,
+                expression.Column,
+                "[");
+        }
+
+        if (list.IsReadOnly)
+        {
+            throw new RuntimeException(
+                "Cannot assign to a readonly array.",
+                expression.Line,
+                expression.Column,
+                "[");
+        }
+
+        return value =>
+        {
+            try
+            {
+                list[index] = value.Value;
+            }
+            catch (ArgumentException)
+            {
+                throw new RuntimeException(
+                    "Value cannot be assigned to the array element.",
+                    expression.Line,
+                    expression.Column,
+                    "[");
+            }
+            catch (NotSupportedException)
+            {
+                throw new RuntimeException(
+                    "Cannot assign to a readonly array.",
+                    expression.Line,
+                    expression.Column,
+                    "[");
+            }
+        };
     }
 
     private void DeclareVariable(string name, RuntimeValue value, RuntimeContext context)
@@ -1610,6 +1836,7 @@ public sealed class Interpreter
         {
             VarStatement value => (value.Line, value.Column),
             AssignmentStatement value => (value.Line, value.Column),
+            TargetAssignmentStatement value => (value.Line, value.Column),
             GlobalAssignmentStatement value => (value.Line, value.Column),
             FunctionDeclarationStatement value => (value.Line, value.Column),
             ImportStatement value => (value.Line, value.Column),

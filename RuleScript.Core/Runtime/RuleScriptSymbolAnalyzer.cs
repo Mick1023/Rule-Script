@@ -104,6 +104,14 @@ internal static class RuleScriptSymbolAnalyzer
             case AssignmentStatement assignment:
                 SetVariable(scope, allVariables, assignment.Name, Infer(assignment.Value, scope, globals, hostFunctionReturnTypes));
                 break;
+            case TargetAssignmentStatement { Target: IdentifierExpression identifier } assignment:
+                SetVariable(scope, allVariables, identifier.Name, Infer(assignment.Value, scope, globals, hostFunctionReturnTypes));
+                break;
+            case TargetAssignmentStatement { Target: GlobalIdentifierExpression identifier } assignment:
+                var assignedGlobalType = Infer(assignment.Value, scope, globals, hostFunctionReturnTypes);
+                SetType(globals, identifier.Name, assignedGlobalType);
+                SetType(allVariables, identifier.Name, assignedGlobalType);
+                break;
             case GlobalAssignmentStatement assignment:
                 var globalType = Infer(assignment.Value, scope, globals, hostFunctionReturnTypes);
                 SetType(globals, assignment.Name, globalType);
