@@ -5,11 +5,13 @@ internal sealed class RuleScriptTypeInfo
     private RuleScriptTypeInfo(
         RuleScriptValueType kind,
         RuleScriptTypeInfo? elementType = null,
+        IReadOnlyList<RuleScriptTypeInfo>? elementTypes = null,
         IReadOnlyDictionary<string, RuleScriptTypeInfo>? properties = null,
         bool isNullable = false)
     {
         Kind = kind;
         ElementType = elementType;
+        ElementTypes = elementTypes;
         Properties = properties;
         IsNullable = isNullable;
     }
@@ -17,6 +19,8 @@ internal sealed class RuleScriptTypeInfo
     public RuleScriptValueType Kind { get; }
 
     public RuleScriptTypeInfo? ElementType { get; }
+
+    public IReadOnlyList<RuleScriptTypeInfo>? ElementTypes { get; }
 
     public IReadOnlyDictionary<string, RuleScriptTypeInfo>? Properties { get; }
 
@@ -38,9 +42,10 @@ internal sealed class RuleScriptTypeInfo
 
     public static RuleScriptTypeInfo CreateArray(IEnumerable<RuleScriptTypeInfo> elements)
     {
+        var elementTypes = elements.ToArray();
         RuleScriptTypeInfo? elementType = null;
 
-        foreach (var candidate in elements)
+        foreach (var candidate in elementTypes)
         {
             if (elementType is null)
             {
@@ -55,7 +60,10 @@ internal sealed class RuleScriptTypeInfo
             }
         }
 
-        return new RuleScriptTypeInfo(RuleScriptValueType.Array, elementType ?? Unknown);
+        return new RuleScriptTypeInfo(
+            RuleScriptValueType.Array,
+            elementType ?? Unknown,
+            elementTypes);
     }
 
     public static RuleScriptTypeInfo CreateObject(IEnumerable<KeyValuePair<string, RuleScriptTypeInfo>> properties)
@@ -81,7 +89,7 @@ internal sealed class RuleScriptTypeInfo
     {
         return Kind == RuleScriptValueType.Null || IsNullable
             ? this
-            : new RuleScriptTypeInfo(Kind, ElementType, Properties, isNullable: true);
+            : new RuleScriptTypeInfo(Kind, ElementType, ElementTypes, Properties, isNullable: true);
     }
 
     public RuleScriptTypeInfo WithoutNull()
@@ -89,7 +97,7 @@ internal sealed class RuleScriptTypeInfo
         return Kind == RuleScriptValueType.Null
             ? Unknown
             : IsNullable
-                ? new RuleScriptTypeInfo(Kind, ElementType, Properties)
+                ? new RuleScriptTypeInfo(Kind, ElementType, ElementTypes, Properties)
                 : this;
     }
 

@@ -7,6 +7,8 @@ public sealed record FunctionDeclarationStatement(
     int? Line = null,
     int? Column = null) : Statement
 {
+    public bool IsExported { get; init; }
+
     public IReadOnlyList<FunctionParameterDefinition> ParameterDefinitions { get; init; } =
         Parameters.Select(parameter => new FunctionParameterDefinition(parameter)).ToArray();
 }

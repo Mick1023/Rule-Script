@@ -10,7 +10,8 @@ internal static class RuleScriptSemanticAnalyzer
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
         var globals = knownVariables.ToDictionary(
@@ -18,6 +19,14 @@ internal static class RuleScriptSemanticAnalyzer
             value => RuleScriptTypeInfo.From(value.Value),
             StringComparer.Ordinal);
         var globalDeclarations = new HashSet<string>(StringComparer.Ordinal);
+        if (knownTypeInfos is not null)
+        {
+            foreach (var knownType in knownTypeInfos)
+            {
+                globals[knownType.Key] = knownType.Value;
+            }
+        }
+
         var functionDeclarations = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
@@ -88,6 +97,15 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
+        var readonlyNames = statements.OfType<ConstStatement>()
+            .Select(constant => constant.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (knownTypeInfos is not null)
+        {
+            readonlyNames.UnionWith(knownTypeInfos.Keys);
+        }
+        ReportReadonlyAssignments(statements, readonlyNames, diagnostics);
+
         return diagnostics;
     }
 
@@ -119,6 +137,34 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 scope[variable.Name] = variableType;
+                break;
+
+            case ConstStatement constant:
+                var constantType = AnalyzeExpression(constant.Initializer, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                if (!declarations.Add(constant.Name))
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.DuplicateDeclaration,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Constant '{constant.Name}' is declared more than once in the same scope.",
+                        constant.Line,
+                        constant.Column,
+                        constant.Name,
+                        constant.SourceSpan));
+                }
+                scope[constant.Name] = constantType;
+                break;
+
+            case DestructuringVarStatement destructuring:
+                AnalyzeDestructuringStatement(
+                    destructuring,
+                    scope,
+                    globals,
+                    declarations,
+                    diagnostics,
+                    availableFunctions,
+                    userFunctions,
+                    hostFunctions);
                 break;
 
             case AssignmentStatement assignment:
@@ -284,6 +330,159 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 break;
+        }
+    }
+
+    private static void AnalyzeDestructuringStatement(
+        DestructuringVarStatement statement,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ISet<string> declarations,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IReadOnlySet<string> availableFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+    {
+        var initializerType = AnalyzeExpression(
+            statement.Initializer,
+            scope,
+            globals,
+            diagnostics,
+            availableFunctions,
+            userFunctions,
+            hostFunctions);
+        var expectedType = statement.Pattern is ArrayDestructuringPattern
+            ? RuleScriptValueType.Array
+            : RuleScriptValueType.Object;
+        RequireType(
+            initializerType,
+            expectedType,
+            "Destructuring initializer",
+            statement.Line,
+            statement.Column,
+            statement.Pattern is ArrayDestructuringPattern ? "[" : "{",
+            statement.SourceSpan,
+            diagnostics);
+
+        if (statement.Pattern is ArrayDestructuringPattern
+            && statement.Initializer is ArrayExpression array
+            && array.Elements.Count < statement.Pattern.Names.Count)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.InvalidAssignment,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Array destructuring requires {statement.Pattern.Names.Count} value(s), but found {array.Elements.Count}.",
+                statement.Line,
+                statement.Column,
+                "[",
+                statement.SourceSpan));
+        }
+
+        for (var index = 0; index < statement.Pattern.Names.Count; index++)
+        {
+            var name = statement.Pattern.Names[index];
+
+            if (!declarations.Add(name))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.DuplicateDeclaration,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Variable '{name}' is declared more than once in the same scope.",
+                    statement.Line,
+                    statement.Column,
+                    name,
+                    statement.SourceSpan));
+            }
+
+            var type = statement.Pattern switch
+            {
+                ArrayDestructuringPattern when initializerType.ElementTypes is not null && index < initializerType.ElementTypes.Count
+                    => initializerType.ElementTypes[index],
+                ArrayDestructuringPattern => initializerType.ElementType ?? RuleScriptTypeInfo.Unknown,
+                ObjectDestructuringPattern when initializerType.TryGetProperty(name, out var propertyType) => propertyType,
+                _ => RuleScriptTypeInfo.Unknown
+            };
+
+            if (statement.Pattern is ObjectDestructuringPattern
+                && initializerType.Properties is not null
+                && !initializerType.Properties.ContainsKey(name))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.PropertyNotFound,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Property '{name}' was not found.",
+                    statement.Line,
+                    statement.Column,
+                    name,
+                    statement.SourceSpan));
+            }
+
+            scope[name] = type;
+        }
+    }
+
+    private static void ReportReadonlyAssignments(
+        IEnumerable<Statement> statements,
+        IReadOnlySet<string> readonlyNames,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        foreach (var statement in statements)
+        {
+            string? assignedName = statement switch
+            {
+                AssignmentStatement assignment => assignment.Name,
+                TargetAssignmentStatement { Target: IdentifierExpression identifier } => identifier.Name,
+                _ => null
+            };
+
+            if (assignedName is not null && readonlyNames.Contains(assignedName))
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.CannotAssignToReadonly,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Cannot assign to readonly constant '{assignedName}'.",
+                    statement switch
+                    {
+                        AssignmentStatement assignment => assignment.Line,
+                        TargetAssignmentStatement assignment => assignment.Line,
+                        _ => null
+                    },
+                    statement switch
+                    {
+                        AssignmentStatement assignment => assignment.Column,
+                        TargetAssignmentStatement assignment => assignment.Column,
+                        _ => null
+                    },
+                    assignedName,
+                    statement.SourceSpan));
+            }
+
+            switch (statement)
+            {
+                case FunctionDeclarationStatement function:
+                    ReportReadonlyAssignments(function.Body, readonlyNames, diagnostics);
+                    break;
+                case IfStatement conditional:
+                    ReportReadonlyAssignments(conditional.ThenBranch, readonlyNames, diagnostics);
+                    ReportReadonlyAssignments(conditional.ElseBranch, readonlyNames, diagnostics);
+                    break;
+                case SwitchStatement switchStatement:
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        ReportReadonlyAssignments(switchCase.Body, readonlyNames, diagnostics);
+                    }
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        ReportReadonlyAssignments(switchStatement.DefaultBranch, readonlyNames, diagnostics);
+                    }
+                    break;
+                case WhileStatement loop:
+                    ReportReadonlyAssignments(loop.Body, readonlyNames, diagnostics);
+                    break;
+                case ForeachStatement loop:
+                    ReportReadonlyAssignments(loop.Body, readonlyNames, diagnostics);
+                    break;
+            }
         }
     }
 
@@ -716,6 +915,8 @@ internal static class RuleScriptSemanticAnalyzer
         if (userFunctions.TryGetValue(name, out var userFunction))
         {
             ValidateArguments(name, argumentTypes, userFunction.Parameters, line, column, diagnostics);
+            var returnType = RuleScriptTypeInfo.From(userFunction.ReturnType);
+            return userFunction.IsReturnTypeNullable ? returnType.MakeNullable() : returnType;
         }
 
         if (hostFunctions.TryGetValue(name, out var hostFunction))

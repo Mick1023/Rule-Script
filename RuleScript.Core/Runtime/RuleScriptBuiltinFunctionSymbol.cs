@@ -1,21 +1,14 @@
 namespace RuleScript.Core.Runtime;
 
 /// <summary>
-/// Describes a user-defined function and its input parameters.
+/// Describes a built-in function signature available to RuleScript analysis tools.
 /// </summary>
-public sealed class RuleScriptFunctionSymbol
+public sealed class RuleScriptBuiltinFunctionSymbol
 {
-    public RuleScriptFunctionSymbol(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
-        : this(name, parameters, RuleScriptValueType.Unknown)
-    {
-    }
-
-    public RuleScriptFunctionSymbol(
+    public RuleScriptBuiltinFunctionSymbol(
         string name,
         IEnumerable<RuleScriptParameterSymbol> parameters,
-        RuleScriptValueType returnType,
-        bool isReturnTypeNullable = false,
-        bool isExported = false)
+        RuleScriptValueType returnType)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -25,8 +18,6 @@ public sealed class RuleScriptFunctionSymbol
         Name = name;
         Parameters = parameters?.ToArray() ?? throw new ArgumentNullException(nameof(parameters));
         ReturnType = returnType;
-        IsReturnTypeNullable = isReturnTypeNullable;
-        IsExported = isExported;
     }
 
     public string Name { get; }
@@ -34,8 +25,4 @@ public sealed class RuleScriptFunctionSymbol
     public IReadOnlyList<RuleScriptParameterSymbol> Parameters { get; }
 
     public RuleScriptValueType ReturnType { get; }
-
-    public bool IsReturnTypeNullable { get; }
-
-    public bool IsExported { get; }
 }

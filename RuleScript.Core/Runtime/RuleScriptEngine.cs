@@ -465,13 +465,25 @@ public sealed class RuleScriptEngine
         bool fallbackVisibleToAll = false)
     {
         var registeredHostFunctions = RegisteredHostFunctions;
+        var builtinFunctions = _builtinFunctions.Signatures;
+        var importedConstantTypes = CollectImportedConstantTypes(statements, ResolveWorkingDirectory());
         var hostReturnTypes = registeredHostFunctions
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(
                 group => group.Key,
                 group => group.Last().ReturnType,
                 StringComparer.Ordinal);
-        var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(statements, cursorLine, cursorColumn, hostReturnTypes, _knownVariables);
+        foreach (var builtinFunction in builtinFunctions)
+        {
+            hostReturnTypes.TryAdd(builtinFunction.Name, builtinFunction.ReturnType);
+        }
+        var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(
+            statements,
+            cursorLine,
+            cursorColumn,
+            hostReturnTypes,
+            _knownVariables,
+            importedConstantTypes);
         var functionSymbols = typedSymbols.Functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
         CollectImportedFunctionSignatures(
             statements,
@@ -494,12 +506,24 @@ public sealed class RuleScriptEngine
         var hostSymbols = registeredHostFunctions
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        foreach (var builtinFunction in builtinFunctions)
+        {
+            hostSymbols.TryAdd(
+                builtinFunction.Name,
+                new RuleScriptHostFunctionSymbol(
+                    builtinFunction.Name,
+                    builtinFunction.Parameters,
+                    builtinFunction.ReturnType));
+        }
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
             _knownVariables,
             availableFunctions,
             functionSymbols,
-            hostSymbols);
+            hostSymbols,
+            importedConstantTypes)
+            .Concat(typedSymbols.Diagnostics)
+            .ToArray();
 
         return new RuleScriptAnalysisResult(
             variableNames,
@@ -511,7 +535,8 @@ public sealed class RuleScriptEngine
             functionSymbols.Values,
             visibleVariables,
             registeredHostFunctions,
-            semanticDiagnostics);
+            semanticDiagnostics,
+            builtinFunctions);
     }
 
     private void CollectImportedFunctionSignatures(
@@ -544,9 +569,69 @@ public sealed class RuleScriptEngine
             foreach (var function in importedFunctions)
             {
                 var name = import.Alias is null ? function.Name : $"{import.Alias}.{function.Name}";
-                functions[name] = new RuleScriptFunctionSymbol(name, function.Parameters);
+                functions[name] = new RuleScriptFunctionSymbol(
+                    name,
+                    function.Parameters,
+                    function.ReturnType,
+                    function.IsReturnTypeNullable,
+                    function.IsExported);
             }
         }
+    }
+
+    private Dictionary<string, RuleScriptTypeInfo> CollectImportedConstantTypes(
+        IEnumerable<Statement> statements,
+        string baseDirectory)
+    {
+        var result = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
+
+        foreach (var import in statements.OfType<ImportStatement>())
+        {
+            var path = ResolveImportPath(import.Path, baseDirectory);
+            if (!ImportResolver.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var script = ImportResolver.ReadAllText(path);
+                var importedStatements = new RuleScript.Core.Parser.Parser(
+                    new RuleScript.Core.Lexer.Lexer(script).Tokenize()).Parse();
+                var hasExplicitExports = importedStatements.Any(statement =>
+                    statement is FunctionDeclarationStatement { IsExported: true }
+                    or ConstStatement { IsExported: true });
+                var publicConstants = importedStatements
+                    .OfType<ConstStatement>()
+                    .Where(constant => !hasExplicitExports || constant.IsExported)
+                    .ToArray();
+                var variableTypes = RuleScriptSymbolAnalyzer.Analyze(importedStatements, null, null).Variables
+                    .ToDictionary(variable => variable.Name, variable => variable.Type, StringComparer.Ordinal);
+                var properties = publicConstants.ToDictionary(
+                    constant => constant.Name,
+                    constant => RuleScriptTypeInfo.From(
+                        variableTypes.GetValueOrDefault(constant.Name, RuleScriptValueType.Unknown)),
+                    StringComparer.Ordinal);
+
+                if (import.Alias is not null)
+                {
+                    result[import.Alias] = RuleScriptTypeInfo.CreateObject(properties);
+                }
+                else
+                {
+                    foreach (var property in properties)
+                    {
+                        result[property.Key] = property.Value;
+                    }
+                }
+            }
+            catch (RuleScriptException)
+            {
+                // The regular analysis/import pipeline reports the actionable diagnostic.
+            }
+        }
+
+        return result;
     }
 
     private IReadOnlyList<RuleScriptFunctionSymbol> LoadImportedFunctionSignatures(
@@ -591,9 +676,30 @@ public sealed class RuleScriptEngine
                 }
             }
 
-            foreach (var declaration in statements.OfType<FunctionDeclarationStatement>())
+            var analyzedFunctions = RuleScriptSymbolAnalyzer.Analyze(statements, null, null).Functions;
+            var hasExplicitExports = statements.Any(statement =>
+                statement is FunctionDeclarationStatement { IsExported: true }
+                or ConstStatement { IsExported: true });
+            var exportedFunctionNames = statements
+                .OfType<FunctionDeclarationStatement>()
+                .Where(function => !hasExplicitExports || function.IsExported)
+                .Select(function => function.Name)
+                .ToHashSet(StringComparer.Ordinal);
+
+            if (hasExplicitExports)
             {
-                functions[declaration.Name] = CreateFunctionSymbol(declaration);
+                foreach (var name in functions.Keys.Where(name => !exportedFunctionNames.Contains(name)).ToArray())
+                {
+                    functions.Remove(name);
+                }
+            }
+
+            foreach (var function in analyzedFunctions)
+            {
+                if (exportedFunctionNames.Contains(function.Name))
+                {
+                    functions[function.Name] = function;
+                }
             }
 
             var snapshot = functions.Values.OrderBy(function => function.Name, StringComparer.Ordinal).ToArray();
@@ -1039,7 +1145,8 @@ public sealed class RuleScriptEngine
 
         if (isImported)
         {
-            var executableStatement = statements.FirstOrDefault(statement => statement is not ImportStatement and not FunctionDeclarationStatement);
+            var executableStatement = statements.FirstOrDefault(statement =>
+                statement is not ImportStatement and not FunctionDeclarationStatement and not ConstStatement);
 
             if (executableStatement is not null)
             {
@@ -1069,15 +1176,52 @@ public sealed class RuleScriptEngine
                 continue;
             }
 
-            foreach (var function in importedModule.Functions)
+            foreach (var function in importedModule.PublicFunctions)
             {
                 module.Functions[function.Key] = function.Value;
             }
+
+            foreach (var constant in importedModule.PublicConstants)
+            {
+                module.Constants[constant.Key] = constant.Value;
+            }
         }
+
+        var hasExplicitExports = statements.Any(statement =>
+            statement is FunctionDeclarationStatement { IsExported: true }
+            or ConstStatement { IsExported: true });
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
-            module.Functions[function.Name] = new UserFunction(function, module);
+            var userFunction = new UserFunction(function, module);
+            module.Functions[function.Name] = userFunction;
+            if (!hasExplicitExports || function.IsExported)
+            {
+                module.PublicFunctions[function.Name] = userFunction;
+            }
+        }
+
+        foreach (var constant in statements.OfType<ConstStatement>())
+        {
+            var moduleConstant = new ModuleConstant(constant, module);
+            module.Constants[constant.Name] = moduleConstant;
+            if (!hasExplicitExports || constant.IsExported)
+            {
+                module.PublicConstants[constant.Name] = moduleConstant;
+            }
+        }
+
+        if (!hasExplicitExports)
+        {
+            foreach (var function in module.Functions)
+            {
+                module.PublicFunctions.TryAdd(function.Key, function.Value);
+            }
+
+            foreach (var constant in module.Constants)
+            {
+                module.PublicConstants.TryAdd(constant.Key, constant.Value);
+            }
         }
 
         return module;
@@ -1095,6 +1239,15 @@ public sealed class RuleScriptEngine
             {
                 case VarStatement varStatement:
                     variables.Add(varStatement.Name);
+                    break;
+                case ConstStatement constant:
+                    variables.Add(constant.Name);
+                    break;
+                case DestructuringVarStatement destructuring:
+                    foreach (var name in destructuring.Pattern.Names)
+                    {
+                        variables.Add(name);
+                    }
                     break;
                 case AssignmentStatement assignmentStatement:
                     variables.Add(assignmentStatement.Name);
@@ -1218,8 +1371,13 @@ public sealed class RuleScriptEngine
 
             var functions = new HashSet<string>(StringComparer.Ordinal);
             var baseDirectory = Path.GetDirectoryName(path) ?? ResolveWorkingDirectory();
+            var hasExplicitExports = statements.Any(statement =>
+                statement is FunctionDeclarationStatement { IsExported: true }
+                or ConstStatement { IsExported: true });
 
-            foreach (var import in statements.OfType<ImportStatement>().Where(value => value.Alias is null))
+            foreach (var import in statements
+                .OfType<ImportStatement>()
+                .Where(value => value.Alias is null && !hasExplicitExports))
             {
                 var nestedPath = ResolveImportPath(import.Path, baseDirectory);
 
@@ -1229,7 +1387,10 @@ public sealed class RuleScriptEngine
                 }
             }
 
-            functions.UnionWith(statements.OfType<FunctionDeclarationStatement>().Select(function => function.Name));
+            functions.UnionWith(statements
+                .OfType<FunctionDeclarationStatement>()
+                .Where(function => !hasExplicitExports || function.IsExported)
+                .Select(function => function.Name));
 
             var snapshot = functions.Order(StringComparer.Ordinal).ToArray();
             moduleCache[path] = snapshot;
