@@ -13,7 +13,10 @@ internal static class RuleScriptSemanticAnalyzer
         IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
-        var globals = new Dictionary<string, RuleScriptValueType>(knownVariables, StringComparer.Ordinal);
+        var globals = knownVariables.ToDictionary(
+            value => value.Key,
+            value => RuleScriptTypeInfo.From(value.Value),
+            StringComparer.Ordinal);
         var globalDeclarations = new HashSet<string>(StringComparer.Ordinal);
         var functionDeclarations = new HashSet<string>(StringComparer.Ordinal);
 
@@ -47,7 +50,7 @@ internal static class RuleScriptSemanticAnalyzer
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
-            var locals = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
+            var locals = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
             var localDeclarations = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var parameter in function.ParameterDefinitions)
@@ -68,7 +71,7 @@ internal static class RuleScriptSemanticAnalyzer
                         function.SourceSpan));
                 }
 
-                locals[parameter.Name] = type;
+                locals[parameter.Name] = RuleScriptTypeInfo.From(type);
             }
 
             foreach (var statement in function.Body)
@@ -90,8 +93,8 @@ internal static class RuleScriptSemanticAnalyzer
 
     private static void AnalyzeStatement(
         Statement statement,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
@@ -176,12 +179,12 @@ internal static class RuleScriptSemanticAnalyzer
                                 diagnostics);
                         }
 
-                        if (IsKnown(switchType) && IsKnown(labelType) && switchType != labelType)
+                        if (IsKnown(switchType) && IsKnown(labelType) && switchType.Kind != labelType.Kind)
                         {
                             diagnostics.Add(Create(
                                 RuleScriptDiagnosticCodes.TypeMismatch,
                                 RuleScriptDiagnosticSeverity.Error,
-                                $"Switch value has type {RuleScriptTypeFacts.ToDisplayName(switchType)}, but case label has type {RuleScriptTypeFacts.ToDisplayName(labelType)}.",
+                                $"Switch value has type {RuleScriptTypeFacts.ToDisplayName(switchType.Kind)}, but case label has type {RuleScriptTypeFacts.ToDisplayName(labelType.Kind)}.",
                                 label.Line,
                                 label.Column,
                                 label.TokenText));
@@ -241,27 +244,25 @@ internal static class RuleScriptSemanticAnalyzer
             case ForeachStatement loop:
                 var iterableType = AnalyzeExpression(loop.Iterable, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
 
-                if (IsKnown(iterableType) && iterableType is not RuleScriptValueType.Array and not RuleScriptValueType.String)
+                if (IsKnown(iterableType) && iterableType.Kind is not RuleScriptValueType.Array and not RuleScriptValueType.String)
                 {
                     diagnostics.Add(Create(
                         RuleScriptDiagnosticCodes.TypeMismatch,
                         RuleScriptDiagnosticSeverity.Error,
-                        $"Foreach expects an array or string, but found {RuleScriptTypeFacts.ToDisplayName(iterableType)}.",
+                        $"Foreach expects an array or string, but found {RuleScriptTypeFacts.ToDisplayName(iterableType.Kind)}.",
                         loop.Line,
                         loop.Column,
                         "foreach",
                         loop.SourceSpan));
                 }
 
-                RuleScriptValueType? previous = scope.TryGetValue(loop.VariableName, out var previousType)
-                    ? previousType
-                    : null;
-                scope[loop.VariableName] = RuleScriptValueType.Unknown;
+                var hadPrevious = scope.TryGetValue(loop.VariableName, out var previousType);
+                scope[loop.VariableName] = iterableType.ElementType ?? RuleScriptTypeInfo.Unknown;
                 AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
 
-                if (previous.HasValue)
+                if (hadPrevious)
                 {
-                    scope[loop.VariableName] = previous.Value;
+                    scope[loop.VariableName] = previousType!;
                 }
                 else
                 {
@@ -274,8 +275,8 @@ internal static class RuleScriptSemanticAnalyzer
 
     private static void AnalyzeChildren(
         IEnumerable<Statement> statements,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
@@ -288,10 +289,10 @@ internal static class RuleScriptSemanticAnalyzer
         }
     }
 
-    private static RuleScriptValueType AnalyzeExpression(
+    private static RuleScriptTypeInfo AnalyzeExpression(
         Expression? expression,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
@@ -300,16 +301,32 @@ internal static class RuleScriptSemanticAnalyzer
         switch (expression)
         {
             case null:
-                return RuleScriptValueType.Null;
+                return RuleScriptTypeInfo.From(RuleScriptValueType.Null);
             case LiteralExpression literal:
-                return RuleScriptTypeFacts.FromValue(literal.Value);
+                return RuleScriptTypeInfo.FromValue(literal.Value);
             case ArrayExpression array:
-                foreach (var element in array.Elements)
+                return RuleScriptTypeInfo.CreateArray(array.Elements.Select(element =>
+                    AnalyzeExpression(element, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions)));
+            case ObjectLiteralExpression objectLiteral:
+                var properties = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
+
+                foreach (var property in objectLiteral.Properties)
                 {
-                    AnalyzeExpression(element, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                    var inferredPropertyType = AnalyzeExpression(property.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                    if (!properties.TryAdd(property.Name, inferredPropertyType))
+                    {
+                        diagnostics.Add(Create(
+                            RuleScriptDiagnosticCodes.DuplicateObjectProperty,
+                            RuleScriptDiagnosticSeverity.Error,
+                            $"Object property '{property.Name}' is declared more than once.",
+                            property.Line,
+                            property.Column,
+                            property.Name));
+                    }
                 }
 
-                return RuleScriptValueType.Array;
+                return RuleScriptTypeInfo.CreateObject(properties);
             case IdentifierExpression identifier:
                 if (scope.TryGetValue(identifier.Name, out var localType) || globals.TryGetValue(identifier.Name, out localType))
                 {
@@ -323,7 +340,7 @@ internal static class RuleScriptSemanticAnalyzer
                     identifier.Line,
                     identifier.Column,
                     identifier.Name));
-                return RuleScriptValueType.Unknown;
+                return RuleScriptTypeInfo.Unknown;
             case GlobalIdentifierExpression identifier:
                 if (globals.TryGetValue(identifier.Name, out var globalType))
                 {
@@ -337,12 +354,12 @@ internal static class RuleScriptSemanticAnalyzer
                     identifier.Line,
                     identifier.Column,
                     identifier.Name));
-                return RuleScriptValueType.Unknown;
+                return RuleScriptTypeInfo.Unknown;
             case UnaryExpression unary:
                 var operandType = AnalyzeExpression(unary.Operand, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
                 var expectedUnaryType = unary.Operator == TokenType.Bang ? RuleScriptValueType.Boolean : RuleScriptValueType.Number;
                 RequireType(operandType, expectedUnaryType, $"Operator '{unary.TokenText}'", unary.Line, unary.Column, unary.TokenText, null, diagnostics);
-                return expectedUnaryType;
+                return RuleScriptTypeInfo.From(expectedUnaryType);
             case BinaryExpression binary:
                 return AnalyzeBinary(binary, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
             case FunctionCallExpression call:
@@ -351,20 +368,37 @@ internal static class RuleScriptSemanticAnalyzer
                 return AnalyzeFunctionCall($"{call.ModuleName}.{call.FunctionName}", call.Arguments, call.Line, call.Column, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
             case IndexExpression index:
                 AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-                AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-                return RuleScriptValueType.Unknown;
+                return AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions).ElementType
+                    ?? RuleScriptTypeInfo.Unknown;
             case MemberAccessExpression member:
-                AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-                return RuleScriptValueType.Unknown;
+                var targetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                if (targetType.TryGetProperty(member.MemberName, out var propertyType))
+                {
+                    return propertyType;
+                }
+
+                if (targetType.Properties is not null)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.PropertyNotFound,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Property '{member.MemberName}' was not found.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName));
+                }
+
+                return RuleScriptTypeInfo.Unknown;
             default:
-                return RuleScriptValueType.Unknown;
+                return RuleScriptTypeInfo.Unknown;
         }
     }
 
-    private static RuleScriptValueType AnalyzeBinary(
+    private static RuleScriptTypeInfo AnalyzeBinary(
         BinaryExpression binary,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
@@ -377,7 +411,7 @@ internal static class RuleScriptSemanticAnalyzer
         {
             RequireType(left, RuleScriptValueType.Boolean, $"Operator '{binary.TokenText}'", binary.Line, binary.Column, binary.TokenText, null, diagnostics);
             RequireType(right, RuleScriptValueType.Boolean, $"Operator '{binary.TokenText}'", binary.Line, binary.Column, binary.TokenText, null, diagnostics);
-            return RuleScriptValueType.Boolean;
+            return RuleScriptTypeInfo.From(RuleScriptValueType.Boolean);
         }
 
         if (binary.Operator is TokenType.Minus or TokenType.Star or TokenType.Slash or TokenType.Percent
@@ -390,12 +424,12 @@ internal static class RuleScriptSemanticAnalyzer
         if (binary.Operator is TokenType.EqualEqual or TokenType.BangEqual
             or TokenType.Greater or TokenType.GreaterOrEqual or TokenType.Less or TokenType.LessOrEqual)
         {
-            return RuleScriptValueType.Boolean;
+            return RuleScriptTypeInfo.From(RuleScriptValueType.Boolean);
         }
 
-        if (binary.Operator == TokenType.Plus && (left == RuleScriptValueType.String || right == RuleScriptValueType.String))
+        if (binary.Operator == TokenType.Plus && (left.Kind == RuleScriptValueType.String || right.Kind == RuleScriptValueType.String))
         {
-            return RuleScriptValueType.String;
+            return RuleScriptTypeInfo.From(RuleScriptValueType.String);
         }
 
         if (binary.Operator == TokenType.Plus)
@@ -405,17 +439,17 @@ internal static class RuleScriptSemanticAnalyzer
         }
 
         return binary.Operator is TokenType.Plus or TokenType.Minus or TokenType.Star or TokenType.Slash or TokenType.Percent
-            ? RuleScriptValueType.Number
-            : RuleScriptValueType.Unknown;
+            ? RuleScriptTypeInfo.From(RuleScriptValueType.Number)
+            : RuleScriptTypeInfo.Unknown;
     }
 
-    private static RuleScriptValueType AnalyzeFunctionCall(
+    private static RuleScriptTypeInfo AnalyzeFunctionCall(
         string name,
         IReadOnlyList<Expression> arguments,
         int? line,
         int? column,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
@@ -434,7 +468,7 @@ internal static class RuleScriptSemanticAnalyzer
                 line,
                 column,
                 name));
-            return RuleScriptValueType.Unknown;
+            return RuleScriptTypeInfo.Unknown;
         }
 
         if (userFunctions.TryGetValue(name, out var userFunction))
@@ -445,15 +479,15 @@ internal static class RuleScriptSemanticAnalyzer
         if (hostFunctions.TryGetValue(name, out var hostFunction))
         {
             ValidateArguments(name, argumentTypes, hostFunction.Parameters, line, column, diagnostics);
-            return hostFunction.ReturnType;
+            return RuleScriptTypeInfo.From(hostFunction.ReturnType);
         }
 
-        return RuleScriptValueType.Unknown;
+        return RuleScriptTypeInfo.Unknown;
     }
 
     private static void ValidateArguments(
         string name,
-        IReadOnlyList<RuleScriptValueType> arguments,
+        IReadOnlyList<RuleScriptTypeInfo> arguments,
         IReadOnlyList<RuleScriptParameterSymbol> parameters,
         int? line,
         int? column,
@@ -466,12 +500,12 @@ internal static class RuleScriptSemanticAnalyzer
             var expected = parameters[index].Type;
             var actual = arguments[index];
 
-            if (IsKnown(expected) && IsKnown(actual) && expected != actual && expected != RuleScriptValueType.Any)
+            if (IsKnown(expected) && IsKnown(actual) && expected != actual.Kind && expected != RuleScriptValueType.Any)
             {
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.TypeMismatch,
                     RuleScriptDiagnosticSeverity.Error,
-                    $"Function '{name}' argument '{parameters[index].Name}' expects {RuleScriptTypeFacts.ToDisplayName(expected)}, but found {RuleScriptTypeFacts.ToDisplayName(actual)}.",
+                    $"Function '{name}' argument '{parameters[index].Name}' expects {RuleScriptTypeFacts.ToDisplayName(expected)}, but found {RuleScriptTypeFacts.ToDisplayName(actual.Kind)}.",
                     line,
                     column,
                     name));
@@ -480,7 +514,7 @@ internal static class RuleScriptSemanticAnalyzer
     }
 
     private static void RequireType(
-        RuleScriptValueType actual,
+        RuleScriptTypeInfo actual,
         RuleScriptValueType expected,
         string subject,
         int? line,
@@ -489,7 +523,7 @@ internal static class RuleScriptSemanticAnalyzer
         SourceSpan? span,
         ICollection<RuleScriptDiagnostic> diagnostics)
     {
-        if (!IsKnown(actual) || actual == expected || actual == RuleScriptValueType.Any)
+        if (!IsKnown(actual) || actual.Kind == expected || actual.Kind == RuleScriptValueType.Any)
         {
             return;
         }
@@ -497,7 +531,7 @@ internal static class RuleScriptSemanticAnalyzer
         diagnostics.Add(Create(
             RuleScriptDiagnosticCodes.TypeMismatch,
             RuleScriptDiagnosticSeverity.Error,
-            $"{subject} expects {RuleScriptTypeFacts.ToDisplayName(expected)}, but found {RuleScriptTypeFacts.ToDisplayName(actual)}.",
+            $"{subject} expects {RuleScriptTypeFacts.ToDisplayName(expected)}, but found {RuleScriptTypeFacts.ToDisplayName(actual.Kind)}.",
             line,
             column,
             tokenText,
@@ -506,8 +540,8 @@ internal static class RuleScriptSemanticAnalyzer
 
     private static void ReportAssignmentMismatch(
         string name,
-        RuleScriptValueType assignedType,
-        IDictionary<string, RuleScriptValueType> values,
+        RuleScriptTypeInfo assignedType,
+        IDictionary<string, RuleScriptTypeInfo> values,
         int? line,
         int? column,
         SourceSpan? span,
@@ -516,7 +550,7 @@ internal static class RuleScriptSemanticAnalyzer
         if (!values.TryGetValue(name, out var existingType)
             || !IsKnown(existingType)
             || !IsKnown(assignedType)
-            || existingType == assignedType)
+            || existingType.Kind == assignedType.Kind)
         {
             return;
         }
@@ -524,12 +558,14 @@ internal static class RuleScriptSemanticAnalyzer
         diagnostics.Add(Create(
             RuleScriptDiagnosticCodes.TypeMismatch,
             RuleScriptDiagnosticSeverity.Error,
-            $"Variable '{name}' has type {RuleScriptTypeFacts.ToDisplayName(existingType)}, but the assigned value has type {RuleScriptTypeFacts.ToDisplayName(assignedType)}.",
+            $"Variable '{name}' has type {RuleScriptTypeFacts.ToDisplayName(existingType.Kind)}, but the assigned value has type {RuleScriptTypeFacts.ToDisplayName(assignedType.Kind)}.",
             line,
             column,
             name,
             span));
     }
+
+    private static bool IsKnown(RuleScriptTypeInfo type) => IsKnown(type.Kind);
 
     private static bool IsKnown(RuleScriptValueType type) =>
         type is not RuleScriptValueType.Unknown and not RuleScriptValueType.Any;

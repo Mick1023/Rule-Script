@@ -851,6 +851,7 @@ public sealed class Interpreter
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCall(moduleFunctionCall, context),
             ArrayExpression array => EvaluateArray(array, context),
+            ObjectLiteralExpression objectLiteral => EvaluateObjectLiteral(objectLiteral, context),
             IndexExpression index => EvaluateIndex(index, context),
             MemberAccessExpression memberAccess => EvaluateMemberAccess(memberAccess, context),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
@@ -871,6 +872,7 @@ public sealed class Interpreter
             FunctionCallExpression functionCall => EvaluateFunctionCallAsync(functionCall, context, cancellationToken),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCallAsync(moduleFunctionCall, context, cancellationToken),
             ArrayExpression array => EvaluateArrayAsync(array, context, cancellationToken),
+            ObjectLiteralExpression objectLiteral => EvaluateObjectLiteralAsync(objectLiteral, context, cancellationToken),
             IndexExpression index => EvaluateIndexAsync(index, context, cancellationToken),
             MemberAccessExpression memberAccess => EvaluateMemberAccessAsync(memberAccess, context, cancellationToken),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
@@ -893,6 +895,52 @@ public sealed class Interpreter
         foreach (var element in expression.Elements)
         {
             values.Add((await EvaluateAsync(element, context, cancellationToken).ConfigureAwait(false)).Value);
+        }
+
+        return new RuntimeValue(values);
+    }
+
+    private RuntimeValue EvaluateObjectLiteral(ObjectLiteralExpression expression, RuntimeContext context)
+    {
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var property in expression.Properties)
+        {
+            if (values.ContainsKey(property.Name))
+            {
+                throw new RuntimeException(
+                    $"Object property '{property.Name}' is declared more than once.",
+                    property.Line,
+                    property.Column,
+                    property.Name);
+            }
+
+            values.Add(property.Name, Evaluate(property.Value, context).Value);
+        }
+
+        return new RuntimeValue(values);
+    }
+
+    private async Task<RuntimeValue> EvaluateObjectLiteralAsync(
+        ObjectLiteralExpression expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var property in expression.Properties)
+        {
+            if (values.ContainsKey(property.Name))
+            {
+                throw new RuntimeException(
+                    $"Object property '{property.Name}' is declared more than once.",
+                    property.Line,
+                    property.Column,
+                    property.Name);
+            }
+
+            var value = await EvaluateAsync(property.Value, context, cancellationToken).ConfigureAwait(false);
+            values.Add(property.Name, value.Value);
         }
 
         return new RuntimeValue(values);
