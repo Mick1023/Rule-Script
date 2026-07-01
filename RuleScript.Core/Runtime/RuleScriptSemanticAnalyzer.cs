@@ -127,6 +127,20 @@ internal static class RuleScriptSemanticAnalyzer
                 scope[assignment.Name] = assignedType;
                 break;
 
+            case TargetAssignmentStatement assignment:
+                var assignedTargetType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeAssignmentTarget(
+                    assignment.Target,
+                    assignedTargetType,
+                    scope,
+                    globals,
+                    diagnostics,
+                    availableFunctions,
+                    userFunctions,
+                    hostFunctions,
+                    assignment.SourceSpan);
+                break;
+
             case GlobalAssignmentStatement assignment:
                 var assignedGlobalType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
                 ReportAssignmentMismatch(assignment.Name, assignedGlobalType, globals, assignment.Line, assignment.Column, assignment.SourceSpan, diagnostics);
@@ -273,6 +287,122 @@ internal static class RuleScriptSemanticAnalyzer
         }
     }
 
+    private static void AnalyzeAssignmentTarget(
+        Expression target,
+        RuleScriptTypeInfo assignedType,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IReadOnlySet<string> availableFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        SourceSpan? span)
+    {
+        switch (target)
+        {
+            case IdentifierExpression identifier:
+                ReportAssignmentMismatch(identifier.Name, assignedType, scope, identifier.Line, identifier.Column, span, diagnostics);
+                scope[identifier.Name] = assignedType;
+                return;
+            case GlobalIdentifierExpression identifier:
+                ReportAssignmentMismatch(identifier.Name, assignedType, globals, identifier.Line, identifier.Column, span, diagnostics);
+                globals[identifier.Name] = assignedType;
+                return;
+            case MemberAccessExpression member:
+                var receiverType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                if (receiverType.TryGetProperty(member.MemberName, out var propertyType))
+                {
+                    ReportTargetTypeMismatch(
+                        $"Property '{member.MemberName}'",
+                        propertyType,
+                        assignedType,
+                        member.Line,
+                        member.Column,
+                        member.MemberName,
+                        diagnostics);
+                    return;
+                }
+
+                if (receiverType.Properties is not null)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.PropertyNotFound,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Property '{member.MemberName}' was not found.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName,
+                        span));
+                    return;
+                }
+
+                if (IsKnown(receiverType) && receiverType.Kind != RuleScriptValueType.Object)
+                {
+                    ReportInvalidAssignment(
+                        $"Cannot assign property '{member.MemberName}' on {RuleScriptTypeFacts.ToDisplayName(receiverType.Kind)}.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName,
+                        span,
+                        diagnostics);
+                }
+
+                return;
+            case IndexExpression index:
+                var receiver = AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var indexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                if (IsKnown(indexType) && indexType.Kind != RuleScriptValueType.Number)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.IndexTypeError,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Array index must be a number, but found {RuleScriptTypeFacts.ToDisplayName(indexType.Kind)}.",
+                        index.Line,
+                        index.Column,
+                        "[",
+                        span));
+                }
+
+                if (IsKnown(receiver) && receiver.Kind != RuleScriptValueType.Array)
+                {
+                    ReportInvalidAssignment(
+                        $"Index assignment requires an array, but found {RuleScriptTypeFacts.ToDisplayName(receiver.Kind)}.",
+                        index.Line,
+                        index.Column,
+                        "[",
+                        span,
+                        diagnostics);
+                    return;
+                }
+
+                if (receiver.ElementType is not null)
+                {
+                    ReportTargetTypeMismatch(
+                        "Array element",
+                        receiver.ElementType,
+                        assignedType,
+                        index.Line,
+                        index.Column,
+                        "[",
+                        diagnostics);
+                }
+
+                return;
+            default:
+                AnalyzeExpression(target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                ReportInvalidAssignment(
+                    $"Expression '{target.GetType().Name}' is not assignable.",
+                    span?.StartLine,
+                    span?.StartColumn,
+                    null,
+                    span,
+                    diagnostics);
+                return;
+        }
+    }
+
     private static void AnalyzeChildren(
         IEnumerable<Statement> statements,
         IDictionary<string, RuleScriptTypeInfo> scope,
@@ -367,7 +497,19 @@ internal static class RuleScriptSemanticAnalyzer
             case ModuleFunctionCallExpression call:
                 return AnalyzeFunctionCall($"{call.ModuleName}.{call.FunctionName}", call.Arguments, call.Line, call.Column, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
             case IndexExpression index:
-                AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var analyzedIndexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                if (IsKnown(analyzedIndexType) && analyzedIndexType.Kind != RuleScriptValueType.Number)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.IndexTypeError,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Array index must be a number, but found {RuleScriptTypeFacts.ToDisplayName(analyzedIndexType.Kind)}.",
+                        index.Line,
+                        index.Column,
+                        "["));
+                }
+
                 return AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions).ElementType
                     ?? RuleScriptTypeInfo.Unknown;
             case MemberAccessExpression member:
@@ -562,6 +704,49 @@ internal static class RuleScriptSemanticAnalyzer
             line,
             column,
             name,
+            span));
+    }
+
+    private static void ReportTargetTypeMismatch(
+        string targetName,
+        RuleScriptTypeInfo expectedType,
+        RuleScriptTypeInfo assignedType,
+        int? line,
+        int? column,
+        string? tokenText,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        if (!IsKnown(expectedType)
+            || !IsKnown(assignedType)
+            || expectedType.Kind == assignedType.Kind)
+        {
+            return;
+        }
+
+        diagnostics.Add(Create(
+            RuleScriptDiagnosticCodes.InvalidAssignment,
+            RuleScriptDiagnosticSeverity.Error,
+            $"{targetName} has type {RuleScriptTypeFacts.ToDisplayName(expectedType.Kind)}, but the assigned value has type {RuleScriptTypeFacts.ToDisplayName(assignedType.Kind)}.",
+            line,
+            column,
+            tokenText));
+    }
+
+    private static void ReportInvalidAssignment(
+        string message,
+        int? line,
+        int? column,
+        string? tokenText,
+        SourceSpan? span,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        diagnostics.Add(Create(
+            RuleScriptDiagnosticCodes.InvalidAssignment,
+            RuleScriptDiagnosticSeverity.Error,
+            message,
+            line,
+            column,
+            tokenText,
             span));
     }
 

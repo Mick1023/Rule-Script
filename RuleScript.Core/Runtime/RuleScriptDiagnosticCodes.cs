@@ -14,5 +14,8 @@ public static class RuleScriptDiagnosticCodes
     public const string DuplicateCase = "RS2006";
     public const string MissingDefaultBranch = "RS2007";
     public const string PropertyNotFound = "RS2008";
+    public const string InvalidAssignment = "RS2009";
+    public const string CannotAssignToReadonly = "RS2010";
+    public const string IndexTypeError = "RS2011";
     public const string DuplicateObjectProperty = "RS2014";
 }
