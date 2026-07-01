@@ -17,5 +17,7 @@ public static class RuleScriptDiagnosticCodes
     public const string InvalidAssignment = "RS2009";
     public const string CannotAssignToReadonly = "RS2010";
     public const string IndexTypeError = "RS2011";
+    public const string NullAccess = "RS2012";
+    public const string InvalidNullCoalescing = "RS2013";
     public const string DuplicateObjectProperty = "RS2014";
 }

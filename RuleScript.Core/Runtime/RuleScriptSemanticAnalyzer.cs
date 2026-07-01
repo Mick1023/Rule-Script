@@ -492,6 +492,8 @@ internal static class RuleScriptSemanticAnalyzer
                 return RuleScriptTypeInfo.From(expectedUnaryType);
             case BinaryExpression binary:
                 return AnalyzeBinary(binary, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+            case NullCoalescingExpression coalescing:
+                return AnalyzeNullCoalescing(coalescing, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
             case FunctionCallExpression call:
                 return AnalyzeFunctionCall(call.Name, call.Arguments, call.Line, call.Column, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
             case ModuleFunctionCallExpression call:
@@ -515,6 +517,17 @@ internal static class RuleScriptSemanticAnalyzer
             case MemberAccessExpression member:
                 var targetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
 
+                if (targetType.Kind == RuleScriptValueType.Null || targetType.IsNullable)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.NullAccess,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Cannot access property '{member.MemberName}' on {targetType.ToDisplayName()}.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName));
+                }
+
                 if (targetType.TryGetProperty(member.MemberName, out var propertyType))
                 {
                     return propertyType;
@@ -532,9 +545,96 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 return RuleScriptTypeInfo.Unknown;
+            case ConditionalMemberAccessExpression member:
+                var conditionalTargetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+                if (conditionalTargetType.Kind == RuleScriptValueType.Null)
+                {
+                    return conditionalTargetType;
+                }
+
+                if (conditionalTargetType.TryGetProperty(member.MemberName, out var conditionalPropertyType))
+                {
+                    return conditionalPropertyType.MakeNullable();
+                }
+
+                if (conditionalTargetType.Properties is not null
+                    || (IsKnown(conditionalTargetType) && conditionalTargetType.Kind != RuleScriptValueType.Object))
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.PropertyNotFound,
+                        RuleScriptDiagnosticSeverity.Error,
+                        $"Property '{member.MemberName}' was not found.",
+                        member.Line,
+                        member.Column,
+                        member.MemberName));
+                }
+
+                return RuleScriptTypeInfo.Unknown.MakeNullable();
             default:
                 return RuleScriptTypeInfo.Unknown;
         }
+    }
+
+    private static RuleScriptTypeInfo AnalyzeNullCoalescing(
+        NullCoalescingExpression expression,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IReadOnlySet<string> availableFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+    {
+        var left = AnalyzeExpression(expression.Left, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+        var right = AnalyzeExpression(expression.Right, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+
+        if (IsKnown(left) && !left.CanBeNull)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.InvalidNullCoalescing,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Left operand of '??' has non-nullable type {left.ToDisplayName()}.",
+                expression.Line,
+                expression.Column,
+                "??"));
+            return left;
+        }
+
+        if (left.Kind == RuleScriptValueType.Null)
+        {
+            return right;
+        }
+
+        var nonNullLeft = left.WithoutNull();
+
+        if (IsKnown(nonNullLeft)
+            && IsKnown(right)
+            && right.Kind != RuleScriptValueType.Null
+            && nonNullLeft.Kind != right.Kind)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.InvalidNullCoalescing,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Operator '??' cannot combine {left.ToDisplayName()} and {right.ToDisplayName()}.",
+                expression.Line,
+                expression.Column,
+                "??"));
+            return RuleScriptTypeInfo.Unknown;
+        }
+
+        if (nonNullLeft.Kind == RuleScriptValueType.Unknown)
+        {
+            return right;
+        }
+
+        if (right.Kind == RuleScriptValueType.Null)
+        {
+            return nonNullLeft.MakeNullable();
+        }
+
+        return nonNullLeft.Kind == right.Kind
+            ? right.CanBeNull ? nonNullLeft.MakeNullable() : nonNullLeft
+            : RuleScriptTypeInfo.Unknown;
     }
 
     private static RuleScriptTypeInfo AnalyzeBinary(

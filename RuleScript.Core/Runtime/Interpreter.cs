@@ -1074,12 +1074,14 @@ public sealed class Interpreter
             GlobalIdentifierExpression globalIdentifier => EvaluateGlobalIdentifier(globalIdentifier, context),
             UnaryExpression unary => EvaluateUnary(unary, context),
             BinaryExpression binary => EvaluateBinary(binary, context),
+            NullCoalescingExpression coalescing => EvaluateNullCoalescing(coalescing, context),
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCall(moduleFunctionCall, context),
             ArrayExpression array => EvaluateArray(array, context),
             ObjectLiteralExpression objectLiteral => EvaluateObjectLiteral(objectLiteral, context),
             IndexExpression index => EvaluateIndex(index, context),
             MemberAccessExpression memberAccess => EvaluateMemberAccess(memberAccess, context),
+            ConditionalMemberAccessExpression memberAccess => EvaluateConditionalMemberAccess(memberAccess, context),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
         };
     }
@@ -1095,12 +1097,14 @@ public sealed class Interpreter
             GlobalIdentifierExpression globalIdentifier => Task.FromResult(EvaluateGlobalIdentifier(globalIdentifier, context)),
             UnaryExpression unary => EvaluateUnaryAsync(unary, context, cancellationToken),
             BinaryExpression binary => EvaluateBinaryAsync(binary, context, cancellationToken),
+            NullCoalescingExpression coalescing => EvaluateNullCoalescingAsync(coalescing, context, cancellationToken),
             FunctionCallExpression functionCall => EvaluateFunctionCallAsync(functionCall, context, cancellationToken),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCallAsync(moduleFunctionCall, context, cancellationToken),
             ArrayExpression array => EvaluateArrayAsync(array, context, cancellationToken),
             ObjectLiteralExpression objectLiteral => EvaluateObjectLiteralAsync(objectLiteral, context, cancellationToken),
             IndexExpression index => EvaluateIndexAsync(index, context, cancellationToken),
             MemberAccessExpression memberAccess => EvaluateMemberAccessAsync(memberAccess, context, cancellationToken),
+            ConditionalMemberAccessExpression memberAccess => EvaluateConditionalMemberAccessAsync(memberAccess, context, cancellationToken),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
         };
     }
@@ -1221,52 +1225,50 @@ public sealed class Interpreter
     private RuntimeValue EvaluateMemberAccess(MemberAccessExpression expression, RuntimeContext context)
     {
         var target = Evaluate(expression.Target, context).Value;
-
-        if (target is null)
-        {
-            throw new RuntimeException($"Cannot access property '{expression.MemberName}' on null.", expression.Line, expression.Column, expression.MemberName);
-        }
-
-        if (target is IDictionary<string, object?> dictionary)
-        {
-            if (dictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
-            {
-                return RuntimeValue.FromObject(dictionaryValue);
-            }
-        }
-
-        if (target is IReadOnlyDictionary<string, object?> readOnlyDictionary)
-        {
-            if (readOnlyDictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
-            {
-                return RuntimeValue.FromObject(dictionaryValue);
-            }
-        }
-
-        var property = target.GetType().GetProperty(
-            expression.MemberName,
-            BindingFlags.Instance | BindingFlags.Public);
-
-        if (property is not null)
-        {
-            return RuntimeValue.FromObject(property.GetValue(target));
-        }
-
-        throw new RuntimeException($"Property '{expression.MemberName}' was not found.", expression.Line, expression.Column, expression.MemberName);
+        return ReadMember(target, expression.MemberName, expression.Line, expression.Column);
     }
 
     private async Task<RuntimeValue> EvaluateMemberAccessAsync(MemberAccessExpression expression, RuntimeContext context, CancellationToken cancellationToken)
     {
         var target = (await EvaluateAsync(expression.Target, context, cancellationToken).ConfigureAwait(false)).Value;
+        return ReadMember(target, expression.MemberName, expression.Line, expression.Column);
+    }
 
+    private RuntimeValue EvaluateConditionalMemberAccess(
+        ConditionalMemberAccessExpression expression,
+        RuntimeContext context)
+    {
+        var target = Evaluate(expression.Target, context).Value;
+        return target is null
+            ? RuntimeValue.Null
+            : ReadMember(target, expression.MemberName, expression.Line, expression.Column);
+    }
+
+    private async Task<RuntimeValue> EvaluateConditionalMemberAccessAsync(
+        ConditionalMemberAccessExpression expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var target = (await EvaluateAsync(expression.Target, context, cancellationToken).ConfigureAwait(false)).Value;
+        return target is null
+            ? RuntimeValue.Null
+            : ReadMember(target, expression.MemberName, expression.Line, expression.Column);
+    }
+
+    private static RuntimeValue ReadMember(
+        object? target,
+        string memberName,
+        int? line,
+        int? column)
+    {
         if (target is null)
         {
-            throw new RuntimeException($"Cannot access property '{expression.MemberName}' on null.", expression.Line, expression.Column, expression.MemberName);
+            throw new RuntimeException($"Cannot access property '{memberName}' on null.", line, column, memberName);
         }
 
         if (target is IDictionary<string, object?> dictionary)
         {
-            if (dictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
+            if (dictionary.TryGetValue(memberName, out var dictionaryValue))
             {
                 return RuntimeValue.FromObject(dictionaryValue);
             }
@@ -1274,14 +1276,14 @@ public sealed class Interpreter
 
         if (target is IReadOnlyDictionary<string, object?> readOnlyDictionary)
         {
-            if (readOnlyDictionary.TryGetValue(expression.MemberName, out var dictionaryValue))
+            if (readOnlyDictionary.TryGetValue(memberName, out var dictionaryValue))
             {
                 return RuntimeValue.FromObject(dictionaryValue);
             }
         }
 
         var property = target.GetType().GetProperty(
-            expression.MemberName,
+            memberName,
             BindingFlags.Instance | BindingFlags.Public);
 
         if (property is not null)
@@ -1289,7 +1291,24 @@ public sealed class Interpreter
             return RuntimeValue.FromObject(property.GetValue(target));
         }
 
-        throw new RuntimeException($"Property '{expression.MemberName}' was not found.", expression.Line, expression.Column, expression.MemberName);
+        throw new RuntimeException($"Property '{memberName}' was not found.", line, column, memberName);
+    }
+
+    private RuntimeValue EvaluateNullCoalescing(NullCoalescingExpression expression, RuntimeContext context)
+    {
+        var left = Evaluate(expression.Left, context);
+        return left.Value is null ? Evaluate(expression.Right, context) : left;
+    }
+
+    private async Task<RuntimeValue> EvaluateNullCoalescingAsync(
+        NullCoalescingExpression expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var left = await EvaluateAsync(expression.Left, context, cancellationToken).ConfigureAwait(false);
+        return left.Value is null
+            ? await EvaluateAsync(expression.Right, context, cancellationToken).ConfigureAwait(false)
+            : left;
     }
 
     private RuntimeValue EvaluateUnary(UnaryExpression expression, RuntimeContext context)
@@ -1854,6 +1873,8 @@ public sealed class Interpreter
             ExpressionStatement { Expression: BinaryExpression value } => (value.Line, value.Column),
             ExpressionStatement { Expression: IndexExpression value } => (value.Line, value.Column),
             ExpressionStatement { Expression: MemberAccessExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: ConditionalMemberAccessExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: NullCoalescingExpression value } => (value.Line, value.Column),
             _ => (null, null)
         };
 
