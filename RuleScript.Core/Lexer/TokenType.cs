@@ -53,6 +53,8 @@ public enum TokenType
 
     Assign,
     Bang,
+    QuestionQuestion,
+    QuestionDot,
 
     LeftParen,
     RightParen,

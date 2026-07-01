@@ -5,11 +5,13 @@ internal sealed class RuleScriptTypeInfo
     private RuleScriptTypeInfo(
         RuleScriptValueType kind,
         RuleScriptTypeInfo? elementType = null,
-        IReadOnlyDictionary<string, RuleScriptTypeInfo>? properties = null)
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? properties = null,
+        bool isNullable = false)
     {
         Kind = kind;
         ElementType = elementType;
         Properties = properties;
+        IsNullable = isNullable;
     }
 
     public RuleScriptValueType Kind { get; }
@@ -17,6 +19,10 @@ internal sealed class RuleScriptTypeInfo
     public RuleScriptTypeInfo? ElementType { get; }
 
     public IReadOnlyDictionary<string, RuleScriptTypeInfo>? Properties { get; }
+
+    public bool IsNullable { get; }
+
+    public bool CanBeNull => Kind is RuleScriptValueType.Null or RuleScriptValueType.Unknown or RuleScriptValueType.Any || IsNullable;
 
     public static RuleScriptTypeInfo Unknown { get; } = new(RuleScriptValueType.Unknown);
 
@@ -69,5 +75,27 @@ internal sealed class RuleScriptTypeInfo
 
         propertyType = Unknown;
         return false;
+    }
+
+    public RuleScriptTypeInfo MakeNullable()
+    {
+        return Kind == RuleScriptValueType.Null || IsNullable
+            ? this
+            : new RuleScriptTypeInfo(Kind, ElementType, Properties, isNullable: true);
+    }
+
+    public RuleScriptTypeInfo WithoutNull()
+    {
+        return Kind == RuleScriptValueType.Null
+            ? Unknown
+            : IsNullable
+                ? new RuleScriptTypeInfo(Kind, ElementType, Properties)
+                : this;
+    }
+
+    public string ToDisplayName()
+    {
+        var name = RuleScriptTypeFacts.ToDisplayName(Kind);
+        return IsNullable ? $"{name}?" : name;
     }
 }

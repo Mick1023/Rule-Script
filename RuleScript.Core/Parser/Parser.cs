@@ -455,7 +455,25 @@ public sealed class Parser
         return [.. statements];
     }
 
-    private Expression ParseExpression() => ParseOr();
+    private Expression ParseExpression() => ParseNullCoalescing();
+
+    private Expression ParseNullCoalescing()
+    {
+        var expression = ParseOr();
+
+        if (Match(TokenType.QuestionQuestion))
+        {
+            var operatorToken = Previous();
+            var right = ParseNullCoalescing();
+            expression = new NullCoalescingExpression(
+                expression,
+                right,
+                operatorToken.Line,
+                operatorToken.Column);
+        }
+
+        return expression;
+    }
 
     private Expression ParseOr()
     {
@@ -605,6 +623,18 @@ public sealed class Parser
                 expression = expression is IdentifierExpression { Name: "global" }
                     ? new GlobalIdentifierExpression(member.Lexeme, dot.Line, dot.Column)
                     : new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column);
+                continue;
+            }
+
+            if (Match(TokenType.QuestionDot))
+            {
+                var questionDot = Previous();
+                var member = Consume(TokenType.Identifier, "Expected property name after '?.'.");
+                expression = new ConditionalMemberAccessExpression(
+                    expression,
+                    member.Lexeme,
+                    questionDot.Line,
+                    questionDot.Column);
                 continue;
             }
 

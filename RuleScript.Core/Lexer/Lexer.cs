@@ -123,6 +123,21 @@ public sealed class Lexer
             case '>':
                 AddToken(Match('=') ? TokenType.GreaterOrEqual : TokenType.Greater);
                 break;
+            case '?':
+                if (Match('?'))
+                {
+                    AddToken(TokenType.QuestionQuestion);
+                }
+                else if (Match('.'))
+                {
+                    AddToken(TokenType.QuestionDot);
+                }
+                else
+                {
+                    throw new SyntaxException("Expected '?' or '.' after '?'.", _line, _tokenColumn, "?");
+                }
+
+                break;
             case '/':
                 if (Match('/'))
                 {

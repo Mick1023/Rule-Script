@@ -183,9 +183,11 @@ internal static class RuleScriptSymbolAnalyzer
             UnaryExpression { Operator: TokenType.Bang } => RuleScriptTypeInfo.From(RuleScriptValueType.Boolean),
             UnaryExpression { Operator: TokenType.Minus } => RuleScriptTypeInfo.From(RuleScriptValueType.Number),
             BinaryExpression binary => InferBinary(binary, scope, globals, hostFunctionReturnTypes),
+            NullCoalescingExpression coalescing => InferNullCoalescing(coalescing, scope, globals, hostFunctionReturnTypes),
             FunctionCallExpression call => InferFunction(call.Name, hostFunctionReturnTypes),
             IndexExpression index => Infer(index.Target, scope, globals, hostFunctionReturnTypes).ElementType ?? RuleScriptTypeInfo.Unknown,
             MemberAccessExpression member => InferMemberAccess(member, scope, globals, hostFunctionReturnTypes),
+            ConditionalMemberAccessExpression member => InferConditionalMemberAccess(member, scope, globals, hostFunctionReturnTypes),
             _ => RuleScriptTypeInfo.Unknown
         };
     }
@@ -215,6 +217,55 @@ internal static class RuleScriptSymbolAnalyzer
         var targetType = Infer(expression.Target, scope, globals, hostFunctionReturnTypes);
         return targetType.TryGetProperty(expression.MemberName, out var propertyType)
             ? propertyType
+            : RuleScriptTypeInfo.Unknown;
+    }
+
+    private static RuleScriptTypeInfo InferConditionalMemberAccess(
+        ConditionalMemberAccessExpression expression,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        var targetType = Infer(expression.Target, scope, globals, hostFunctionReturnTypes);
+
+        if (targetType.Kind == RuleScriptValueType.Null)
+        {
+            return targetType;
+        }
+
+        return targetType.TryGetProperty(expression.MemberName, out var propertyType)
+            ? propertyType.MakeNullable()
+            : RuleScriptTypeInfo.Unknown.MakeNullable();
+    }
+
+    private static RuleScriptTypeInfo InferNullCoalescing(
+        NullCoalescingExpression expression,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        var left = Infer(expression.Left, scope, globals, hostFunctionReturnTypes);
+        var right = Infer(expression.Right, scope, globals, hostFunctionReturnTypes);
+
+        if (left.Kind == RuleScriptValueType.Null)
+        {
+            return right;
+        }
+
+        var nonNullLeft = left.WithoutNull();
+
+        if (nonNullLeft.Kind == RuleScriptValueType.Unknown)
+        {
+            return right;
+        }
+
+        if (right.Kind == RuleScriptValueType.Null)
+        {
+            return nonNullLeft.MakeNullable();
+        }
+
+        return nonNullLeft.Kind == right.Kind
+            ? right.CanBeNull ? nonNullLeft.MakeNullable() : nonNullLeft
             : RuleScriptTypeInfo.Unknown;
     }
 
