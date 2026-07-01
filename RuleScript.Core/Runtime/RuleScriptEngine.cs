@@ -465,12 +465,17 @@ public sealed class RuleScriptEngine
         bool fallbackVisibleToAll = false)
     {
         var registeredHostFunctions = RegisteredHostFunctions;
+        var builtinFunctions = _builtinFunctions.Signatures;
         var hostReturnTypes = registeredHostFunctions
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(
                 group => group.Key,
                 group => group.Last().ReturnType,
                 StringComparer.Ordinal);
+        foreach (var builtinFunction in builtinFunctions)
+        {
+            hostReturnTypes.TryAdd(builtinFunction.Name, builtinFunction.ReturnType);
+        }
         var typedSymbols = RuleScriptSymbolAnalyzer.Analyze(statements, cursorLine, cursorColumn, hostReturnTypes, _knownVariables);
         var functionSymbols = typedSymbols.Functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
         CollectImportedFunctionSignatures(
@@ -494,6 +499,15 @@ public sealed class RuleScriptEngine
         var hostSymbols = registeredHostFunctions
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        foreach (var builtinFunction in builtinFunctions)
+        {
+            hostSymbols.TryAdd(
+                builtinFunction.Name,
+                new RuleScriptHostFunctionSymbol(
+                    builtinFunction.Name,
+                    builtinFunction.Parameters,
+                    builtinFunction.ReturnType));
+        }
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
             _knownVariables,
@@ -511,7 +525,8 @@ public sealed class RuleScriptEngine
             functionSymbols.Values,
             visibleVariables,
             registeredHostFunctions,
-            semanticDiagnostics);
+            semanticDiagnostics,
+            builtinFunctions);
     }
 
     private void CollectImportedFunctionSignatures(

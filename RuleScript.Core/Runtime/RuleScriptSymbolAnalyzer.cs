@@ -184,7 +184,7 @@ internal static class RuleScriptSymbolAnalyzer
             UnaryExpression { Operator: TokenType.Minus } => RuleScriptTypeInfo.From(RuleScriptValueType.Number),
             BinaryExpression binary => InferBinary(binary, scope, globals, hostFunctionReturnTypes),
             NullCoalescingExpression coalescing => InferNullCoalescing(coalescing, scope, globals, hostFunctionReturnTypes),
-            FunctionCallExpression call => InferFunction(call.Name, hostFunctionReturnTypes),
+            FunctionCallExpression call => InferFunction(call, scope, globals, hostFunctionReturnTypes),
             IndexExpression index => Infer(index.Target, scope, globals, hostFunctionReturnTypes).ElementType ?? RuleScriptTypeInfo.Unknown,
             MemberAccessExpression member => InferMemberAccess(member, scope, globals, hostFunctionReturnTypes),
             ConditionalMemberAccessExpression member => InferConditionalMemberAccess(member, scope, globals, hostFunctionReturnTypes),
@@ -304,15 +304,33 @@ internal static class RuleScriptSymbolAnalyzer
     }
 
     private static RuleScriptTypeInfo InferFunction(
-        string name,
+        FunctionCallExpression call,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
         IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
     {
-        if (hostFunctionReturnTypes.TryGetValue(name, out var hostReturnType))
+        if (call.Name == "ArrayRemoveAt" && call.Arguments.Count > 0)
+        {
+            return Infer(call.Arguments[0], scope, globals, hostFunctionReturnTypes).ElementType
+                ?? RuleScriptTypeInfo.Unknown;
+        }
+
+        if (call.Name is "ArrayInsert" or "ArraySort" && call.Arguments.Count > 0)
+        {
+            return Infer(call.Arguments[0], scope, globals, hostFunctionReturnTypes);
+        }
+
+        if (call.Name == "ObjectKeys")
+        {
+            return RuleScriptTypeInfo.CreateArray([RuleScriptTypeInfo.From(RuleScriptValueType.String)]);
+        }
+
+        if (hostFunctionReturnTypes.TryGetValue(call.Name, out var hostReturnType))
         {
             return hostReturnType;
         }
 
-        return name switch
+        return call.Name switch
         {
             "ToString" or "Concat" or "Replace" or "Trim" or "ToUpper" or "ToLower" or "Substring" or "Join" or "JsonStringify" => RuleScriptTypeInfo.From(RuleScriptValueType.String),
             "ParseInt" or "ParseDecimal" or "Length" or "IndexOf" or "Abs" or "Round" or "Floor" or "Ceil" or "Min" or "Max" => RuleScriptTypeInfo.From(RuleScriptValueType.Number),

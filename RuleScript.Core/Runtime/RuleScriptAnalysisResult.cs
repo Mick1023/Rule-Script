@@ -15,7 +15,8 @@ public sealed class RuleScriptAnalysisResult
         IEnumerable<RuleScriptFunctionSymbol>? userFunctions = null,
         IEnumerable<RuleScriptVariableSymbol>? visibleVariables = null,
         IEnumerable<RuleScriptHostFunctionSymbol>? hostFunctions = null,
-        IEnumerable<RuleScriptDiagnostic>? diagnostics = null)
+        IEnumerable<RuleScriptDiagnostic>? diagnostics = null,
+        IEnumerable<RuleScriptBuiltinFunctionSymbol>? builtinFunctions = null)
     {
         VariableNames = Snapshot(variableNames);
         UserFunctionNames = Snapshot(userFunctionNames);
@@ -30,6 +31,7 @@ public sealed class RuleScriptAnalysisResult
             : SnapshotVariables(visibleVariables, []);
         VisibleVariableNames = Snapshot(VisibleVariables.Select(variable => variable.Name));
         HostFunctions = SnapshotHostFunctions(hostFunctions);
+        BuiltinFunctions = SnapshotBuiltinFunctions(builtinFunctions);
         Diagnostics = diagnostics?.ToArray() ?? [];
     }
 
@@ -78,6 +80,11 @@ public sealed class RuleScriptAnalysisResult
     /// Gets built-in function names available to the script.
     /// </summary>
     public IReadOnlyList<string> BuiltinFunctionNames { get; }
+
+    /// <summary>
+    /// Gets typed signatures for built-in functions that expose analysis metadata.
+    /// </summary>
+    public IReadOnlyList<RuleScriptBuiltinFunctionSymbol> BuiltinFunctions { get; }
 
     /// <summary>
     /// Gets all callable function names available from the current script and engine.
@@ -158,6 +165,19 @@ public sealed class RuleScriptAnalysisResult
                 symbol.IsAsync))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.IsAsync)
+            .ToArray()
+            ?? [];
+    }
+
+    private static IReadOnlyList<RuleScriptBuiltinFunctionSymbol> SnapshotBuiltinFunctions(
+        IEnumerable<RuleScriptBuiltinFunctionSymbol>? symbols)
+    {
+        return symbols?
+            .Select(symbol => new RuleScriptBuiltinFunctionSymbol(
+                symbol.Name,
+                symbol.Parameters,
+                symbol.ReturnType))
+            .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ToArray()
             ?? [];
     }

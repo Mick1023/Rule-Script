@@ -7,6 +7,7 @@ namespace RuleScript.Core.Runtime;
 public sealed class BuiltinFunctions
 {
     private readonly Dictionary<string, Func<IReadOnlyList<RuntimeValue>, RuntimeValue>> _functions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptBuiltinFunctionSymbol> _signatures = new(StringComparer.Ordinal);
 
     public BuiltinFunctions()
     {
@@ -26,9 +27,25 @@ public sealed class BuiltinFunctions
         Register("Substring", Substring);
         Register("Length", Length);
         Register("ArrayAdd", ArrayAdd);
-        Register("ArrayRemove", ArrayRemove);
+        RegisterTyped("ArrayInsert", ArrayInsert, RuleScriptValueType.Array,
+            new("array", RuleScriptValueType.Array),
+            new("index", RuleScriptValueType.Number),
+            new("value", RuleScriptValueType.Any));
+        RegisterTyped("ArrayRemove", ArrayRemove, RuleScriptValueType.Boolean,
+            new("array", RuleScriptValueType.Array),
+            new("value", RuleScriptValueType.Any));
+        RegisterTyped("ArrayRemoveAt", ArrayRemoveAt, RuleScriptValueType.Any,
+            new("array", RuleScriptValueType.Array),
+            new("index", RuleScriptValueType.Number));
+        RegisterTyped("ArraySort", ArraySort, RuleScriptValueType.Array,
+            new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
         Register("ArrayContains", ArrayContains);
         Register("ArrayClear", ArrayClear);
+        RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array,
+            new RuleScriptParameterSymbol("object", RuleScriptValueType.Object));
+        RegisterTyped("ObjectContainsKey", ObjectContainsKey, RuleScriptValueType.Boolean,
+            new("object", RuleScriptValueType.Object),
+            new("key", RuleScriptValueType.String));
         Register("Abs", Abs);
         Register("Min", Min);
         Register("Max", Max);
@@ -49,6 +66,8 @@ public sealed class BuiltinFunctions
 
     public IEnumerable<string> Names => _functions.Keys;
 
+    internal IReadOnlyCollection<RuleScriptBuiltinFunctionSymbol> Signatures => _signatures.Values;
+
     public void Register(string name, Func<IReadOnlyList<RuntimeValue>, RuntimeValue> function)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -57,6 +76,17 @@ public sealed class BuiltinFunctions
         }
 
         _functions[name] = function ?? throw new ArgumentNullException(nameof(function));
+        _signatures.Remove(name);
+    }
+
+    private void RegisterTyped(
+        string name,
+        Func<IReadOnlyList<RuntimeValue>, RuntimeValue> function,
+        RuleScriptValueType returnType,
+        params RuleScriptParameterSymbol[] parameters)
+    {
+        Register(name, function);
+        _signatures[name] = new RuleScriptBuiltinFunctionSymbol(name, parameters, returnType);
     }
 
     public RuntimeValue Invoke(string name, IReadOnlyList<RuntimeValue> arguments)
@@ -224,6 +254,21 @@ public sealed class BuiltinFunctions
         return arguments[0];
     }
 
+    private static RuntimeValue ArrayInsert(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArrayInsert", arguments, 3);
+        var list = RequireList("ArrayInsert", arguments[0].Value);
+        var index = RequireInt("ArrayInsert", "index", arguments[1].Value);
+
+        if (index < 0 || index > list.Count)
+        {
+            throw new RuntimeException("ArrayInsert index is outside the array bounds.");
+        }
+
+        list.Insert(index, arguments[2].Value);
+        return arguments[0];
+    }
+
     private static RuntimeValue ArrayRemove(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("ArrayRemove", arguments, 2);
@@ -239,6 +284,67 @@ public sealed class BuiltinFunctions
         }
 
         return new RuntimeValue(false);
+    }
+
+    private static RuntimeValue ArrayRemoveAt(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArrayRemoveAt", arguments, 2);
+        var list = RequireList("ArrayRemoveAt", arguments[0].Value);
+        var index = RequireInt("ArrayRemoveAt", "index", arguments[1].Value);
+
+        if (index < 0 || index >= list.Count)
+        {
+            throw new RuntimeException("ArrayRemoveAt index is outside the array bounds.");
+        }
+
+        var removed = list[index];
+        list.RemoveAt(index);
+        return new RuntimeValue(removed);
+    }
+
+    private static RuntimeValue ArraySort(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArraySort", arguments, 1);
+        var list = RequireList("ArraySort", arguments[0].Value);
+
+        if (list.Cast<object?>().All(value => value is string))
+        {
+            var sorted = list.Cast<string>().Order(StringComparer.Ordinal).Cast<object?>().ToArray();
+            CopyToList(sorted, list);
+            return arguments[0];
+        }
+
+        if (list.Cast<object?>().All(value => TryGetDouble(value, out _)))
+        {
+            var sorted = list.Cast<object?>().OrderBy(value =>
+            {
+                TryGetDouble(value, out var number);
+                return number;
+            }).ToArray();
+            CopyToList(sorted, list);
+            return arguments[0];
+        }
+
+        throw new RuntimeException("ArraySort expects all elements to be numbers or all elements to be strings.");
+    }
+
+    private static RuntimeValue ObjectKeys(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ObjectKeys", arguments, 1);
+        var keys = RequireObject("ObjectKeys", arguments[0].Value).Keys
+            .Order(StringComparer.Ordinal)
+            .Cast<object?>()
+            .ToList();
+        return new RuntimeValue(keys);
+    }
+
+    private static RuntimeValue ObjectContainsKey(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ObjectContainsKey", arguments, 2);
+        var values = RequireObject("ObjectContainsKey", arguments[0].Value);
+        var key = arguments[1].Value as string
+            ?? throw new RuntimeException("ObjectContainsKey argument 'key' must be a string value.");
+        return new RuntimeValue(values.ContainsKey(key));
     }
 
     private static RuntimeValue ArrayContains(IReadOnlyList<RuntimeValue> arguments)
@@ -367,6 +473,24 @@ public sealed class BuiltinFunctions
     private static IList RequireList(string functionName, object? value)
     {
         return value as IList ?? throw new RuntimeException($"{functionName} expects an array value.");
+    }
+
+    private static IReadOnlyDictionary<string, object?> RequireObject(string functionName, object? value)
+    {
+        return value switch
+        {
+            IReadOnlyDictionary<string, object?> readOnlyValues => readOnlyValues,
+            IDictionary<string, object?> values => new Dictionary<string, object?>(values, StringComparer.Ordinal),
+            _ => throw new RuntimeException($"{functionName} expects an object value.")
+        };
+    }
+
+    private static void CopyToList(IReadOnlyList<object?> values, IList destination)
+    {
+        for (var index = 0; index < values.Count; index++)
+        {
+            destination[index] = values[index];
+        }
     }
 
     private static double RequireNumber(string functionName, object? value)
