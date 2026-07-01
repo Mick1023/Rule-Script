@@ -659,6 +659,11 @@ public sealed class Parser
             return ParseArrayExpression();
         }
 
+        if (Match(TokenType.LeftBrace))
+        {
+            return ParseObjectLiteralExpression();
+        }
+
         throw Error(Peek(), "Expected expression.");
     }
 
@@ -677,6 +682,36 @@ public sealed class Parser
 
         Consume(TokenType.RightBracket, "Expected ']' after array literal.");
         return new ArrayExpression(elements);
+    }
+
+    private ObjectLiteralExpression ParseObjectLiteralExpression()
+    {
+        var openBrace = Previous();
+        var properties = new List<ObjectProperty>();
+
+        if (!Check(TokenType.RightBrace))
+        {
+            do
+            {
+                var name = Match(TokenType.Identifier, TokenType.String)
+                    ? Previous()
+                    : throw Error(Peek(), "Expected property name in object literal.");
+                var propertyName = name.Type == TokenType.String
+                    ? name.Literal?.ToString() ?? string.Empty
+                    : name.Lexeme;
+
+                Consume(TokenType.Colon, "Expected ':' after object property name.");
+                properties.Add(new ObjectProperty(
+                    propertyName,
+                    ParseExpression(),
+                    name.Line,
+                    name.Column));
+            }
+            while (Match(TokenType.Comma));
+        }
+
+        Consume(TokenType.RightBrace, "Expected '}' after object literal.");
+        return new ObjectLiteralExpression(properties, openBrace.Line, openBrace.Column);
     }
 
     private bool Match(params TokenType[] types)

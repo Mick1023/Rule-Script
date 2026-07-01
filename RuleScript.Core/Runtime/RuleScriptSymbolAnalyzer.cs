@@ -19,14 +19,22 @@ internal static class RuleScriptSymbolAnalyzer
     {
         hostFunctionReturnTypes ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
         knownVariables ??= new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
-        var globals = new Dictionary<string, RuleScriptValueType>(knownVariables, StringComparer.Ordinal);
-        var allVariables = new Dictionary<string, RuleScriptValueType>(knownVariables, StringComparer.Ordinal);
+        var hostReturnTypes = hostFunctionReturnTypes.ToDictionary(
+            value => value.Key,
+            value => RuleScriptTypeInfo.From(value.Value),
+            StringComparer.Ordinal);
+        var knownTypes = knownVariables.ToDictionary(
+            value => value.Key,
+            value => RuleScriptTypeInfo.From(value.Value),
+            StringComparer.Ordinal);
+        var globals = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
+        var allVariables = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
         var functions = new List<RuleScriptFunctionSymbol>();
-        Dictionary<string, RuleScriptValueType>? cursorLocals = null;
+        Dictionary<string, RuleScriptTypeInfo>? cursorLocals = null;
 
         foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
         {
-            CollectStatement(statement, globals, globals, allVariables, hostFunctionReturnTypes);
+            CollectStatement(statement, globals, globals, allVariables, hostReturnTypes);
         }
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
@@ -40,17 +48,17 @@ internal static class RuleScriptSymbolAnalyzer
             }).ToArray();
             functions.Add(new RuleScriptFunctionSymbol(function.Name, parameters));
 
-            var locals = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
+            var locals = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
 
             foreach (var parameter in parameters)
             {
-                SetType(locals, parameter.Name, parameter.Type);
-                SetType(allVariables, parameter.Name, parameter.Type);
+                SetType(locals, parameter.Name, RuleScriptTypeInfo.From(parameter.Type));
+                SetType(allVariables, parameter.Name, RuleScriptTypeInfo.From(parameter.Type));
             }
 
             foreach (var statement in function.Body)
             {
-                CollectStatement(statement, locals, globals, allVariables, hostFunctionReturnTypes);
+                CollectStatement(statement, locals, globals, allVariables, hostReturnTypes);
             }
 
             if (cursorLine.HasValue
@@ -65,7 +73,7 @@ internal static class RuleScriptSymbolAnalyzer
 
         if (cursorLine.HasValue && cursorColumn.HasValue)
         {
-            var visibleTypes = new Dictionary<string, RuleScriptValueType>(globals, StringComparer.Ordinal);
+            var visibleTypes = new Dictionary<string, RuleScriptTypeInfo>(globals, StringComparer.Ordinal);
 
             if (cursorLocals is not null)
             {
@@ -83,10 +91,10 @@ internal static class RuleScriptSymbolAnalyzer
 
     private static void CollectStatement(
         Statement statement,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
-        IDictionary<string, RuleScriptValueType> allVariables,
-        IReadOnlyDictionary<string, RuleScriptValueType> hostFunctionReturnTypes)
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IDictionary<string, RuleScriptTypeInfo> allVariables,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
     {
         switch (statement)
         {
@@ -102,7 +110,7 @@ internal static class RuleScriptSymbolAnalyzer
                 SetType(allVariables, assignment.Name, globalType);
                 break;
             case ForeachStatement loop:
-                SetVariable(scope, allVariables, loop.VariableName, RuleScriptValueType.Unknown);
+                SetVariable(scope, allVariables, loop.VariableName, RuleScriptTypeInfo.Unknown);
                 foreach (var child in loop.Body)
                 {
                     CollectStatement(child, scope, globals, allVariables, hostFunctionReturnTypes);
@@ -149,32 +157,64 @@ internal static class RuleScriptSymbolAnalyzer
         }
     }
 
-    private static RuleScriptValueType Infer(
+    private static RuleScriptTypeInfo Infer(
         Expression? expression,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
-        IReadOnlyDictionary<string, RuleScriptValueType> hostFunctionReturnTypes)
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
     {
         return expression switch
         {
-            null => RuleScriptValueType.Null,
-            LiteralExpression literal => RuleScriptTypeFacts.FromValue(literal.Value),
-            ArrayExpression => RuleScriptValueType.Array,
+            null => RuleScriptTypeInfo.From(RuleScriptValueType.Null),
+            LiteralExpression literal => RuleScriptTypeInfo.FromValue(literal.Value),
+            ArrayExpression array => RuleScriptTypeInfo.CreateArray(
+                array.Elements.Select(element => Infer(element, scope, globals, hostFunctionReturnTypes))),
+            ObjectLiteralExpression objectLiteral => InferObjectLiteral(objectLiteral, scope, globals, hostFunctionReturnTypes),
             IdentifierExpression identifier => Lookup(identifier.Name, scope, globals),
             GlobalIdentifierExpression identifier => GetType(globals, identifier.Name),
-            UnaryExpression { Operator: TokenType.Bang } => RuleScriptValueType.Boolean,
-            UnaryExpression { Operator: TokenType.Minus } => RuleScriptValueType.Number,
+            UnaryExpression { Operator: TokenType.Bang } => RuleScriptTypeInfo.From(RuleScriptValueType.Boolean),
+            UnaryExpression { Operator: TokenType.Minus } => RuleScriptTypeInfo.From(RuleScriptValueType.Number),
             BinaryExpression binary => InferBinary(binary, scope, globals, hostFunctionReturnTypes),
             FunctionCallExpression call => InferFunction(call.Name, hostFunctionReturnTypes),
-            _ => RuleScriptValueType.Unknown
+            IndexExpression index => Infer(index.Target, scope, globals, hostFunctionReturnTypes).ElementType ?? RuleScriptTypeInfo.Unknown,
+            MemberAccessExpression member => InferMemberAccess(member, scope, globals, hostFunctionReturnTypes),
+            _ => RuleScriptTypeInfo.Unknown
         };
     }
 
-    private static RuleScriptValueType InferBinary(
+    private static RuleScriptTypeInfo InferObjectLiteral(
+        ObjectLiteralExpression expression,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        var properties = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
+
+        foreach (var property in expression.Properties)
+        {
+            properties[property.Name] = Infer(property.Value, scope, globals, hostFunctionReturnTypes);
+        }
+
+        return RuleScriptTypeInfo.CreateObject(properties);
+    }
+
+    private static RuleScriptTypeInfo InferMemberAccess(
+        MemberAccessExpression expression,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        var targetType = Infer(expression.Target, scope, globals, hostFunctionReturnTypes);
+        return targetType.TryGetProperty(expression.MemberName, out var propertyType)
+            ? propertyType
+            : RuleScriptTypeInfo.Unknown;
+    }
+
+    private static RuleScriptTypeInfo InferBinary(
         BinaryExpression expression,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals,
-        IReadOnlyDictionary<string, RuleScriptValueType> hostFunctionReturnTypes)
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
     {
         if (expression.Operator is TokenType.EqualEqual
             or TokenType.BangEqual
@@ -185,7 +225,7 @@ internal static class RuleScriptSymbolAnalyzer
             or TokenType.And
             or TokenType.Or)
         {
-            return RuleScriptValueType.Boolean;
+            return RuleScriptTypeInfo.From(RuleScriptValueType.Boolean);
         }
 
         if (expression.Operator == TokenType.Plus)
@@ -193,20 +233,20 @@ internal static class RuleScriptSymbolAnalyzer
             var left = Infer(expression.Left, scope, globals, hostFunctionReturnTypes);
             var right = Infer(expression.Right, scope, globals, hostFunctionReturnTypes);
 
-            if (left == RuleScriptValueType.String || right == RuleScriptValueType.String)
+            if (left.Kind == RuleScriptValueType.String || right.Kind == RuleScriptValueType.String)
             {
-                return RuleScriptValueType.String;
+                return RuleScriptTypeInfo.From(RuleScriptValueType.String);
             }
         }
 
         return expression.Operator is TokenType.Plus or TokenType.Minus or TokenType.Star or TokenType.Slash or TokenType.Percent
-            ? RuleScriptValueType.Number
-            : RuleScriptValueType.Unknown;
+            ? RuleScriptTypeInfo.From(RuleScriptValueType.Number)
+            : RuleScriptTypeInfo.Unknown;
     }
 
-    private static RuleScriptValueType InferFunction(
+    private static RuleScriptTypeInfo InferFunction(
         string name,
-        IReadOnlyDictionary<string, RuleScriptValueType> hostFunctionReturnTypes)
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
     {
         if (hostFunctionReturnTypes.TryGetValue(name, out var hostReturnType))
         {
@@ -215,53 +255,53 @@ internal static class RuleScriptSymbolAnalyzer
 
         return name switch
         {
-            "ToString" or "Concat" or "Replace" or "Trim" or "ToUpper" or "ToLower" or "Substring" or "Join" or "JsonStringify" => RuleScriptValueType.String,
-            "ParseInt" or "ParseDecimal" or "Length" or "IndexOf" or "Abs" or "Round" or "Floor" or "Ceil" or "Min" or "Max" => RuleScriptValueType.Number,
-            "ParseBool" or "Contains" or "StartsWith" or "EndsWith" or "JsonExists" => RuleScriptValueType.Boolean,
-            "Split" or "JsonKeys" => RuleScriptValueType.Array,
-            "JsonParse" => RuleScriptValueType.Object,
-            _ => RuleScriptValueType.Unknown
+            "ToString" or "Concat" or "Replace" or "Trim" or "ToUpper" or "ToLower" or "Substring" or "Join" or "JsonStringify" => RuleScriptTypeInfo.From(RuleScriptValueType.String),
+            "ParseInt" or "ParseDecimal" or "Length" or "IndexOf" or "Abs" or "Round" or "Floor" or "Ceil" or "Min" or "Max" => RuleScriptTypeInfo.From(RuleScriptValueType.Number),
+            "ParseBool" or "Contains" or "StartsWith" or "EndsWith" or "JsonExists" => RuleScriptTypeInfo.From(RuleScriptValueType.Boolean),
+            "Split" or "JsonKeys" => RuleScriptTypeInfo.From(RuleScriptValueType.Array),
+            "JsonParse" => RuleScriptTypeInfo.From(RuleScriptValueType.Object),
+            _ => RuleScriptTypeInfo.Unknown
         };
     }
 
-    private static RuleScriptValueType Lookup(
+    private static RuleScriptTypeInfo Lookup(
         string name,
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> globals)
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals)
     {
         return scope.TryGetValue(name, out var type)
             ? type
             : GetType(globals, name);
     }
 
-    private static RuleScriptValueType GetType(
-        IDictionary<string, RuleScriptValueType> values,
+    private static RuleScriptTypeInfo GetType(
+        IDictionary<string, RuleScriptTypeInfo> values,
         string name)
     {
-        return values.TryGetValue(name, out var type) ? type : RuleScriptValueType.Unknown;
+        return values.TryGetValue(name, out var type) ? type : RuleScriptTypeInfo.Unknown;
     }
 
     private static void SetVariable(
-        IDictionary<string, RuleScriptValueType> scope,
-        IDictionary<string, RuleScriptValueType> allVariables,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> allVariables,
         string name,
-        RuleScriptValueType type)
+        RuleScriptTypeInfo type)
     {
         SetType(scope, name, type);
         SetType(allVariables, name, type);
     }
 
-    private static void SetType(IDictionary<string, RuleScriptValueType> values, string name, RuleScriptValueType type)
+    private static void SetType(IDictionary<string, RuleScriptTypeInfo> values, string name, RuleScriptTypeInfo type)
     {
-        if (!values.TryGetValue(name, out var existing) || existing == RuleScriptValueType.Unknown)
+        if (!values.TryGetValue(name, out var existing) || existing.Kind == RuleScriptValueType.Unknown)
         {
             values[name] = type;
             return;
         }
 
-        if (type != RuleScriptValueType.Unknown && existing != type)
+        if (type.Kind != RuleScriptValueType.Unknown && existing.Kind != type.Kind)
         {
-            values[name] = RuleScriptValueType.Unknown;
+            values[name] = RuleScriptTypeInfo.Unknown;
         }
     }
 
@@ -278,10 +318,10 @@ internal static class RuleScriptSymbolAnalyzer
     }
 
     private static IReadOnlyList<RuleScriptVariableSymbol> ToSymbols(
-        IDictionary<string, RuleScriptValueType> values)
+        IDictionary<string, RuleScriptTypeInfo> values)
     {
         return values
-            .Select(value => new RuleScriptVariableSymbol(value.Key, value.Value))
+            .Select(value => new RuleScriptVariableSymbol(value.Key, value.Value.Kind))
             .OrderBy(value => value.Name, StringComparer.Ordinal)
             .ToArray();
     }

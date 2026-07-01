@@ -81,6 +81,12 @@ public sealed class Lexer
             case ']':
                 AddToken(TokenType.RightBracket);
                 break;
+            case '{':
+                AddToken(TokenType.LeftBrace);
+                break;
+            case '}':
+                AddToken(TokenType.RightBrace);
+                break;
             case '.':
                 AddToken(TokenType.Dot);
                 break;

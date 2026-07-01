@@ -13,4 +13,6 @@ public static class RuleScriptDiagnosticCodes
     public const string DuplicateParameter = "RS2005";
     public const string DuplicateCase = "RS2006";
     public const string MissingDefaultBranch = "RS2007";
+    public const string PropertyNotFound = "RS2008";
+    public const string DuplicateObjectProperty = "RS2014";
 }
