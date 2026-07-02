@@ -110,11 +110,14 @@ public sealed class Version140CollectionModificationTests
         var result = new RuleScriptEngine().Analyze(string.Empty);
         var insert = Assert.Single(result.BuiltinFunctions, function => function.Name == "ArrayInsert");
         var objectKeys = Assert.Single(result.BuiltinFunctions, function => function.Name == "ObjectKeys");
+        var toString = Assert.Single(result.BuiltinFunctions, function => function.Name == "ToString");
 
-        Assert.Contains("ArrayInsert", result.BuiltinFunctionNames);
+        Assert.Equal(result.BuiltinFunctionNames, result.BuiltinFunctions.Select(function => function.Name));
         Assert.Equal(["array", "index", "value"], insert.Parameters.Select(parameter => parameter.Name));
         Assert.Equal(RuleScriptValueType.Array, insert.ReturnType);
         Assert.Equal(RuleScriptValueType.Array, objectKeys.ReturnType);
+        Assert.Equal(["value"], toString.Parameters.Select(parameter => parameter.Name));
+        Assert.Equal(RuleScriptValueType.String, toString.ReturnType);
     }
 
     [Fact]
