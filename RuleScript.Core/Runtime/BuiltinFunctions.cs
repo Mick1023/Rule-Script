@@ -11,22 +11,48 @@ public sealed class BuiltinFunctions
 
     public BuiltinFunctions()
     {
-        Register("Print", Print);
-        Register("ToString", ToStringValue);
-        Register("ParseInt", ParseInt);
-        Register("ParseDecimal", ParseDecimal);
-        Register("Trim", Trim);
-        Register("ToUpper", ToUpper);
-        Register("ToLower", ToLower);
-        Register("StartsWith", StartsWith);
-        Register("EndsWith", EndsWith);
-        Register("Contains", Contains);
-        Register("Split", Split);
-        Register("Join", Join);
-        Register("Replace", Replace);
-        Register("Substring", Substring);
-        Register("Length", Length);
-        Register("ArrayAdd", ArrayAdd);
+        RegisterTyped("Print", Print, RuleScriptValueType.Any,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ToString", ToStringValue, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ParseInt", ParseInt, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ParseDecimal", ParseDecimal, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("Trim", Trim, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ToUpper", ToUpper, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ToLower", ToLower, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("StartsWith", StartsWith, RuleScriptValueType.Boolean,
+            new("value", RuleScriptValueType.Any),
+            new("prefix", RuleScriptValueType.Any));
+        RegisterTyped("EndsWith", EndsWith, RuleScriptValueType.Boolean,
+            new("value", RuleScriptValueType.Any),
+            new("suffix", RuleScriptValueType.Any));
+        RegisterTyped("Contains", Contains, RuleScriptValueType.Boolean,
+            new("value", RuleScriptValueType.Any),
+            new("searchValue", RuleScriptValueType.Any));
+        RegisterTyped("Split", Split, RuleScriptValueType.Array,
+            new("value", RuleScriptValueType.Any),
+            new("separator", RuleScriptValueType.Any));
+        RegisterTyped("Join", Join, RuleScriptValueType.String,
+            new("separator", RuleScriptValueType.Any),
+            new("values", RuleScriptValueType.Array));
+        RegisterTyped("Replace", Replace, RuleScriptValueType.String,
+            new("value", RuleScriptValueType.Any),
+            new("oldValue", RuleScriptValueType.Any),
+            new("newValue", RuleScriptValueType.Any));
+        RegisterTyped("Substring", Substring, RuleScriptValueType.String,
+            new("value", RuleScriptValueType.Any),
+            new("start", RuleScriptValueType.Number),
+            new("length", RuleScriptValueType.Number));
+        RegisterTyped("Length", Length, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ArrayAdd", ArrayAdd, RuleScriptValueType.Array,
+            new("array", RuleScriptValueType.Array),
+            new("value", RuleScriptValueType.Any));
         RegisterTyped("ArrayInsert", ArrayInsert, RuleScriptValueType.Array,
             new("array", RuleScriptValueType.Array),
             new("index", RuleScriptValueType.Number),
@@ -39,29 +65,57 @@ public sealed class BuiltinFunctions
             new("index", RuleScriptValueType.Number));
         RegisterTyped("ArraySort", ArraySort, RuleScriptValueType.Array,
             new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
-        Register("ArrayContains", ArrayContains);
-        Register("ArrayClear", ArrayClear);
+        RegisterTyped("ArrayContains", ArrayContains, RuleScriptValueType.Boolean,
+            new("array", RuleScriptValueType.Array),
+            new("value", RuleScriptValueType.Any));
+        RegisterTyped("ArrayClear", ArrayClear, RuleScriptValueType.Array,
+            new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
         RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array,
             new RuleScriptParameterSymbol("object", RuleScriptValueType.Object));
         RegisterTyped("ObjectContainsKey", ObjectContainsKey, RuleScriptValueType.Boolean,
             new("object", RuleScriptValueType.Object),
             new("key", RuleScriptValueType.String));
-        Register("Abs", Abs);
-        Register("Min", Min);
-        Register("Max", Max);
-        Register("Clamp", Clamp);
-        Register("Round", Round);
-        Register("Floor", Floor);
-        Register("Ceiling", Ceiling);
-        Register("ParseBool", ParseBool);
-        Register("IsNull", IsNull);
-        Register("TypeOf", TypeOf);
-        Register("Coalesce", Coalesce);
-        Register("JsonParse", JsonFunctions.JsonParse);
-        Register("JsonStringify", JsonFunctions.JsonStringify);
-        Register("JsonGet", JsonFunctions.JsonGet);
-        Register("JsonSet", JsonFunctions.JsonSet);
-        Register("JsonExists", JsonFunctions.JsonExists);
+        RegisterTyped("Abs", Abs, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
+        RegisterTyped("Min", Min, RuleScriptValueType.Number,
+            new("left", RuleScriptValueType.Number),
+            new("right", RuleScriptValueType.Number));
+        RegisterTyped("Max", Max, RuleScriptValueType.Number,
+            new("left", RuleScriptValueType.Number),
+            new("right", RuleScriptValueType.Number));
+        RegisterTyped("Clamp", Clamp, RuleScriptValueType.Number,
+            new("value", RuleScriptValueType.Number),
+            new("min", RuleScriptValueType.Number),
+            new("max", RuleScriptValueType.Number));
+        RegisterTyped("Round", Round, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
+        RegisterTyped("Floor", Floor, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
+        RegisterTyped("Ceiling", Ceiling, RuleScriptValueType.Number,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
+        RegisterTyped("ParseBool", ParseBool, RuleScriptValueType.Boolean,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("IsNull", IsNull, RuleScriptValueType.Boolean,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("TypeOf", TypeOf, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("Coalesce", Coalesce, RuleScriptValueType.Any,
+            new("value", RuleScriptValueType.Any),
+            new("fallback", RuleScriptValueType.Any));
+        RegisterTyped("JsonParse", JsonFunctions.JsonParse, RuleScriptValueType.Object,
+            new RuleScriptParameterSymbol("json", RuleScriptValueType.String));
+        RegisterTyped("JsonStringify", JsonFunctions.JsonStringify, RuleScriptValueType.String,
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("JsonGet", JsonFunctions.JsonGet, RuleScriptValueType.Any,
+            new("value", RuleScriptValueType.Any),
+            new("path", RuleScriptValueType.String));
+        RegisterTyped("JsonSet", JsonFunctions.JsonSet, RuleScriptValueType.Any,
+            new("value", RuleScriptValueType.Any),
+            new("path", RuleScriptValueType.String),
+            new("newValue", RuleScriptValueType.Any));
+        RegisterTyped("JsonExists", JsonFunctions.JsonExists, RuleScriptValueType.Boolean,
+            new("value", RuleScriptValueType.Any),
+            new("path", RuleScriptValueType.String));
     }
 
     public IEnumerable<string> Names => _functions.Keys;
