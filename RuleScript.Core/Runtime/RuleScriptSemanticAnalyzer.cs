@@ -5,6 +5,7 @@ namespace RuleScript.Core.Runtime;
 
 internal static class RuleScriptSemanticAnalyzer
 {
+    private static readonly AsyncLocal<bool> AnalyzingParallelTask = new();
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
@@ -330,7 +331,67 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 break;
+
+            case ParallelStatementSyntax parallel:
+                AnalyzeParallelTasks(parallel.Tasks, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                break;
         }
+    }
+
+    private static IReadOnlyList<RuleScriptTypeInfo> AnalyzeParallelTasks(
+        IReadOnlyList<TaskBlockSyntax> tasks,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IReadOnlySet<string> availableFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
+        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+    {
+        var returnTypes = new List<RuleScriptTypeInfo>(tasks.Count);
+        var previous = AnalyzingParallelTask.Value;
+        AnalyzingParallelTask.Value = true;
+        try
+        {
+            foreach (var task in tasks)
+            {
+                var taskScope = new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal);
+                var declarations = new HashSet<string>(StringComparer.Ordinal);
+                var returns = task.Body.OfType<ReturnStatement>().ToArray();
+                foreach (var statement in task.Body)
+                {
+                    AnalyzeStatement(statement, taskScope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                }
+
+                returnTypes.Add(returns.Length == 0
+                    ? RuleScriptTypeInfo.From(RuleScriptValueType.Null)
+                    : AnalyzeExpression(returns[0].Value, taskScope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions));
+            }
+        }
+        finally
+        {
+            AnalyzingParallelTask.Value = previous;
+        }
+
+        var knownKinds = returnTypes
+            .Select(type => type.Kind)
+            .Where(kind => kind is not RuleScriptValueType.Unknown and not RuleScriptValueType.Any and not RuleScriptValueType.Null)
+            .Distinct()
+            .ToArray();
+        if (knownKinds.Length > 1)
+        {
+            var first = tasks[0];
+            diagnostics.Add(new RuleScriptDiagnostic(
+                "Parallel tasks return different value types; the expression type is array<any>.",
+                first.Line,
+                first.Column,
+                "parallel")
+            {
+                Code = RuleScriptDiagnosticCodes.ParallelReturnTypeMismatch,
+                Severity = RuleScriptDiagnosticSeverity.Warning
+            });
+        }
+
+        return returnTypes;
     }
 
     private static void AnalyzeDestructuringStatement(
@@ -770,6 +831,9 @@ internal static class RuleScriptSemanticAnalyzer
                 }
 
                 return RuleScriptTypeInfo.Unknown.MakeNullable();
+            case ParallelExpressionSyntax parallel:
+                return RuleScriptTypeInfo.CreateArray(AnalyzeParallelTasks(
+                    parallel.Tasks, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions));
             default:
                 return RuleScriptTypeInfo.Unknown;
         }
@@ -921,8 +985,32 @@ internal static class RuleScriptSemanticAnalyzer
 
         if (hostFunctions.TryGetValue(name, out var hostFunction))
         {
-            ValidateArguments(name, argumentTypes, hostFunction.Parameters, line, column, diagnostics);
+            if (!hostFunction.IsVariadic)
+            {
+                ValidateArguments(name, argumentTypes, hostFunction.Parameters, line, column, diagnostics);
+            }
+            if (AnalyzingParallelTask.Value && !hostFunction.IsThreadSafe)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Host function '{name}' is not marked thread-safe and cannot be called from a parallel task.",
+                    line,
+                    column,
+                    name));
+            }
             return RuleScriptTypeInfo.From(hostFunction.ReturnType);
+        }
+
+        if (AnalyzingParallelTask.Value)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Host function '{name}' is not marked thread-safe and cannot be called from a parallel task.",
+                line,
+                column,
+                name));
         }
 
         return RuleScriptTypeInfo.Unknown;

@@ -9,22 +9,45 @@ namespace RuleScript.Core.Runtime;
 public sealed class RuntimeContext
 {
     private readonly Dictionary<string, RuntimeValue> _variables = new(StringComparer.Ordinal);
+    private readonly object _sync = new();
+    private RuleScriptSourceLocation? _currentLocation;
 
     /// <summary>
     /// Gets a read-only snapshot of current variables.
     /// </summary>
-    public IReadOnlyDictionary<string, RuntimeValue> Variables =>
-        new ReadOnlyDictionary<string, RuntimeValue>(new Dictionary<string, RuntimeValue>(_variables, StringComparer.Ordinal));
+    public IReadOnlyDictionary<string, RuntimeValue> Variables
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return new ReadOnlyDictionary<string, RuntimeValue>(new Dictionary<string, RuntimeValue>(_variables, StringComparer.Ordinal));
+            }
+        }
+    }
 
     /// <summary>
     /// Gets a read-only snapshot of current variable names.
     /// </summary>
-    public IReadOnlyList<string> VariableNames => _variables.Keys.Order(StringComparer.Ordinal).ToArray();
+    public IReadOnlyList<string> VariableNames
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _variables.Keys.Order(StringComparer.Ordinal).ToArray();
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the last source location reported during execution.
     /// </summary>
-    public RuleScriptSourceLocation? CurrentLocation { get; internal set; }
+    public RuleScriptSourceLocation? CurrentLocation
+    {
+        get { lock (_sync) { return _currentLocation; } }
+        internal set { lock (_sync) { _currentLocation = value; } }
+    }
 
     /// <summary>
     /// Sets a variable value.
@@ -32,7 +55,7 @@ public sealed class RuntimeContext
     public void Set(string name, object? value)
     {
         ValidateName(name);
-        _variables[name] = RuntimeValue.FromObject(value);
+        lock (_sync) { _variables[name] = RuntimeValue.FromObject(value); }
     }
 
     /// <summary>
@@ -49,7 +72,7 @@ public sealed class RuntimeContext
     public bool Contains(string name)
     {
         ValidateName(name);
-        return _variables.ContainsKey(name);
+        lock (_sync) { return _variables.ContainsKey(name); }
     }
 
     /// <summary>
@@ -67,10 +90,13 @@ public sealed class RuntimeContext
     {
         ValidateName(name);
 
-        if (_variables.TryGetValue(name, out var runtimeValue))
+        lock (_sync)
         {
-            value = runtimeValue.Value;
-            return true;
+            if (_variables.TryGetValue(name, out var runtimeValue))
+            {
+                value = runtimeValue.Value;
+                return true;
+            }
         }
 
         value = null;
@@ -100,9 +126,12 @@ public sealed class RuntimeContext
     {
         ValidateName(name);
 
-        if (_variables.TryGetValue(name, out var value))
+        lock (_sync)
         {
-            return value;
+            if (_variables.TryGetValue(name, out var value))
+            {
+                return value;
+            }
         }
 
         throw new RuntimeException($"Variable '{name}' is not defined.");
@@ -114,7 +143,7 @@ public sealed class RuntimeContext
     public void SetValue(string name, RuntimeValue value)
     {
         ValidateName(name);
-        _variables[name] = value ?? RuntimeValue.Null;
+        lock (_sync) { _variables[name] = value ?? RuntimeValue.Null; }
     }
 
     /// <summary>
@@ -122,7 +151,7 @@ public sealed class RuntimeContext
     /// </summary>
     public void Clear()
     {
-        _variables.Clear();
+        lock (_sync) { _variables.Clear(); }
     }
 
     /// <summary>
@@ -131,7 +160,7 @@ public sealed class RuntimeContext
     public bool Remove(string name)
     {
         ValidateName(name);
-        return _variables.Remove(name);
+        lock (_sync) { return _variables.Remove(name); }
     }
 
     private static void ValidateName(string name)

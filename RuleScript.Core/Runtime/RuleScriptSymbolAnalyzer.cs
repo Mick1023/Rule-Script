@@ -444,6 +444,17 @@ internal static class RuleScriptSymbolAnalyzer
                 }
 
                 break;
+            case ParallelStatementSyntax parallel:
+                foreach (var task in parallel.Tasks)
+                {
+                    var taskScope = new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal);
+                    var taskVariables = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
+                    foreach (var child in task.Body)
+                    {
+                        CollectStatement(child, taskScope, globals, taskVariables, hostFunctionReturnTypes);
+                    }
+                }
+                break;
         }
     }
 
@@ -494,6 +505,16 @@ internal static class RuleScriptSymbolAnalyzer
             IndexExpression index => Infer(index.Target, scope, globals, hostFunctionReturnTypes).ElementType ?? RuleScriptTypeInfo.Unknown,
             MemberAccessExpression member => InferMemberAccess(member, scope, globals, hostFunctionReturnTypes),
             ConditionalMemberAccessExpression member => InferConditionalMemberAccess(member, scope, globals, hostFunctionReturnTypes),
+            ParallelExpressionSyntax parallel => RuleScriptTypeInfo.CreateArray(parallel.Tasks.Select(task =>
+            {
+                var taskScope = new Dictionary<string, RuleScriptTypeInfo>(scope, StringComparer.Ordinal);
+                foreach (var child in task.Body)
+                {
+                    CollectStatement(child, taskScope, globals, taskScope, hostFunctionReturnTypes);
+                }
+                var returned = task.Body.OfType<ReturnStatement>().FirstOrDefault();
+                return Infer(returned?.Value, taskScope, globals, hostFunctionReturnTypes);
+            })),
             _ => RuleScriptTypeInfo.Unknown
         };
     }

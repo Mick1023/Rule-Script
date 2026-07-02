@@ -37,6 +37,10 @@ public enum TokenType
     Default,
     When,
     EndSwitch,
+    Parallel,
+    Task,
+    EndTask,
+    EndParallel,
 
     Plus,
     Minus,
