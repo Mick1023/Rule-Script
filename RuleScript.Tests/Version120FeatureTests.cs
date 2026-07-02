@@ -294,7 +294,7 @@ public sealed class Version120FeatureTests
     {
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["virtual:/module.rules"] = "function Current(): return 1; endfunction"
+            ["virtual:/module.rules"] = "export function Current(): return 1; endfunction"
         };
         var engine = new RuleScriptEngine
         {
@@ -304,7 +304,7 @@ public sealed class Version120FeatureTests
         const string script = "import \"module.rules\" as module; var result = module.Current();";
 
         var first = engine.TryAnalyze(script);
-        files["virtual:/module.rules"] = "function Replacement(): return 2; endfunction";
+        files["virtual:/module.rules"] = "export function Replacement(): return 2; endfunction";
         var second = engine.TryAnalyze(script);
 
         Assert.DoesNotContain(first.Diagnostics, value => value.Code == RuleScriptDiagnosticCodes.UndefinedFunction);

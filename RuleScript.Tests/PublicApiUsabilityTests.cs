@@ -194,8 +194,8 @@ public sealed class PublicApiUsabilityTests
 
         try
         {
-            File.WriteAllText(Path.Combine(directory, "common.rules"), "function Shared(): return 1; endfunction");
-            File.WriteAllText(Path.Combine(directory, "robot.rules"), "function Read(): return 2; endfunction");
+            File.WriteAllText(Path.Combine(directory, "common.rules"), "export function Shared(): return 1; endfunction");
+            File.WriteAllText(Path.Combine(directory, "robot.rules"), "export function Read(): return 2; endfunction");
 
             var engine = new RuleScriptEngine { WorkingDirectory = directory };
             var result = engine.Analyze("""
@@ -222,7 +222,7 @@ public sealed class PublicApiUsabilityTests
 
         try
         {
-            File.WriteAllText(Path.Combine(directory, "common.rule"), "function Shared(): return 1; endfunction");
+            File.WriteAllText(Path.Combine(directory, "common.rule"), "export function Shared(): return 1; endfunction");
             var engine = new RuleScriptEngine
             {
                 WorkingDirectory = directory,
@@ -247,7 +247,7 @@ public sealed class PublicApiUsabilityTests
 
         try
         {
-            File.WriteAllText(Path.Combine(directory, "common.rules"), "function Shared(): return 1; endfunction");
+            File.WriteAllText(Path.Combine(directory, "common.rules"), "export function Shared(): return 1; endfunction");
 
             var engine = new RuleScriptEngine { WorkingDirectory = directory };
             var result = engine.TryAnalyze("""

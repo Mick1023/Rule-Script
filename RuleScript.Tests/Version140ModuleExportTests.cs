@@ -99,14 +99,29 @@ public sealed class Version140ModuleExportTests
     }
 
     [Fact]
-    public void ModuleWithoutExportsRetainsLegacyImplicitVisibility()
+    public void ModuleWithoutExportsDoesNotExposeFunctions()
     {
         using var project = new RuleScriptProject();
-        project.Write("legacy.rules", "function Legacy(): return \"legacy\"; endfunction");
-        project.Write("main.rules", "import \"legacy.rules\" as old; result = old.Legacy();");
+        project.Write("library.rules", "function Private(): return \"private\"; endfunction");
+        project.Write("alias.rules", "import \"library.rules\" as library; result = library.Private();");
+        project.Write("global.rules", "import \"library.rules\"; result = Private();");
 
-        var context = new RuleScriptEngine().ExecuteFile(project.PathFor("main.rules"));
-        Assert.Equal("legacy", context.Get<string>("result"));
+        var engine = new RuleScriptEngine();
+        Assert.Throws<RuntimeException>(() => engine.ExecuteFile(project.PathFor("alias.rules")));
+        Assert.Throws<RuntimeException>(() => engine.ExecuteFile(project.PathFor("global.rules")));
+    }
+
+    [Fact]
+    public void ModuleWithoutExportsDoesNotExposeConstants()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("values.rules", "const Private = 42;");
+        project.Write("alias.rules", "import \"values.rules\" as values; result = values.Private;");
+        project.Write("global.rules", "import \"values.rules\"; result = Private;");
+
+        var engine = new RuleScriptEngine();
+        Assert.Throws<RuntimeException>(() => engine.ExecuteFile(project.PathFor("alias.rules")));
+        Assert.Throws<RuntimeException>(() => engine.ExecuteFile(project.PathFor("global.rules")));
     }
 
     [Fact]
@@ -171,6 +186,37 @@ public sealed class Version140ModuleExportTests
         Assert.DoesNotContain(result.UserFunctions, function => function.Name == "lib.Private");
         Assert.Equal(RuleScriptValueType.Number, Assert.Single(result.Variables, variable => variable.Name == "answer").Type);
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == RuleScriptDiagnosticCodes.UndefinedVariable);
+    }
+
+    [Fact]
+    public void Analyze_ModuleWithoutExportsDoesNotExposeFunctions()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("library.rules", "function Private(): return 1; endfunction");
+        var engine = new RuleScriptEngine { WorkingDirectory = project.DirectoryPath };
+
+        var result = engine.Analyze("import \"library.rules\"; import \"library.rules\" as library;");
+
+        Assert.DoesNotContain("Private", result.UserFunctionNames);
+        Assert.DoesNotContain("library.Private", result.UserFunctionNames);
+        Assert.DoesNotContain(result.UserFunctions, function => function.Name == "Private");
+        Assert.DoesNotContain(result.UserFunctions, function => function.Name == "library.Private");
+    }
+
+    [Fact]
+    public void Analyze_VisibleVariablesIncludeExportedConstantsFromImports()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("values.rules", "export const Answer = 42; const Secret = 0;");
+        var engine = new RuleScriptEngine { WorkingDirectory = project.DirectoryPath };
+
+        var result = engine.Analyze("import \"values.rules\";", line: 1, column: 23);
+
+        var answer = Assert.Single(result.VisibleVariables, variable => variable.Name == "Answer");
+        Assert.Equal(RuleScriptValueType.Number, answer.Type);
+        Assert.True(answer.IsReadOnly);
+        Assert.True(answer.IsExported);
+        Assert.DoesNotContain("Secret", result.VisibleVariableNames);
     }
 
     [Fact]

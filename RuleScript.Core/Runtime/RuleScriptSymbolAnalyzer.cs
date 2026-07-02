@@ -182,6 +182,14 @@ internal static class RuleScriptSymbolAnalyzer
         var constantDeclarations = statements.OfType<ConstStatement>()
             .GroupBy(constant => constant.Name, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        if (visible is not null)
+        {
+            visible = visible
+                .Select(variable => knownTypeInfos?.ContainsKey(variable.Name) == true
+                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true)
+                    : variable)
+                .ToArray();
+        }
         var variables = ToSymbols(allVariables)
             .Select(variable => constantDeclarations.TryGetValue(variable.Name, out var constant)
                 ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: constant.IsExported)

@@ -231,7 +231,7 @@ public sealed class RuntimeNotificationTests
     {
         using var project = new RuleScriptProject();
         project.Write("module.rules", """
-            function Value():
+            export function Value():
                 return missing;
             endfunction
             """);

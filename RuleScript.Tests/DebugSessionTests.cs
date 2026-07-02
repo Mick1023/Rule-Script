@@ -394,7 +394,7 @@ public sealed class DebugSessionTests
     {
         using var project = new RuleScriptProject();
         project.Write("module.rules", """
-            function Value():
+            export function Value():
                 var value = 41;
                 return value + 1;
             endfunction

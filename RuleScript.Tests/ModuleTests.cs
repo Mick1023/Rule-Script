@@ -9,7 +9,7 @@ public sealed class ModuleTests
     public void ExtensionlessImport_UsesDefaultScriptFileExtension()
     {
         using var project = new RuleScriptProject();
-        project.Write("common.rules", "function Value(): return 42; endfunction");
+        project.Write("common.rules", "export function Value(): return 42; endfunction");
         project.Write("main.rules", "import \"common\"; result = Value();");
 
         var context = ExecuteFile(project, "main.rules");
@@ -21,8 +21,8 @@ public sealed class ModuleTests
     public void CustomScriptFileExtension_AppliesToExecuteFileAndNestedImports()
     {
         using var project = new RuleScriptProject();
-        project.Write("shared.rule", "function Value(): return 42; endfunction");
-        project.Write("common.rule", "import \"shared\"; function Read(): return Value(); endfunction");
+        project.Write("shared.rule", "export function Value(): return 42; endfunction");
+        project.Write("common.rule", "import \"shared\"; export function Read(): return Value(); endfunction");
         project.Write("main.rule", "import \"common\"; result = Read();");
         var engine = new RuleScriptEngine
         {
@@ -41,7 +41,7 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("common.rules", """
-            function IsAlarm(value):
+            export function IsAlarm(value):
                 return value > 500;
             endfunction
             """);
@@ -61,7 +61,7 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("common.rules", """
-            function SetA():
+            export function SetA():
                 global.A = 42;
             endfunction
             """);
@@ -83,7 +83,7 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("robot.rules", """
-            function GetSensor():
+            export function GetSensor():
                 return "robot";
             endfunction
             """);
@@ -103,7 +103,7 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("robot.rules", """
-            function GetSensor():
+            export function GetSensor():
                 return "robot";
             endfunction
             """);
@@ -123,12 +123,12 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("robot.rules", """
-            function GetSensor():
+            export function GetSensor():
                 return "robot";
             endfunction
             """);
         project.Write("port.rules", """
-            function GetSensor():
+            export function GetSensor():
                 return "port";
             endfunction
             """);
@@ -196,14 +196,14 @@ public sealed class ModuleTests
     {
         using var project = new RuleScriptProject();
         project.Write("sensor.rules", """
-            function Read():
+            export function Read():
                 return "nested";
             endfunction
             """);
         project.Write("robot.rules", """
             import "sensor.rules" as sensor;
 
-            function GetSensor():
+            export function GetSensor():
                 return sensor.Read();
             endfunction
             """);
@@ -222,8 +222,8 @@ public sealed class ModuleTests
     public void GlobalImport_AndAliasImport_CanCoexist()
     {
         using var project = new RuleScriptProject();
-        project.Write("common.rules", "function Name(): return \"common\"; endfunction");
-        project.Write("robot.rules", "function Name(): return \"robot\"; endfunction");
+        project.Write("common.rules", "export function Name(): return \"common\"; endfunction");
+        project.Write("robot.rules", "export function Name(): return \"robot\"; endfunction");
         project.Write("main.rules", """
             import "common.rules";
             import "robot.rules" as robot;
@@ -240,7 +240,7 @@ public sealed class ModuleTests
     public void MainFileFunction_CanOverrideGlobalImportedFunction()
     {
         using var project = new RuleScriptProject();
-        project.Write("common.rules", "function Name(): return \"common\"; endfunction");
+        project.Write("common.rules", "export function Name(): return \"common\"; endfunction");
         project.Write("main.rules", """
             import "common.rules";
 
@@ -260,8 +260,8 @@ public sealed class ModuleTests
     public void AliasImportedFunction_DoesNotOverrideMainOrGlobalFunction()
     {
         using var project = new RuleScriptProject();
-        project.Write("common.rules", "function Name(): return \"common\"; endfunction");
-        project.Write("robot.rules", "function Name(): return \"robot\"; endfunction");
+        project.Write("common.rules", "export function Name(): return \"common\"; endfunction");
+        project.Write("robot.rules", "export function Name(): return \"robot\"; endfunction");
         project.Write("main.rules", """
             import "common.rules";
             import "robot.rules" as robot;

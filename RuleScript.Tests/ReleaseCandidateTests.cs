@@ -38,7 +38,7 @@ public sealed class ReleaseCandidateTests
     {
         using var project = new RuleScriptProject();
         project.Write("alarm.rules", """
-            function IsAlarm(distance):
+            export function IsAlarm(distance):
                 return distance > 500;
             endfunction
             """);
@@ -66,7 +66,7 @@ public sealed class ReleaseCandidateTests
     {
         using var project = new RuleScriptProject();
         project.Write("sensor.rules", """
-            function Payload():
+            export function Payload():
                 return JsonParse("{ \"samples\": [100, 200, 300], \"unit\": \"mm\" }");
             endfunction
             """);
@@ -93,11 +93,11 @@ public sealed class ReleaseCandidateTests
     {
         using var project = new RuleScriptProject();
         project.Write("rules.rules", """
-            function NormalizeSku(value):
+            export function NormalizeSku(value):
                 return ToUpper(Trim(value));
             endfunction
 
-            function NeedsReorder(quantity):
+            export function NeedsReorder(quantity):
                 return quantity < 10;
             endfunction
             """);
