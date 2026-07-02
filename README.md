@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.3.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.3.0)
+[![Stable Version](https://img.shields.io/badge/stable-v1.4.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.4.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the stable package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.3.0
+dotnet add package RuleScript.Core --version 1.4.0
 ```
 
 ## Quick Start
@@ -70,12 +70,12 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
-- [v1.3.0 Overview](https://github.com/Mick1023/Rule-Script/wiki/v1.3.0-Overview)
-- [v1.3.0 API Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.3.0-API-Reference)
+- [v1.4.0 Overview](https://github.com/Mick1023/Rule-Script/wiki/v1.4.0-Overview)
+- [v1.4.0 API Reference](https://github.com/Mick1023/Rule-Script/wiki/v1.4.0-API-Reference)
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.3.0 release notes](docs/releases/v1.3.0.md) for switch statements, guarded cases, the `null` literal, and new diagnostics.
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.4.0 release notes](docs/releases/v1.4.0.md) for explicit module exports, object and collection features, null-safe operators, destructuring, and expanded static analysis.
 
 ```bash
 dotnet build RuleScript.sln
