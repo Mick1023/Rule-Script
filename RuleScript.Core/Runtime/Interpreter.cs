@@ -1718,11 +1718,6 @@ public sealed class Interpreter
 
         CheckCallDepth(function.Name, line, column);
 
-        if (_callStack.Contains(callId, StringComparer.Ordinal))
-        {
-            throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
-        }
-
         var localScope = new Dictionary<string, RuntimeValue>(StringComparer.Ordinal);
 
         for (var i = 0; i < function.Parameters.Count; i++)
@@ -1778,11 +1773,6 @@ public sealed class Interpreter
         var callId = $"{userFunction.Module.Name}::{function.Name}";
 
         CheckCallDepth(function.Name, line, column);
-
-        if (_callStack.Contains(callId, StringComparer.Ordinal))
-        {
-            throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
-        }
 
         var localScope = new Dictionary<string, RuntimeValue>(StringComparer.Ordinal);
 
