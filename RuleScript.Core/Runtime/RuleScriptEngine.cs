@@ -598,12 +598,9 @@ public sealed class RuleScriptEngine
                 var script = ImportResolver.ReadAllText(path);
                 var importedStatements = new RuleScript.Core.Parser.Parser(
                     new RuleScript.Core.Lexer.Lexer(script).Tokenize()).Parse();
-                var hasExplicitExports = importedStatements.Any(statement =>
-                    statement is FunctionDeclarationStatement { IsExported: true }
-                    or ConstStatement { IsExported: true });
                 var publicConstants = importedStatements
                     .OfType<ConstStatement>()
-                    .Where(constant => !hasExplicitExports || constant.IsExported)
+                    .Where(constant => constant.IsExported)
                     .ToArray();
                 var variableTypes = RuleScriptSymbolAnalyzer.Analyze(importedStatements, null, null).Variables
                     .ToDictionary(variable => variable.Name, variable => variable.Type, StringComparer.Ordinal);
@@ -659,40 +656,13 @@ public sealed class RuleScriptEngine
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
             var functions = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
-            var baseDirectory = Path.GetDirectoryName(path) ?? ResolveWorkingDirectory();
-
-            foreach (var import in statements.OfType<ImportStatement>().Where(value => value.Alias is null))
-            {
-                var nestedPath = ResolveImportPath(import.Path, baseDirectory);
-
-                if (!ImportResolver.Exists(nestedPath))
-                {
-                    continue;
-                }
-
-                foreach (var function in LoadImportedFunctionSignatures(nestedPath, importStack, moduleCache))
-                {
-                    functions[function.Name] = function;
-                }
-            }
 
             var analyzedFunctions = RuleScriptSymbolAnalyzer.Analyze(statements, null, null).Functions;
-            var hasExplicitExports = statements.Any(statement =>
-                statement is FunctionDeclarationStatement { IsExported: true }
-                or ConstStatement { IsExported: true });
             var exportedFunctionNames = statements
                 .OfType<FunctionDeclarationStatement>()
-                .Where(function => !hasExplicitExports || function.IsExported)
+                .Where(function => function.IsExported)
                 .Select(function => function.Name)
                 .ToHashSet(StringComparer.Ordinal);
-
-            if (hasExplicitExports)
-            {
-                foreach (var name in functions.Keys.Where(name => !exportedFunctionNames.Contains(name)).ToArray())
-                {
-                    functions.Remove(name);
-                }
-            }
 
             foreach (var function in analyzedFunctions)
             {
@@ -1187,15 +1157,11 @@ public sealed class RuleScriptEngine
             }
         }
 
-        var hasExplicitExports = statements.Any(statement =>
-            statement is FunctionDeclarationStatement { IsExported: true }
-            or ConstStatement { IsExported: true });
-
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
             var userFunction = new UserFunction(function, module);
             module.Functions[function.Name] = userFunction;
-            if (!hasExplicitExports || function.IsExported)
+            if (function.IsExported)
             {
                 module.PublicFunctions[function.Name] = userFunction;
             }
@@ -1205,22 +1171,9 @@ public sealed class RuleScriptEngine
         {
             var moduleConstant = new ModuleConstant(constant, module);
             module.Constants[constant.Name] = moduleConstant;
-            if (!hasExplicitExports || constant.IsExported)
+            if (constant.IsExported)
             {
                 module.PublicConstants[constant.Name] = moduleConstant;
-            }
-        }
-
-        if (!hasExplicitExports)
-        {
-            foreach (var function in module.Functions)
-            {
-                module.PublicFunctions.TryAdd(function.Key, function.Value);
-            }
-
-            foreach (var constant in module.Constants)
-            {
-                module.PublicConstants.TryAdd(constant.Key, constant.Value);
             }
         }
 
@@ -1370,26 +1323,10 @@ public sealed class RuleScriptEngine
             }
 
             var functions = new HashSet<string>(StringComparer.Ordinal);
-            var baseDirectory = Path.GetDirectoryName(path) ?? ResolveWorkingDirectory();
-            var hasExplicitExports = statements.Any(statement =>
-                statement is FunctionDeclarationStatement { IsExported: true }
-                or ConstStatement { IsExported: true });
-
-            foreach (var import in statements
-                .OfType<ImportStatement>()
-                .Where(value => value.Alias is null && !hasExplicitExports))
-            {
-                var nestedPath = ResolveImportPath(import.Path, baseDirectory);
-
-                if (ImportResolver.Exists(nestedPath))
-                {
-                    functions.UnionWith(LoadImportedFunctionSymbols(nestedPath, importStack, moduleCache));
-                }
-            }
 
             functions.UnionWith(statements
                 .OfType<FunctionDeclarationStatement>()
-                .Where(function => !hasExplicitExports || function.IsExported)
+                .Where(function => function.IsExported)
                 .Select(function => function.Name));
 
             var snapshot = functions.Order(StringComparer.Ordinal).ToArray();

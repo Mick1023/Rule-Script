@@ -184,7 +184,7 @@ public sealed class ApiStabilizationTests
     {
         using var project = new RuleScriptProject();
         project.Write("robot.rules", """
-            function Payload():
+            export function Payload():
                 return JsonParse("{ \"items\": [1, 2, 3] }");
             endfunction
             """);
@@ -234,7 +234,7 @@ public sealed class ApiStabilizationTests
     {
         using var project = new RuleScriptProject();
         project.Write("common.rules", """
-            function Label(value):
+            export function Label(value):
                 return "Value:" + ToString(value);
             endfunction
             """);

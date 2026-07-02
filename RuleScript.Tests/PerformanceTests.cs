@@ -106,7 +106,7 @@ public sealed class PerformanceTests
         for (var i = 0; i < 100; i++)
         {
             common.AppendLine($"""
-                function F{i}():
+                export function F{i}():
                     return {i};
                 endfunction
 

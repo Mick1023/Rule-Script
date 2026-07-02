@@ -55,7 +55,7 @@ public sealed class TypedAnalysisTests
         {
             File.WriteAllText(
                 Path.Combine(directory, "math.rules"),
-                "function Add(left: number, right: number): return left + right; endfunction");
+                "export function Add(left: number, right: number): return left + right; endfunction");
             var engine = new RuleScriptEngine { WorkingDirectory = directory };
 
             var result = engine.Analyze("import \"math.rules\" as math;");

@@ -129,7 +129,7 @@ public sealed class ModulePolishTests
     public void Import_WithCurrentDirectoryRelativePath_Works()
     {
         using var project = new RuleScriptProject();
-        project.Write("common.rules", "function Value(): return 7; endfunction");
+        project.Write("common.rules", "export function Value(): return 7; endfunction");
         project.Write("main.rules", """
             import "./common.rules";
 
@@ -146,7 +146,7 @@ public sealed class ModulePolishTests
     {
         using var project = new RuleScriptProject();
         Directory.CreateDirectory(project.PathFor("modules"));
-        project.Write("common.rules", "function Value(): return 8; endfunction");
+        project.Write("common.rules", "export function Value(): return 8; endfunction");
         project.Write("main.rules", """
             import "modules/../common.rules";
 
@@ -163,7 +163,7 @@ public sealed class ModulePolishTests
     {
         using var project = new RuleScriptProject();
         Directory.CreateDirectory(project.PathFor("modules"));
-        project.Write("common.rules", "function Value(): return 9; endfunction");
+        project.Write("common.rules", "export function Value(): return 9; endfunction");
         project.Write("main.rules", """
             import "./common.rules";
             import "modules/../common.rules";
