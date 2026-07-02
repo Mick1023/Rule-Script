@@ -116,6 +116,124 @@ public sealed class Version150ParallelTests
     }
 
     [Fact]
+    public void Analyze_RejectsUnsafeHostFunctionReachedThroughUserFunction()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Unsafe", _ => null);
+
+        var result = engine.TryAnalyze("""
+            function Wrapper():
+                Unsafe();
+            endfunction
+            parallel:
+                task:
+                    Wrapper();
+                endtask
+            endparallel
+            """);
+
+        var diagnostic = Assert.Single(
+            result.Diagnostics,
+            value => value.Code == RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe);
+        Assert.Equal("Unsafe", diagnostic.TokenText);
+    }
+
+    [Fact]
+    public void Analyze_RejectsUnsafeHostFunctionReachedThroughMultipleUserFunctions()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Unsafe", _ => null);
+
+        var result = engine.TryAnalyze("""
+            function Inner():
+                Unsafe();
+            endfunction
+            function Outer():
+                if true then:
+                    Inner();
+                endif
+            endfunction
+            parallel:
+                task:
+                    Outer();
+                endtask
+            endparallel
+            """);
+
+        Assert.Contains(
+            result.Diagnostics,
+            value => value.Code == RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe
+                && value.TokenText == "Unsafe");
+    }
+
+    [Fact]
+    public void Analyze_AllowsThreadSafeHostFunctionReachedThroughUserFunction()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Safe", _ => null, threadSafe: true);
+
+        var result = engine.TryAnalyze("""
+            function Wrapper():
+                Safe();
+            endfunction
+            parallel:
+                task:
+                    Wrapper();
+                endtask
+            endparallel
+            """);
+
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            value => value.Code == RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe);
+    }
+
+    [Fact]
+    public void Analyze_ParallelReachabilityHandlesUserFunctionCycles()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Unsafe", _ => null);
+
+        var result = engine.TryAnalyze("""
+            function First():
+                Second();
+            endfunction
+            function Second():
+                First();
+                Unsafe();
+            endfunction
+            parallel:
+                task:
+                    First();
+                endtask
+            endparallel
+            """);
+
+        Assert.Contains(
+            result.Diagnostics,
+            value => value.Code == RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe
+                && value.TokenText == "Unsafe");
+    }
+
+    [Fact]
+    public void Analyze_AllowsUnsafeHostFunctionWhenUserFunctionIsNotParallelReachable()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction("Unsafe", _ => null);
+
+        var result = engine.TryAnalyze("""
+            function SequentialOnly():
+                Unsafe();
+            endfunction
+            SequentialOnly();
+            """);
+
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            value => value.Code == RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe);
+    }
+
+    [Fact]
     public async Task AttributedThreadSafeHostFunctionCanRunInParallel()
     {
         var engine = new RuleScriptEngine();

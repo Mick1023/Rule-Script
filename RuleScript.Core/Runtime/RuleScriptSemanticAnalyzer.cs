@@ -45,6 +45,8 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
+        var parallelReachableFunctions = FindParallelReachableFunctions(statements);
+
         foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
         {
             AnalyzeStatement(
@@ -84,17 +86,26 @@ internal static class RuleScriptSemanticAnalyzer
                 locals[parameter.Name] = RuleScriptTypeInfo.From(type);
             }
 
-            foreach (var statement in function.Body)
+            var previousParallelState = AnalyzingParallelTask.Value;
+            AnalyzingParallelTask.Value = parallelReachableFunctions.Contains(function.Name);
+            try
             {
-                AnalyzeStatement(
-                    statement,
-                    locals,
-                    globals,
-                    localDeclarations,
-                    diagnostics,
-                    availableFunctions,
-                    userFunctions,
-                    hostFunctions);
+                foreach (var statement in function.Body)
+                {
+                    AnalyzeStatement(
+                        statement,
+                        locals,
+                        globals,
+                        localDeclarations,
+                        diagnostics,
+                        availableFunctions,
+                        userFunctions,
+                        hostFunctions);
+                }
+            }
+            finally
+            {
+                AnalyzingParallelTask.Value = previousParallelState;
             }
         }
 
@@ -108,6 +119,204 @@ internal static class RuleScriptSemanticAnalyzer
         ReportReadonlyAssignments(statements, readonlyNames, diagnostics);
 
         return diagnostics;
+    }
+
+    private static IReadOnlySet<string> FindParallelReachableFunctions(IReadOnlyList<Statement> statements)
+    {
+        var functions = statements
+            .OfType<FunctionDeclarationStatement>()
+            .GroupBy(function => function.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+
+        VisitStatements(statements, false, (call, inParallelTask) =>
+        {
+            if (inParallelTask && functions.ContainsKey(call.Name))
+            {
+                reachable.Add(call.Name);
+            }
+        });
+
+        var callGraph = functions.ToDictionary(
+            function => function.Key,
+            function =>
+            {
+                var callees = new HashSet<string>(StringComparer.Ordinal);
+                VisitStatements(function.Value.Body, false, (call, _) =>
+                {
+                    if (functions.ContainsKey(call.Name))
+                    {
+                        callees.Add(call.Name);
+                    }
+                });
+                return callees;
+            },
+            StringComparer.Ordinal);
+        var pending = new Queue<string>(reachable);
+
+        while (pending.TryDequeue(out var functionName))
+        {
+            foreach (var callee in callGraph[functionName])
+            {
+                if (reachable.Add(callee))
+                {
+                    pending.Enqueue(callee);
+                }
+            }
+        }
+
+        return reachable;
+    }
+
+    private static void VisitStatements(
+        IEnumerable<Statement> statements,
+        bool inParallelTask,
+        Action<FunctionCallExpression, bool> visitCall)
+    {
+        foreach (var statement in statements)
+        {
+            VisitStatement(statement, inParallelTask, visitCall);
+        }
+    }
+
+    private static void VisitStatement(
+        Statement statement,
+        bool inParallelTask,
+        Action<FunctionCallExpression, bool> visitCall)
+    {
+        switch (statement)
+        {
+            case VarStatement variable:
+                VisitExpression(variable.Initializer, inParallelTask, visitCall);
+                break;
+            case ConstStatement constant:
+                VisitExpression(constant.Initializer, inParallelTask, visitCall);
+                break;
+            case DestructuringVarStatement destructuring:
+                VisitExpression(destructuring.Initializer, inParallelTask, visitCall);
+                break;
+            case AssignmentStatement assignment:
+                VisitExpression(assignment.Value, inParallelTask, visitCall);
+                break;
+            case TargetAssignmentStatement assignment:
+                VisitExpression(assignment.Target, inParallelTask, visitCall);
+                VisitExpression(assignment.Value, inParallelTask, visitCall);
+                break;
+            case GlobalAssignmentStatement assignment:
+                VisitExpression(assignment.Value, inParallelTask, visitCall);
+                break;
+            case ExpressionStatement expression:
+                VisitExpression(expression.Expression, inParallelTask, visitCall);
+                break;
+            case ReturnStatement returned:
+                VisitExpression(returned.Value, inParallelTask, visitCall);
+                break;
+            case IfStatement conditional:
+                VisitExpression(conditional.Condition, inParallelTask, visitCall);
+                VisitStatements(conditional.ThenBranch, inParallelTask, visitCall);
+                VisitStatements(conditional.ElseBranch, inParallelTask, visitCall);
+                break;
+            case WhileStatement loop:
+                VisitExpression(loop.Condition, inParallelTask, visitCall);
+                VisitStatements(loop.Body, inParallelTask, visitCall);
+                break;
+            case ForeachStatement loop:
+                VisitExpression(loop.Iterable, inParallelTask, visitCall);
+                VisitStatements(loop.Body, inParallelTask, visitCall);
+                break;
+            case SwitchStatement switchStatement:
+                VisitExpression(switchStatement.Value, inParallelTask, visitCall);
+                foreach (var switchCase in switchStatement.Cases)
+                {
+                    foreach (var label in switchCase.Labels)
+                    {
+                        VisitExpression(label.Value, inParallelTask, visitCall);
+                        VisitExpression(label.Guard, inParallelTask, visitCall);
+                    }
+                    VisitStatements(switchCase.Body, inParallelTask, visitCall);
+                }
+                if (switchStatement.DefaultBranch is not null)
+                {
+                    VisitStatements(switchStatement.DefaultBranch, inParallelTask, visitCall);
+                }
+                break;
+            case ParallelStatementSyntax parallel:
+                foreach (var task in parallel.Tasks)
+                {
+                    VisitStatements(task.Body, true, visitCall);
+                }
+                break;
+            case FunctionDeclarationStatement function:
+                VisitStatements(function.Body, false, visitCall);
+                break;
+        }
+    }
+
+    private static void VisitExpression(
+        Expression? expression,
+        bool inParallelTask,
+        Action<FunctionCallExpression, bool> visitCall)
+    {
+        switch (expression)
+        {
+            case null:
+            case LiteralExpression:
+            case IdentifierExpression:
+            case GlobalIdentifierExpression:
+                return;
+            case FunctionCallExpression call:
+                visitCall(call, inParallelTask);
+                foreach (var argument in call.Arguments)
+                {
+                    VisitExpression(argument, inParallelTask, visitCall);
+                }
+                return;
+            case ModuleFunctionCallExpression call:
+                foreach (var argument in call.Arguments)
+                {
+                    VisitExpression(argument, inParallelTask, visitCall);
+                }
+                return;
+            case UnaryExpression unary:
+                VisitExpression(unary.Operand, inParallelTask, visitCall);
+                return;
+            case BinaryExpression binary:
+                VisitExpression(binary.Left, inParallelTask, visitCall);
+                VisitExpression(binary.Right, inParallelTask, visitCall);
+                return;
+            case NullCoalescingExpression coalescing:
+                VisitExpression(coalescing.Left, inParallelTask, visitCall);
+                VisitExpression(coalescing.Right, inParallelTask, visitCall);
+                return;
+            case ArrayExpression array:
+                foreach (var element in array.Elements)
+                {
+                    VisitExpression(element, inParallelTask, visitCall);
+                }
+                return;
+            case ObjectLiteralExpression objectLiteral:
+                foreach (var property in objectLiteral.Properties)
+                {
+                    VisitExpression(property.Value, inParallelTask, visitCall);
+                }
+                return;
+            case IndexExpression index:
+                VisitExpression(index.Target, inParallelTask, visitCall);
+                VisitExpression(index.Index, inParallelTask, visitCall);
+                return;
+            case MemberAccessExpression member:
+                VisitExpression(member.Target, inParallelTask, visitCall);
+                return;
+            case ConditionalMemberAccessExpression member:
+                VisitExpression(member.Target, inParallelTask, visitCall);
+                return;
+            case ParallelExpressionSyntax parallel:
+                foreach (var task in parallel.Tasks)
+                {
+                    VisitStatements(task.Body, true, visitCall);
+                }
+                return;
+        }
     }
 
     private static void AnalyzeStatement(
