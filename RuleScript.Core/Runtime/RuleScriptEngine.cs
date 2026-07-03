@@ -165,9 +165,21 @@ public sealed class RuleScriptEngine
 
     public void RegisterFunction(string name, Func<IReadOnlyList<object?>, object?> function, bool threadSafe)
     {
-        RegisterFunction(name, function);
-        _hostFunctionSignatures[name] = new RuleScriptHostFunctionSymbol(
-            name, [], RuleScriptValueType.Unknown, isThreadSafe: threadSafe, isVariadic: true);
+        RegisterFunction(name, function, new RuleScriptHostFunctionOptions { ThreadSafe = threadSafe });
+    }
+
+    /// <summary>
+    /// Registers or replaces a host function using extensible execution and metadata options.
+    /// </summary>
+    public void RegisterFunction(
+        string name,
+        Func<IReadOnlyList<object?>, object?> function,
+        RuleScriptHostFunctionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, options, isAsync: false);
+        _hostFunctions[name] = function;
+        _hostFunctionSignatures[name] = signature;
     }
 
     /// <summary>
@@ -186,24 +198,67 @@ public sealed class RuleScriptEngine
                 continue;
             }
 
-            if (typeof(Task).IsAssignableFrom(method.ReturnType))
+            var isAsync = TryGetAttributedAsyncResultType(method.ReturnType, out var asyncResultType);
+            if (!isAsync && typeof(Task).IsAssignableFrom(method.ReturnType))
             {
                 throw new NotSupportedException(
-                    $"Attributed async host method '{method.Name}' is not supported; use RegisterFunctionAsync.");
+                    $"Attributed async host method '{method.Name}' must return Task or Task<T>.");
             }
 
             var parameters = method.GetParameters();
-            var symbols = parameters
+            var cancellationTokenIndexes = parameters
+                .Select((parameter, index) => (parameter, index))
+                .Where(item => item.parameter.ParameterType == typeof(CancellationToken))
+                .Select(item => item.index)
+                .ToArray();
+            if (cancellationTokenIndexes.Length > 1
+                || (cancellationTokenIndexes.Length == 1 && cancellationTokenIndexes[0] != parameters.Length - 1))
+            {
+                throw new NotSupportedException(
+                    $"Attributed host method '{method.Name}' may declare CancellationToken only as its final parameter.");
+            }
+
+            var injectCancellationToken = cancellationTokenIndexes.Length == 1;
+            var scriptParameters = injectCancellationToken ? parameters[..^1] : parameters;
+            var symbols = scriptParameters
                 .Select(parameter => new RuleScriptParameterSymbol(parameter.Name!, FromClrType(parameter.ParameterType)))
                 .ToArray();
             var name = string.IsNullOrWhiteSpace(attribute.Name) ? method.Name : attribute.Name;
+            var options = new RuleScriptHostFunctionOptions
+            {
+                Parameters = symbols,
+                ReturnType = isAsync
+                    ? asyncResultType is null
+                        ? RuleScriptValueType.Null
+                        : FromClrType(asyncResultType)
+                    : method.ReturnType == typeof(void)
+                        ? RuleScriptValueType.Null
+                        : FromClrType(method.ReturnType),
+                ThreadSafe = attribute.ThreadSafe,
+                Documentation = attribute.Documentation
+            };
 
-            RegisterFunction(
-                name!,
-                symbols,
-                method.ReturnType == typeof(void) ? RuleScriptValueType.Null : FromClrType(method.ReturnType),
-                arguments => method.Invoke(host, ConvertHostArguments(parameters, arguments)),
-                attribute.ThreadSafe);
+            if (isAsync)
+            {
+                RegisterFunctionAsync(
+                    name!,
+                    (arguments, cancellationToken) => InvokeAttributedFunctionAsync(
+                        host,
+                        method,
+                        scriptParameters,
+                        arguments,
+                        injectCancellationToken,
+                        cancellationToken),
+                    options);
+            }
+            else
+            {
+                RegisterFunction(
+                    name!,
+                    arguments => method.Invoke(host, ConvertHostArguments(scriptParameters, arguments)),
+                    options);
+            }
+
             registered++;
         }
 
@@ -219,10 +274,11 @@ public sealed class RuleScriptEngine
         RuleScriptValueType returnType,
         Func<IReadOnlyList<object?>, object?> function)
     {
-        ArgumentNullException.ThrowIfNull(function);
-        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: false);
-        _hostFunctions[name] = function;
-        _hostFunctionSignatures[name] = signature;
+        RegisterFunction(name, function, new RuleScriptHostFunctionOptions
+        {
+            Parameters = parameters,
+            ReturnType = returnType
+        });
     }
 
     public void RegisterFunction(
@@ -232,10 +288,12 @@ public sealed class RuleScriptEngine
         Func<IReadOnlyList<object?>, object?> function,
         bool threadSafe)
     {
-        ArgumentNullException.ThrowIfNull(function);
-        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: false, threadSafe);
-        _hostFunctions[name] = function;
-        _hostFunctionSignatures[name] = signature;
+        RegisterFunction(name, function, new RuleScriptHostFunctionOptions
+        {
+            Parameters = parameters,
+            ReturnType = returnType,
+            ThreadSafe = threadSafe
+        });
     }
 
     /// <summary>
@@ -257,9 +315,21 @@ public sealed class RuleScriptEngine
         Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
         bool threadSafe)
     {
-        RegisterFunctionAsync(name, function);
-        _asyncHostFunctionSignatures[name] = new RuleScriptHostFunctionSymbol(
-            name, [], RuleScriptValueType.Unknown, isAsync: true, isThreadSafe: threadSafe, isVariadic: true);
+        RegisterFunctionAsync(name, function, new RuleScriptHostFunctionOptions { ThreadSafe = threadSafe });
+    }
+
+    /// <summary>
+    /// Registers or replaces an async host function using extensible execution and metadata options.
+    /// </summary>
+    public void RegisterFunctionAsync(
+        string name,
+        Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
+        RuleScriptHostFunctionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, options, isAsync: true);
+        _asyncHostFunctions[name] = function;
+        _asyncHostFunctionSignatures[name] = signature;
     }
 
     /// <summary>
@@ -271,10 +341,11 @@ public sealed class RuleScriptEngine
         RuleScriptValueType returnType,
         Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function)
     {
-        ArgumentNullException.ThrowIfNull(function);
-        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: true);
-        _asyncHostFunctions[name] = function;
-        _asyncHostFunctionSignatures[name] = signature;
+        RegisterFunctionAsync(name, function, new RuleScriptHostFunctionOptions
+        {
+            Parameters = parameters,
+            ReturnType = returnType
+        });
     }
 
     public void RegisterFunctionAsync(
@@ -284,10 +355,12 @@ public sealed class RuleScriptEngine
         Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
         bool threadSafe)
     {
-        ArgumentNullException.ThrowIfNull(function);
-        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: true, threadSafe);
-        _asyncHostFunctions[name] = function;
-        _asyncHostFunctionSignatures[name] = signature;
+        RegisterFunctionAsync(name, function, new RuleScriptHostFunctionOptions
+        {
+            Parameters = parameters,
+            ReturnType = returnType,
+            ThreadSafe = threadSafe
+        });
     }
 
     /// <summary>
@@ -301,6 +374,18 @@ public sealed class RuleScriptEngine
         }
 
         RegisterFunctionAsync(name, (args, _) => function(args));
+    }
+
+    /// <summary>
+    /// Registers or replaces an async host function using extensible execution and metadata options.
+    /// </summary>
+    public void RegisterFunctionAsync(
+        string name,
+        Func<IReadOnlyList<object?>, Task<object?>> function,
+        RuleScriptHostFunctionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        RegisterFunctionAsync(name, (args, _) => function(args), options);
     }
 
     /// <summary>
@@ -671,7 +756,8 @@ public sealed class RuleScriptEngine
                     function.Parameters,
                     function.ReturnType,
                     function.IsReturnTypeNullable,
-                    function.IsExported);
+                    function.IsExported,
+                    function.Documentation);
             }
         }
     }
@@ -788,7 +874,11 @@ public sealed class RuleScriptEngine
                 : RuleScriptValueType.Unknown;
             return new RuleScriptParameterSymbol(parameter.Name, type);
         });
-        return new RuleScriptFunctionSymbol(declaration.Name, parameters);
+        return new RuleScriptFunctionSymbol(
+            declaration.Name,
+            parameters,
+            RuleScriptValueType.Unknown,
+            documentation: declaration.Documentation);
     }
 
     /// <summary>
@@ -1078,7 +1168,8 @@ public sealed class RuleScriptEngine
         IReadOnlyList<RuleScriptParameterSymbol> parameters,
         RuleScriptValueType returnType,
         bool isAsync,
-        bool isThreadSafe = false)
+        bool isThreadSafe = false,
+        string? documentation = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -1112,7 +1203,46 @@ public sealed class RuleScriptEngine
             }
         }
 
-        return new RuleScriptHostFunctionSymbol(name, parameters, returnType, isAsync, isThreadSafe);
+        return new RuleScriptHostFunctionSymbol(
+            name,
+            parameters,
+            returnType,
+            isAsync,
+            isThreadSafe,
+            documentation: documentation);
+    }
+
+    private static RuleScriptHostFunctionSymbol CreateHostFunctionSignature(
+        string name,
+        RuleScriptHostFunctionOptions options,
+        bool isAsync)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.Parameters is not null)
+        {
+            return CreateHostFunctionSignature(
+                name,
+                options.Parameters,
+                options.ReturnType,
+                isAsync,
+                options.ThreadSafe,
+                options.Documentation);
+        }
+
+        if (!Enum.IsDefined(options.ReturnType))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Host function return type is invalid.");
+        }
+
+        return new RuleScriptHostFunctionSymbol(
+            name,
+            [],
+            options.ReturnType,
+            isAsync,
+            options.ThreadSafe,
+            isVariadic: true,
+            documentation: options.Documentation);
     }
 
     private static object?[] ConvertHostArguments(
@@ -1129,6 +1259,55 @@ public sealed class RuleScriptEngine
                 : Convert.ChangeType(arguments[index], targetType, CultureInfo.InvariantCulture);
         }
         return converted;
+    }
+
+    private static bool TryGetAttributedAsyncResultType(Type returnType, out Type? resultType)
+    {
+        if (returnType == typeof(Task))
+        {
+            resultType = null;
+            return true;
+        }
+
+        if (returnType.IsGenericType && returnType.GetGenericTypeDefinition() == typeof(Task<>))
+        {
+            resultType = returnType.GenericTypeArguments[0];
+            return true;
+        }
+
+        resultType = null;
+        return false;
+    }
+
+    private static async Task<object?> InvokeAttributedFunctionAsync(
+        object host,
+        MethodInfo method,
+        IReadOnlyList<ParameterInfo> scriptParameters,
+        IReadOnlyList<object?> arguments,
+        bool injectCancellationToken,
+        CancellationToken cancellationToken)
+    {
+        var converted = ConvertHostArguments(scriptParameters, arguments);
+        object?[] invocationArguments;
+
+        if (injectCancellationToken)
+        {
+            invocationArguments = new object?[converted.Length + 1];
+            converted.CopyTo(invocationArguments, 0);
+            invocationArguments[^1] = cancellationToken;
+        }
+        else
+        {
+            invocationArguments = converted;
+        }
+
+        var task = method.Invoke(host, invocationArguments) as Task
+            ?? throw new InvalidOperationException($"Attributed async host method '{method.Name}' returned null.");
+        await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        return method.ReturnType == typeof(Task)
+            ? null
+            : method.ReturnType.GetProperty(nameof(Task<object>.Result))!.GetValue(task);
     }
 
     private static RuleScriptValueType FromClrType(Type type)
@@ -1487,7 +1666,8 @@ public sealed class RuleScriptEngine
             userFunctions,
             RegisteredFunctionNames,
             _builtinFunctions.Names,
-            importAliases);
+            importAliases,
+            builtinFunctions: _builtinFunctions.Signatures);
     }
 
     private void CollectImportedFunctionSymbolsFromTokens(IReadOnlyList<Token> tokens, ISet<string> userFunctions)

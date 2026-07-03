@@ -147,7 +147,8 @@ public sealed class RuleScriptAnalysisResult
                     symbol.Parameters,
                     symbol.ReturnType,
                     symbol.IsReturnTypeNullable,
-                    symbol.IsExported);
+                    symbol.IsExported,
+                    symbol.Documentation);
             }
         }
 
@@ -169,7 +170,8 @@ public sealed class RuleScriptAnalysisResult
                 symbol.ReturnType,
                 symbol.IsAsync,
                 symbol.IsThreadSafe,
-                symbol.IsVariadic))
+                symbol.IsVariadic,
+                symbol.Documentation))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.IsAsync)
             .ToArray()
@@ -183,7 +185,8 @@ public sealed class RuleScriptAnalysisResult
             .Select(symbol => new RuleScriptBuiltinFunctionSymbol(
                 symbol.Name,
                 symbol.Parameters,
-                symbol.ReturnType))
+                symbol.ReturnType,
+                symbol.Documentation))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ToArray()
             ?? [];

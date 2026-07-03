@@ -46,6 +46,7 @@ internal static class RuleScriptSymbolAnalyzer
         }
         var globals = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
         var allVariables = new Dictionary<string, RuleScriptTypeInfo>(knownTypes, StringComparer.Ordinal);
+        var variableDocumentation = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionDeclarations = statements
             .OfType<FunctionDeclarationStatement>()
             .GroupBy(function => function.Name, StringComparer.Ordinal)
@@ -112,6 +113,8 @@ internal static class RuleScriptSymbolAnalyzer
             CollectStatement(statement, globals, globals, allVariables, finalCallableReturnTypes);
         }
 
+        CollectVariableDocumentation(statements, variableDocumentation);
+
         var functions = functionDeclarations.Select(function =>
         {
             var returnType = functionReturnTypes[function.Name];
@@ -120,7 +123,8 @@ internal static class RuleScriptSymbolAnalyzer
                 functionParameters[function.Name],
                 returnType.Kind,
                 returnType.IsNullable,
-                function.IsExported);
+                function.IsExported,
+                function.Documentation);
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -176,7 +180,7 @@ internal static class RuleScriptSymbolAnalyzer
                 }
             }
 
-            visible = ToSymbols(visibleTypes);
+            visible = ToSymbols(visibleTypes, variableDocumentation);
         }
 
         var constantDeclarations = statements.OfType<ConstStatement>()
@@ -186,15 +190,15 @@ internal static class RuleScriptSymbolAnalyzer
         {
             visible = visible
                 .Select(variable => knownTypeInfos?.ContainsKey(variable.Name) == true
-                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true)
+                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true, Documentation: variable.Documentation)
                     : variable)
                 .ToArray();
         }
-        var variables = ToSymbols(allVariables)
+        var variables = ToSymbols(allVariables, variableDocumentation)
             .Select(variable => constantDeclarations.TryGetValue(variable.Name, out var constant)
-                ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: constant.IsExported)
+                ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: constant.IsExported, Documentation: variable.Documentation)
                 : knownTypeInfos?.ContainsKey(variable.Name) == true
-                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true)
+                    ? new RuleScriptVariableSymbol(variable.Name, variable.Type, IsReadOnly: true, IsExported: true, Documentation: variable.Documentation)
                     : variable)
             .ToArray();
         return new RuleScriptTypedSymbols(variables, functions, visible, diagnostics);
@@ -482,6 +486,73 @@ internal static class RuleScriptSymbolAnalyzer
         }
     }
 
+    private static void CollectVariableDocumentation(
+        IEnumerable<Statement> statements,
+        IDictionary<string, string> documentation)
+    {
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case VarStatement variable:
+                    SetDocumentation(documentation, variable.Name, variable.Documentation);
+                    break;
+                case ConstStatement constant:
+                    SetDocumentation(documentation, constant.Name, constant.Documentation);
+                    break;
+                case DestructuringVarStatement destructuring:
+                    foreach (var name in destructuring.Pattern.Names)
+                    {
+                        SetDocumentation(documentation, name, destructuring.Documentation);
+                    }
+                    break;
+                case FunctionDeclarationStatement function:
+                    CollectVariableDocumentation(function.Body, documentation);
+                    break;
+                case ForeachStatement loop:
+                    CollectVariableDocumentation(loop.Body, documentation);
+                    break;
+                case IfStatement conditional:
+                    CollectVariableDocumentation(conditional.ThenBranch, documentation);
+                    CollectVariableDocumentation(conditional.ElseBranch, documentation);
+                    break;
+                case SwitchStatement switchStatement:
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        CollectVariableDocumentation(switchCase.Body, documentation);
+                    }
+
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        CollectVariableDocumentation(switchStatement.DefaultBranch, documentation);
+                    }
+
+                    break;
+                case WhileStatement loop:
+                    CollectVariableDocumentation(loop.Body, documentation);
+                    break;
+                case ParallelStatementSyntax parallel:
+                    foreach (var task in parallel.Tasks)
+                    {
+                        CollectVariableDocumentation(task.Body, documentation);
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private static void SetDocumentation(
+        IDictionary<string, string> documentation,
+        string name,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            documentation[name] = value;
+        }
+    }
+
     private static RuleScriptTypeInfo Infer(
         Expression? expression,
         IDictionary<string, RuleScriptTypeInfo> scope,
@@ -722,10 +793,16 @@ internal static class RuleScriptSymbolAnalyzer
     }
 
     private static IReadOnlyList<RuleScriptVariableSymbol> ToSymbols(
-        IDictionary<string, RuleScriptTypeInfo> values)
+        IDictionary<string, RuleScriptTypeInfo> values,
+        IReadOnlyDictionary<string, string>? documentation = null)
     {
         return values
-            .Select(value => new RuleScriptVariableSymbol(value.Key, value.Value.Kind))
+            .Select(value => new RuleScriptVariableSymbol(
+                value.Key,
+                value.Value.Kind,
+                Documentation: documentation is not null && documentation.TryGetValue(value.Key, out var text)
+                    ? text
+                    : null))
             .OrderBy(value => value.Name, StringComparer.Ordinal)
             .ToArray();
     }

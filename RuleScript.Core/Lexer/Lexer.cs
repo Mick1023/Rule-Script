@@ -11,6 +11,7 @@ public sealed class Lexer
     private int _line = 1;
     private int _column = 1;
     private int _tokenColumn = 1;
+    private bool _includeComments;
 
     private static readonly Dictionary<string, TokenType> Keywords = new(StringComparer.Ordinal)
     {
@@ -56,8 +57,12 @@ public sealed class Lexer
         _source = source ?? throw new ArgumentNullException(nameof(source));
     }
 
-    public IReadOnlyList<Token> Tokenize()
+    public IReadOnlyList<Token> Tokenize() => Tokenize(includeComments: false);
+
+    internal IReadOnlyList<Token> Tokenize(bool includeComments)
     {
+        _includeComments = includeComments;
+
         while (!IsAtEnd())
         {
             _start = _current;
@@ -144,10 +149,24 @@ public sealed class Lexer
                 }
 
                 break;
+            case '#':
+                ScanRegionDirective();
+                break;
             case '/':
                 if (Match('/'))
                 {
-                    SkipLineComment();
+                    if (Match('/'))
+                    {
+                        ScanDocumentationComment();
+                    }
+                    else
+                    {
+                        ScanLineComment();
+                    }
+                }
+                else if (Match('*'))
+                {
+                    ScanBlockComment();
                 }
                 else
                 {
@@ -266,12 +285,101 @@ public sealed class Lexer
         AddToken(Keywords.GetValueOrDefault(text, TokenType.Identifier));
     }
 
-    private void SkipLineComment()
+    private void ScanLineComment()
     {
-        while (!IsAtEnd() && Peek() != '\n')
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
         {
             Advance();
         }
+
+        if (_includeComments)
+        {
+            AddToken(TokenType.LineComment);
+        }
+    }
+
+    private void ScanDocumentationComment()
+    {
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
+        {
+            Advance();
+        }
+
+        var content = _source[(_start + 3).._current];
+        if (content.StartsWith(' '))
+        {
+            content = content[1..];
+        }
+
+        AddToken(TokenType.DocumentationComment, content);
+    }
+
+    private void ScanRegionDirective()
+    {
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
+        {
+            Advance();
+        }
+
+        var directive = _source[_start.._current];
+        if (TryGetDirectiveValue(directive, "#region", out var name))
+        {
+            AddToken(TokenType.RegionStart, name);
+            return;
+        }
+
+        if (TryGetDirectiveValue(directive, "#endregion", out _))
+        {
+            AddToken(TokenType.RegionEnd);
+            return;
+        }
+
+        throw new SyntaxException($"Unsupported directive '{directive}'.", _line, _tokenColumn, directive);
+    }
+
+    private static bool TryGetDirectiveValue(string directive, string keyword, out string value)
+    {
+        if (!directive.StartsWith(keyword, StringComparison.Ordinal)
+            || (directive.Length > keyword.Length && !char.IsWhiteSpace(directive[keyword.Length])))
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        value = directive[keyword.Length..].Trim();
+        return true;
+    }
+
+    private void ScanBlockComment()
+    {
+        var commentLine = _line;
+
+        while (!IsAtEnd())
+        {
+            if (Peek() == '*' && PeekNext() == '/')
+            {
+                Advance();
+                Advance();
+                if (_includeComments)
+                {
+                    AddToken(TokenType.MultiLineComment);
+                }
+
+                return;
+            }
+
+            if (Peek() == '\n')
+            {
+                Advance();
+                NewLine();
+            }
+            else
+            {
+                Advance();
+            }
+        }
+
+        throw new SyntaxException("Unterminated multi-line comment.", commentLine, _tokenColumn, "/*");
     }
 
     private bool Match(char expected)

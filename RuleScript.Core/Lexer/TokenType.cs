@@ -10,6 +10,11 @@ public enum TokenType
     True,
     False,
     Null,
+    LineComment,
+    MultiLineComment,
+    DocumentationComment,
+    RegionStart,
+    RegionEnd,
 
     Var,
     Const,

@@ -15,8 +15,17 @@ public sealed class Parser
 
     public Parser(IReadOnlyList<Token> tokens)
     {
-        _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
+        ArgumentNullException.ThrowIfNull(tokens);
+        Regions = ParseRegions(tokens);
+        _tokens = tokens
+            .Where(token => token.Type is not TokenType.RegionStart
+                and not TokenType.RegionEnd
+                and not TokenType.LineComment
+                and not TokenType.MultiLineComment)
+            .ToArray();
     }
+
+    public IReadOnlyList<RuleScriptRegion> Regions { get; }
 
     public IReadOnlyList<Statement> Parse()
     {
@@ -62,6 +71,8 @@ public sealed class Parser
 
     private Statement ParseStatement()
     {
+        var documentation = ParseDocumentationComments();
+
         if (Match(TokenType.Import))
         {
             if (_blockDepth > 0)
@@ -79,22 +90,22 @@ public sealed class Parser
                 throw Error(Previous(), "Function declarations are only allowed at top level.");
             }
 
-            return ParseFunctionDeclarationStatement();
+            return ParseFunctionDeclarationStatement(documentation);
         }
 
         if (Match(TokenType.Var))
         {
-            return ParseVarStatement();
+            return ParseVarStatement(documentation);
         }
 
         if (Match(TokenType.Const))
         {
-            return ParseConstStatement();
+            return ParseConstStatement(documentation);
         }
 
         if (Match(TokenType.Export))
         {
-            return ParseExportStatement();
+            return ParseExportStatement(documentation);
         }
 
         if (Match(TokenType.If))
@@ -155,7 +166,7 @@ public sealed class Parser
         return ParseExpressionStatement();
     }
 
-    private Statement ParseVarStatement()
+    private Statement ParseVarStatement(string? documentation)
     {
         var start = Previous();
 
@@ -170,7 +181,8 @@ public sealed class Parser
                 pattern,
                 destructuringInitializer,
                 patternStart.Line,
-                patternStart.Column), start);
+                patternStart.Column,
+                documentation), start);
         }
 
         var name = Consume(TokenType.Identifier, "Expected variable name after 'var'.");
@@ -182,29 +194,29 @@ public sealed class Parser
         }
 
         Consume(TokenType.Semicolon, "Expected ';' after variable declaration.");
-        return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+        return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column, documentation), start);
     }
 
-    private ConstStatement ParseConstStatement()
+    private ConstStatement ParseConstStatement(string? documentation = null)
     {
         var start = Previous();
         var name = Consume(TokenType.Identifier, "Expected constant name after 'const'.");
         Consume(TokenType.Assign, "Expected '=' after constant name.");
         var initializer = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after constant declaration.");
-        return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+        return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column, documentation), start);
     }
 
-    private Statement ParseExportStatement()
+    private Statement ParseExportStatement(string? documentation)
     {
         if (Match(TokenType.Function))
         {
-            return ParseFunctionDeclarationStatement() with { IsExported = true };
+            return ParseFunctionDeclarationStatement(documentation) with { IsExported = true };
         }
 
         if (Match(TokenType.Const))
         {
-            return ParseConstStatement() with { IsExported = true };
+            return ParseConstStatement(documentation) with { IsExported = true };
         }
 
         throw Error(Peek(), "Expected 'function' or 'const' after 'export'.");
@@ -441,7 +453,7 @@ public sealed class Parser
         return Complete(new SwitchStatement(value, cases, defaultBranch, switchToken.Line, switchToken.Column), switchToken);
     }
 
-    private FunctionDeclarationStatement ParseFunctionDeclarationStatement()
+    private FunctionDeclarationStatement ParseFunctionDeclarationStatement(string? documentation)
     {
         var functionToken = Previous();
         var name = Consume(TokenType.Identifier, "Expected function name after 'function'.");
@@ -489,9 +501,33 @@ public sealed class Parser
         ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
         var declaration = new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column)
         {
-            ParameterDefinitions = parameterDefinitions
+            ParameterDefinitions = parameterDefinitions,
+            Documentation = documentation
         };
         return Complete(declaration, functionToken);
+    }
+
+    private string? ParseDocumentationComments()
+    {
+        if (!Check(TokenType.DocumentationComment))
+        {
+            return null;
+        }
+
+        var lines = new List<string>();
+        while (Match(TokenType.DocumentationComment))
+        {
+            lines.Add(Previous().Literal?.ToString() ?? string.Empty);
+        }
+
+        var firstContentLine = lines.FindIndex(line => !string.IsNullOrWhiteSpace(line));
+        if (firstContentLine < 0)
+        {
+            return string.Empty;
+        }
+
+        var lastContentLine = lines.FindLastIndex(line => !string.IsNullOrWhiteSpace(line));
+        return string.Join("\n", lines[firstContentLine..(lastContentLine + 1)]);
     }
 
     private BreakStatement ParseBreakStatement()
@@ -1021,6 +1057,34 @@ public sealed class Parser
         _blockDepth = 0;
         _parallelDepth = 0;
         _diagnostics = null;
+    }
+
+    private static IReadOnlyList<RuleScriptRegion> ParseRegions(IReadOnlyList<Token> tokens)
+    {
+        var openRegions = new Stack<Token>();
+        var regions = new List<RuleScriptRegion>();
+
+        foreach (var token in tokens)
+        {
+            if (token.Type == TokenType.RegionStart)
+            {
+                openRegions.Push(token);
+            }
+            else if (token.Type == TokenType.RegionEnd && openRegions.TryPop(out var start))
+            {
+                regions.Add(new RuleScriptRegion(
+                    start.Literal?.ToString() ?? string.Empty,
+                    start.Line,
+                    start.Column,
+                    token.Line,
+                    token.EndColumn));
+            }
+        }
+
+        return regions
+            .OrderBy(region => region.StartLine)
+            .ThenBy(region => region.StartColumn)
+            .ToArray();
     }
 
     private static bool IsStatementStart(TokenType type)
