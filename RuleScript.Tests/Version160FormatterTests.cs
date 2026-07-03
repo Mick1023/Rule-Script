@@ -124,6 +124,60 @@ public sealed class Version160FormatterTests
     }
 
     [Fact]
+    public void Format_PreservesBlankLinesBetweenDeclarations()
+    {
+        const string source = """
+            /// A function
+            function A():
+            end
+
+            /// B function
+            function B():
+            end
+            """;
+
+        var formatted = RuleScriptFormatterCore.Format(source);
+
+        Assert.Equal(NormalizeExpected("""
+            /// A function
+            function A():
+            end
+
+            /// B function
+            function B():
+            end
+            """), formatted);
+    }
+
+    [Fact]
+    public void Format_CommentsFollowTheNextStatementIndentation()
+    {
+        const string source = """
+            while true:
+            // 註解
+            var a=b;
+            /*
+            多行註解
+            */
+            var v="";
+            end
+            """;
+
+        var formatted = RuleScriptFormatterCore.Format(source);
+
+        Assert.Equal(NormalizeExpected("""
+            while true:
+                // 註解
+                var a = b;
+                /*
+                  多行註解
+                */
+                var v = "";
+            end
+            """), formatted);
+    }
+
+    [Fact]
     public void Format_ResultParsesSuccessfully()
     {
         const string source = "if true then:\nresult={items:[1,2,3]};\nendif";

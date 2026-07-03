@@ -16,17 +16,51 @@ internal static class RuleScriptFormatterCore
         _ = new RuleScript.Core.Parser.Parser(tokens).Parse();
 
         var writer = new FormatterWriter();
-        foreach (var token in tokens)
+        Token? previousToken = null;
+
+        for (var index = 0; index < tokens.Count; index++)
         {
+            var token = tokens[index];
             if (token.Type == TokenType.EndOfFile)
             {
                 break;
             }
 
-            writer.Write(token);
+            if (previousToken is not null)
+            {
+                writer.PreserveBlankLines(GetBlankLineCount(previousToken, token));
+            }
+
+            writer.Write(token, FindNextSignificantTokenType(tokens, index + 1));
+            previousToken = token;
         }
 
         return writer.GetText();
+    }
+
+    private static int GetBlankLineCount(Token previous, Token current)
+    {
+        var currentStartLine = current.Line - current.Lexeme.Count(character => character == '\n');
+        return Math.Max(0, currentStartLine - previous.Line - 1);
+    }
+
+    private static TokenType? FindNextSignificantTokenType(IReadOnlyList<Token> tokens, int startIndex)
+    {
+        for (var index = startIndex; index < tokens.Count; index++)
+        {
+            var type = tokens[index].Type;
+            if (type == TokenType.EndOfFile)
+            {
+                return null;
+            }
+
+            if (!IsTrivia(type))
+            {
+                return type;
+            }
+        }
+
+        return null;
     }
 
     private enum BlockKind
@@ -60,11 +94,11 @@ internal static class RuleScriptFormatterCore
         private BlockKind? _pendingBlock;
         private TokenType? _lineHead;
 
-        public void Write(Token token)
+        public void Write(Token token, TokenType? nextSignificantTokenType)
         {
             if (IsTrivia(token.Type))
             {
-                WriteTrivia(token);
+                WriteTrivia(token, nextSignificantTokenType);
                 return;
             }
 
@@ -106,6 +140,20 @@ internal static class RuleScriptFormatterCore
             }
         }
 
+        public void PreserveBlankLines(int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+
+            EnsureLineStart();
+            _builder.Append('\n', count);
+            _atLineStart = true;
+            _previous = null;
+            _lineHead = null;
+        }
+
         public string GetText()
         {
             var result = _builder.ToString().TrimEnd();
@@ -125,12 +173,14 @@ internal static class RuleScriptFormatterCore
             _previous = token.Type;
         }
 
-        private void WriteTrivia(Token token)
+        private void WriteTrivia(Token token, TokenType? nextSignificantTokenType)
         {
+            var triviaIndent = GetIndentForNextToken(nextSignificantTokenType);
+
             switch (token.Type)
             {
                 case TokenType.LineComment:
-                    WriteIndentIfNeeded();
+                    WriteIndentIfNeeded(triviaIndent);
                     if (_previous.HasValue)
                     {
                         _builder.Append(' ');
@@ -146,32 +196,39 @@ internal static class RuleScriptFormatterCore
                         _builder.Append(' ');
                     }
 
-                    WriteMultilineComment(token.Lexeme);
+                    WriteMultilineComment(token.Lexeme, triviaIndent);
                     break;
 
                 case TokenType.DocumentationComment:
                 case TokenType.RegionStart:
                 case TokenType.RegionEnd:
                     EnsureLineStart();
-                    WriteIndentIfNeeded();
+                    WriteIndentIfNeeded(triviaIndent);
                     _builder.Append(token.Lexeme.TrimEnd());
                     NewLine();
                     break;
             }
         }
 
-        private void WriteMultilineComment(string comment)
+        private void WriteMultilineComment(string comment, int indent)
         {
-            var lines = comment.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            var lines = comment.ReplaceLineEndings("\n").Split('\n');
             for (var index = 0; index < lines.Length; index++)
             {
-                WriteIndentIfNeeded();
-                _builder.Append(lines[index].TrimEnd());
-
-                if (index < lines.Length - 1)
+                if (index > 0)
                 {
                     NewLine();
                 }
+
+                WriteIndentIfNeeded(indent);
+
+                var line = lines[index].Trim();
+                if (index > 0 && line != "*/")
+                {
+                    _builder.Append("  ");
+                }
+
+                _builder.Append(line);
             }
 
             if (lines.Length > 1)
@@ -183,6 +240,36 @@ internal static class RuleScriptFormatterCore
                 _builder.Append(' ');
                 _previous = null;
             }
+        }
+
+        private int GetIndentForNextToken(TokenType? nextTokenType)
+        {
+            var indent = _indent;
+
+            if (nextTokenType.HasValue && IsEnd(nextTokenType.Value))
+            {
+                if (_blocks.TryPeek(out var current)
+                    && current.Kind == BlockKind.Switch
+                    && current.CaseBodyActive)
+                {
+                    indent--;
+                }
+
+                indent--;
+            }
+            else if (nextTokenType is TokenType.Else or TokenType.ElseIf)
+            {
+                indent--;
+            }
+            else if (nextTokenType is TokenType.Case or TokenType.Default
+                && _blocks.TryPeek(out var current)
+                && current.Kind == BlockKind.Switch
+                && current.CaseBodyActive)
+            {
+                indent--;
+            }
+
+            return Math.Max(0, indent);
         }
 
         private void WriteEnd(Token token)
@@ -281,14 +368,14 @@ internal static class RuleScriptFormatterCore
             _lineHead = null;
         }
 
-        private void WriteIndentIfNeeded()
+        private void WriteIndentIfNeeded(int? indent = null)
         {
             if (!_atLineStart)
             {
                 return;
             }
 
-            _builder.Append(' ', IndentText.Length * _indent);
+            _builder.Append(' ', IndentText.Length * (indent ?? _indent));
             _atLineStart = false;
         }
 
@@ -396,10 +483,11 @@ internal static class RuleScriptFormatterCore
             or TokenType.EndTask
             or TokenType.EndParallel;
 
-        private static bool IsTrivia(TokenType type) => type is TokenType.LineComment
-            or TokenType.MultiLineComment
-            or TokenType.DocumentationComment
-            or TokenType.RegionStart
-            or TokenType.RegionEnd;
     }
+
+    private static bool IsTrivia(TokenType type) => type is TokenType.LineComment
+        or TokenType.MultiLineComment
+        or TokenType.DocumentationComment
+        or TokenType.RegionStart
+        or TokenType.RegionEnd;
 }
