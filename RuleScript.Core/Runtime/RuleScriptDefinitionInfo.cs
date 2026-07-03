@@ -35,6 +35,16 @@ public sealed class RuleScriptDefinitionInfo
 
     public RuleScriptSourceRange? SelectionRange { get; }
 
+    public string? File => SelectionRange?.File ?? Range?.File;
+
+    public int? Line => SelectionRange?.StartLine ?? Range?.StartLine;
+
+    public int? Column => SelectionRange?.StartColumn ?? Range?.StartColumn;
+
+    public int? EndLine => SelectionRange?.EndLine ?? Range?.EndLine;
+
+    public int? EndColumn => SelectionRange?.EndColumn ?? Range?.EndColumn;
+
     public string? Documentation { get; }
 
     public bool IsExternal { get; }

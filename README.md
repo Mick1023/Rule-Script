@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Release Candidate](https://img.shields.io/badge/rc-v1.7.0--rc1.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.7.0-rc1.0)
+[![Release Candidate](https://img.shields.io/badge/rc-v1.7.0--rc1.1-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.7.0-rc1.1)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the release candidate package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.7.0-rc1.0
+dotnet add package RuleScript.Core --version 1.7.0-rc1.1
 ```
 
 ## Quick Start
@@ -70,11 +70,11 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
-- [v1.7.0-rc1.0 release notes](docs/releases/v1.7.0-rc1.0.md)
+- [v1.7.0-rc1.1 release notes](docs/releases/v1.7.0-rc1.1.md)
 
 ## Development
 
-The latest release candidate source is available on this branch. See the [v1.7.0-rc1.0 release notes](docs/releases/v1.7.0-rc1.0.md) for Navigation API metadata, Go To Definition, and Find References support.
+The latest release candidate source is available on this branch. See the [v1.7.0-rc1.1 release notes](docs/releases/v1.7.0-rc1.1.md) for Navigation API metadata, Go To Definition, and Find References support.
 
 ```bash
 dotnet build RuleScript.sln
