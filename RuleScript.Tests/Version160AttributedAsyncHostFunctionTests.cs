@@ -47,6 +47,7 @@ public sealed class Version160AttributedAsyncHostFunctionTests
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
+        await host.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(host.ObservedCancellation);
         Assert.Empty(Assert.Single(engine.RegisteredHostFunctions).Parameters);
     }
@@ -83,6 +84,8 @@ public sealed class Version160AttributedAsyncHostFunctionTests
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public bool ObservedCancellation { get; private set; }
 
         [RuleScriptFunction]
@@ -97,6 +100,7 @@ public sealed class Version160AttributedAsyncHostFunctionTests
             catch (OperationCanceledException)
             {
                 ObservedCancellation = true;
+                CancellationObserved.SetResult();
                 throw;
             }
         }
