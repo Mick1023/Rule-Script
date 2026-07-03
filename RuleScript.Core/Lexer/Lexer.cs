@@ -147,7 +147,14 @@ public sealed class Lexer
             case '/':
                 if (Match('/'))
                 {
-                    SkipLineComment();
+                    if (Match('/'))
+                    {
+                        ScanDocumentationComment();
+                    }
+                    else
+                    {
+                        SkipLineComment();
+                    }
                 }
                 else if (Match('*'))
                 {
@@ -276,6 +283,22 @@ public sealed class Lexer
         {
             Advance();
         }
+    }
+
+    private void ScanDocumentationComment()
+    {
+        while (!IsAtEnd() && Peek() != '\n')
+        {
+            Advance();
+        }
+
+        var content = _source[(_start + 3).._current];
+        if (content.StartsWith(' '))
+        {
+            content = content[1..];
+        }
+
+        AddToken(TokenType.DocumentationComment, content);
     }
 
     private void SkipBlockComment()

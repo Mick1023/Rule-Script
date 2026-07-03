@@ -10,6 +10,7 @@ public enum TokenType
     True,
     False,
     Null,
+    DocumentationComment,
 
     Var,
     Const,

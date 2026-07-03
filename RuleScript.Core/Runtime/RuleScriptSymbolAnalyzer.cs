@@ -120,7 +120,8 @@ internal static class RuleScriptSymbolAnalyzer
                 functionParameters[function.Name],
                 returnType.Kind,
                 returnType.IsNullable,
-                function.IsExported);
+                function.IsExported,
+                function.Documentation);
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 

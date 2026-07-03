@@ -9,6 +9,8 @@ public sealed record FunctionDeclarationStatement(
 {
     public bool IsExported { get; init; }
 
+    public string? Documentation { get; init; }
+
     public IReadOnlyList<FunctionParameterDefinition> ParameterDefinitions { get; init; } =
         Parameters.Select(parameter => new FunctionParameterDefinition(parameter)).ToArray();
 }

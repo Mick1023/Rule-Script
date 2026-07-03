@@ -671,7 +671,8 @@ public sealed class RuleScriptEngine
                     function.Parameters,
                     function.ReturnType,
                     function.IsReturnTypeNullable,
-                    function.IsExported);
+                    function.IsExported,
+                    function.Documentation);
             }
         }
     }
@@ -788,7 +789,11 @@ public sealed class RuleScriptEngine
                 : RuleScriptValueType.Unknown;
             return new RuleScriptParameterSymbol(parameter.Name, type);
         });
-        return new RuleScriptFunctionSymbol(declaration.Name, parameters);
+        return new RuleScriptFunctionSymbol(
+            declaration.Name,
+            parameters,
+            RuleScriptValueType.Unknown,
+            documentation: declaration.Documentation);
     }
 
     /// <summary>

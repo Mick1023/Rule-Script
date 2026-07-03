@@ -62,6 +62,8 @@ public sealed class Parser
 
     private Statement ParseStatement()
     {
+        var documentation = ParseDocumentationComments();
+
         if (Match(TokenType.Import))
         {
             if (_blockDepth > 0)
@@ -79,7 +81,7 @@ public sealed class Parser
                 throw Error(Previous(), "Function declarations are only allowed at top level.");
             }
 
-            return ParseFunctionDeclarationStatement();
+            return ParseFunctionDeclarationStatement(documentation);
         }
 
         if (Match(TokenType.Var))
@@ -94,7 +96,7 @@ public sealed class Parser
 
         if (Match(TokenType.Export))
         {
-            return ParseExportStatement();
+            return ParseExportStatement(documentation);
         }
 
         if (Match(TokenType.If))
@@ -195,11 +197,11 @@ public sealed class Parser
         return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column), start);
     }
 
-    private Statement ParseExportStatement()
+    private Statement ParseExportStatement(string? documentation)
     {
         if (Match(TokenType.Function))
         {
-            return ParseFunctionDeclarationStatement() with { IsExported = true };
+            return ParseFunctionDeclarationStatement(documentation) with { IsExported = true };
         }
 
         if (Match(TokenType.Const))
@@ -441,7 +443,7 @@ public sealed class Parser
         return Complete(new SwitchStatement(value, cases, defaultBranch, switchToken.Line, switchToken.Column), switchToken);
     }
 
-    private FunctionDeclarationStatement ParseFunctionDeclarationStatement()
+    private FunctionDeclarationStatement ParseFunctionDeclarationStatement(string? documentation)
     {
         var functionToken = Previous();
         var name = Consume(TokenType.Identifier, "Expected function name after 'function'.");
@@ -489,9 +491,33 @@ public sealed class Parser
         ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
         var declaration = new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column)
         {
-            ParameterDefinitions = parameterDefinitions
+            ParameterDefinitions = parameterDefinitions,
+            Documentation = documentation
         };
         return Complete(declaration, functionToken);
+    }
+
+    private string? ParseDocumentationComments()
+    {
+        if (!Check(TokenType.DocumentationComment))
+        {
+            return null;
+        }
+
+        var lines = new List<string>();
+        while (Match(TokenType.DocumentationComment))
+        {
+            lines.Add(Previous().Literal?.ToString() ?? string.Empty);
+        }
+
+        var firstContentLine = lines.FindIndex(line => !string.IsNullOrWhiteSpace(line));
+        if (firstContentLine < 0)
+        {
+            return string.Empty;
+        }
+
+        var lastContentLine = lines.FindLastIndex(line => !string.IsNullOrWhiteSpace(line));
+        return string.Join("\n", lines[firstContentLine..(lastContentLine + 1)]);
     }
 
     private BreakStatement ParseBreakStatement()
