@@ -11,6 +11,7 @@ public sealed class Lexer
     private int _line = 1;
     private int _column = 1;
     private int _tokenColumn = 1;
+    private bool _includeComments;
 
     private static readonly Dictionary<string, TokenType> Keywords = new(StringComparer.Ordinal)
     {
@@ -56,8 +57,12 @@ public sealed class Lexer
         _source = source ?? throw new ArgumentNullException(nameof(source));
     }
 
-    public IReadOnlyList<Token> Tokenize()
+    public IReadOnlyList<Token> Tokenize() => Tokenize(includeComments: false);
+
+    internal IReadOnlyList<Token> Tokenize(bool includeComments)
     {
+        _includeComments = includeComments;
+
         while (!IsAtEnd())
         {
             _start = _current;
@@ -156,12 +161,12 @@ public sealed class Lexer
                     }
                     else
                     {
-                        SkipLineComment();
+                        ScanLineComment();
                     }
                 }
                 else if (Match('*'))
                 {
-                    SkipBlockComment();
+                    ScanBlockComment();
                 }
                 else
                 {
@@ -280,11 +285,16 @@ public sealed class Lexer
         AddToken(Keywords.GetValueOrDefault(text, TokenType.Identifier));
     }
 
-    private void SkipLineComment()
+    private void ScanLineComment()
     {
         while (!IsAtEnd() && Peek() != '\n')
         {
             Advance();
+        }
+
+        if (_includeComments)
+        {
+            AddToken(TokenType.LineComment);
         }
     }
 
@@ -340,7 +350,7 @@ public sealed class Lexer
         return true;
     }
 
-    private void SkipBlockComment()
+    private void ScanBlockComment()
     {
         var commentLine = _line;
 
@@ -350,6 +360,11 @@ public sealed class Lexer
             {
                 Advance();
                 Advance();
+                if (_includeComments)
+                {
+                    AddToken(TokenType.MultiLineComment);
+                }
+
                 return;
             }
 

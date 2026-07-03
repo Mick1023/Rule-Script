@@ -18,7 +18,10 @@ public sealed class Parser
         ArgumentNullException.ThrowIfNull(tokens);
         Regions = ParseRegions(tokens);
         _tokens = tokens
-            .Where(token => token.Type is not TokenType.RegionStart and not TokenType.RegionEnd)
+            .Where(token => token.Type is not TokenType.RegionStart
+                and not TokenType.RegionEnd
+                and not TokenType.LineComment
+                and not TokenType.MultiLineComment)
             .ToArray();
     }
 
