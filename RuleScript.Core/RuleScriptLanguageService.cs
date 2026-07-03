@@ -29,6 +29,25 @@ public static class RuleScriptLanguageService
     }
 
     /// <summary>
+    /// Finds declaration and usage metadata for the symbol at the requested 1-based source position.
+    /// </summary>
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(string source, int line, int column)
+    {
+        return FindReferences(new RuleScriptEngine(), source, line, column);
+    }
+
+    /// <summary>
+    /// Finds declaration and usage metadata for the symbol at the requested 1-based source position using the supplied engine metadata.
+    /// </summary>
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptEngine engine, string source, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(source);
+
+        return RuleScriptNavigationAnalyzer.FindReferences(engine, source, line, column);
+    }
+
+    /// <summary>
     /// Parses named region directives and returns their folding ranges.
     /// </summary>
     public static IReadOnlyList<RuleScriptRegion> GetRegions(string source)

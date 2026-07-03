@@ -37,6 +37,27 @@ internal sealed class RuleScriptNavigationAnalyzer
             : null;
     }
 
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptEngine engine, string source, int line, int column)
+    {
+        var analyzer = new RuleScriptNavigationAnalyzer(engine);
+        analyzer.Analyze(source);
+        var symbol = analyzer.FindSymbol(line, column);
+
+        if (symbol is null)
+        {
+            return [];
+        }
+
+        var key = symbol.Key;
+        return analyzer._symbols
+            .Where(reference => string.Equals(reference.Key, key, StringComparison.Ordinal))
+            .OrderBy(reference => reference.Range?.File ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(reference => reference.Range?.StartLine ?? 0)
+            .ThenBy(reference => reference.Range?.StartColumn ?? 0)
+            .Select(reference => reference.ToReference())
+            .ToArray();
+    }
+
     private void Analyze(string source)
     {
         var tokens = new Lexer.Lexer(source).Tokenize();
@@ -487,6 +508,11 @@ internal sealed class RuleScriptNavigationAnalyzer
                 IsExternal,
                 Parameters,
                 ReturnType);
+        }
+
+        public RuleScriptReferenceInfo ToReference()
+        {
+            return new RuleScriptReferenceInfo(Name, Kind, SelectionRange ?? Range, IsDeclaration, IsExternal);
         }
     }
 }
