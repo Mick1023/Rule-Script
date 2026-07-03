@@ -27,6 +27,16 @@ public sealed class RuleScriptReferenceInfo
 
     public RuleScriptSourceRange? Range { get; }
 
+    public string? File => Range?.File;
+
+    public int? Line => Range?.StartLine;
+
+    public int? Column => Range?.StartColumn;
+
+    public int? EndLine => Range?.EndLine;
+
+    public int? EndColumn => Range?.EndColumn;
+
     public bool IsDeclaration { get; }
 
     public bool IsExternal { get; }

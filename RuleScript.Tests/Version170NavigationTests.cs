@@ -47,6 +47,58 @@ public sealed class Version170NavigationTests
         Assert.Equal((1, 17, 1, 29), RangeTuple(definition.SelectionRange));
     }
 
+
+    [Fact]
+    public void GetDefinition_LocalFunction_ExposesFileLineColumnProperties()
+    {
+        const string source = """
+            function Test():
+            endfunction
+
+            Test();
+            """;
+
+        var definition = RuleScriptLanguageService.GetDefinition(source, 4, 1);
+
+        Assert.NotNull(definition);
+        Assert.Null(definition.File);
+        Assert.Equal(1, definition.Line);
+        Assert.Equal(10, definition.Column);
+        Assert.Equal(1, definition.EndLine);
+        Assert.Equal(14, definition.EndColumn);
+    }
+
+    [Fact]
+    public void FindReferences_ImportedFunction_ExposesFileLineColumnProperties()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("Player.rules", """
+            export function UpdatePlayer():
+                UpdatePlayer();
+            endfunction
+            """);
+        var engine = new RuleScriptEngine { WorkingDirectory = project.Directory };
+        const string source = """
+            import "Player";
+
+            UpdatePlayer();
+            """;
+
+        var references = RuleScriptLanguageService.FindReferences(engine, source, 3, 1);
+
+        var importedDeclaration = Assert.Single(references, reference => reference.IsDeclaration);
+        Assert.EndsWith("Player.rules", importedDeclaration.File);
+        Assert.Equal(1, importedDeclaration.Line);
+        Assert.Equal(17, importedDeclaration.Column);
+        Assert.Equal(1, importedDeclaration.EndLine);
+        Assert.Equal(29, importedDeclaration.EndColumn);
+
+        var currentFileCall = Assert.Single(references, reference => !reference.IsDeclaration && reference.File is null);
+        Assert.Null(currentFileCall.File);
+        Assert.Equal(3, currentFileCall.Line);
+        Assert.Equal(1, currentFileCall.Column);
+    }
+
     [Fact]
     public void GetDefinition_HostFunction_ReturnsExternalMetadata()
     {
