@@ -11,109 +11,109 @@ public sealed class BuiltinFunctions
 
     public BuiltinFunctions()
     {
-        RegisterTyped("Print", Print, RuleScriptValueType.Any,
+        RegisterTyped("Print", Print, RuleScriptValueType.Any, "Returns the supplied value and lets hosts observe it as a normal expression result.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ToString", ToStringValue, RuleScriptValueType.String,
+        RegisterTyped("ToString", ToStringValue, RuleScriptValueType.String, "Converts a value to its invariant string representation.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ParseInt", ParseInt, RuleScriptValueType.Number,
+        RegisterTyped("ParseInt", ParseInt, RuleScriptValueType.Number, "Parses a string or whole numeric value as an integer number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ParseDecimal", ParseDecimal, RuleScriptValueType.Number,
+        RegisterTyped("ParseDecimal", ParseDecimal, RuleScriptValueType.Number, "Parses a string or numeric value as a decimal number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("Trim", Trim, RuleScriptValueType.String,
+        RegisterTyped("Trim", Trim, RuleScriptValueType.String, "Removes leading and trailing whitespace from a value converted to text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ToUpper", ToUpper, RuleScriptValueType.String,
+        RegisterTyped("ToUpper", ToUpper, RuleScriptValueType.String, "Converts a value to uppercase invariant text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ToLower", ToLower, RuleScriptValueType.String,
+        RegisterTyped("ToLower", ToLower, RuleScriptValueType.String, "Converts a value to lowercase invariant text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("StartsWith", StartsWith, RuleScriptValueType.Boolean,
+        RegisterTyped("StartsWith", StartsWith, RuleScriptValueType.Boolean, "Returns whether text starts with the specified prefix using ordinal comparison.",
             new("value", RuleScriptValueType.Any),
             new("prefix", RuleScriptValueType.Any));
-        RegisterTyped("EndsWith", EndsWith, RuleScriptValueType.Boolean,
+        RegisterTyped("EndsWith", EndsWith, RuleScriptValueType.Boolean, "Returns whether text ends with the specified suffix using ordinal comparison.",
             new("value", RuleScriptValueType.Any),
             new("suffix", RuleScriptValueType.Any));
-        RegisterTyped("Contains", Contains, RuleScriptValueType.Boolean,
+        RegisterTyped("Contains", Contains, RuleScriptValueType.Boolean, "Returns whether text contains the specified search value using ordinal comparison.",
             new("value", RuleScriptValueType.Any),
             new("searchValue", RuleScriptValueType.Any));
-        RegisterTyped("Split", Split, RuleScriptValueType.Array,
+        RegisterTyped("Split", Split, RuleScriptValueType.Array, "Splits text by the specified separator and returns an array of parts.",
             new("value", RuleScriptValueType.Any),
             new("separator", RuleScriptValueType.Any));
-        RegisterTyped("Join", Join, RuleScriptValueType.String,
+        RegisterTyped("Join", Join, RuleScriptValueType.String, "Joins array values into text with the specified separator.",
             new("separator", RuleScriptValueType.Any),
             new("values", RuleScriptValueType.Array));
-        RegisterTyped("Replace", Replace, RuleScriptValueType.String,
+        RegisterTyped("Replace", Replace, RuleScriptValueType.String, "Replaces all ordinal matches of oldValue with newValue in text.",
             new("value", RuleScriptValueType.Any),
             new("oldValue", RuleScriptValueType.Any),
             new("newValue", RuleScriptValueType.Any));
-        RegisterTyped("Substring", Substring, RuleScriptValueType.String,
+        RegisterTyped("Substring", Substring, RuleScriptValueType.String, "Returns a substring from text using a zero-based start index and length.",
             new("value", RuleScriptValueType.Any),
             new("start", RuleScriptValueType.Number),
             new("length", RuleScriptValueType.Number));
-        RegisterTyped("Length", Length, RuleScriptValueType.Number,
+        RegisterTyped("Length", Length, RuleScriptValueType.Number, "Returns the number of items in an array or characters in text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("ArrayAdd", ArrayAdd, RuleScriptValueType.Array,
+        RegisterTyped("ArrayAdd", ArrayAdd, RuleScriptValueType.Array, "Appends a value to an array and returns the same array.",
             new("array", RuleScriptValueType.Array),
             new("value", RuleScriptValueType.Any));
-        RegisterTyped("ArrayInsert", ArrayInsert, RuleScriptValueType.Array,
+        RegisterTyped("ArrayInsert", ArrayInsert, RuleScriptValueType.Array, "Inserts a value into an array at the specified zero-based index.",
             new("array", RuleScriptValueType.Array),
             new("index", RuleScriptValueType.Number),
             new("value", RuleScriptValueType.Any));
-        RegisterTyped("ArrayRemove", ArrayRemove, RuleScriptValueType.Boolean,
+        RegisterTyped("ArrayRemove", ArrayRemove, RuleScriptValueType.Boolean, "Removes the first matching value from an array and returns whether one was removed.",
             new("array", RuleScriptValueType.Array),
             new("value", RuleScriptValueType.Any));
-        RegisterTyped("ArrayRemoveAt", ArrayRemoveAt, RuleScriptValueType.Any,
+        RegisterTyped("ArrayRemoveAt", ArrayRemoveAt, RuleScriptValueType.Any, "Removes and returns the array item at the specified zero-based index.",
             new("array", RuleScriptValueType.Array),
             new("index", RuleScriptValueType.Number));
-        RegisterTyped("ArraySort", ArraySort, RuleScriptValueType.Array,
+        RegisterTyped("ArraySort", ArraySort, RuleScriptValueType.Array, "Sorts an array of all strings or all numbers in ascending order.",
             new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
-        RegisterTyped("ArrayContains", ArrayContains, RuleScriptValueType.Boolean,
+        RegisterTyped("ArrayContains", ArrayContains, RuleScriptValueType.Boolean, "Returns whether an array contains a matching value.",
             new("array", RuleScriptValueType.Array),
             new("value", RuleScriptValueType.Any));
-        RegisterTyped("ArrayClear", ArrayClear, RuleScriptValueType.Array,
+        RegisterTyped("ArrayClear", ArrayClear, RuleScriptValueType.Array, "Removes all items from an array and returns the same array.",
             new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
-        RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array,
+        RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array, "Returns the object's keys sorted by ordinal name.",
             new RuleScriptParameterSymbol("object", RuleScriptValueType.Object));
-        RegisterTyped("ObjectContainsKey", ObjectContainsKey, RuleScriptValueType.Boolean,
+        RegisterTyped("ObjectContainsKey", ObjectContainsKey, RuleScriptValueType.Boolean, "Returns whether an object contains the specified string key.",
             new("object", RuleScriptValueType.Object),
             new("key", RuleScriptValueType.String));
-        RegisterTyped("Abs", Abs, RuleScriptValueType.Number,
+        RegisterTyped("Abs", Abs, RuleScriptValueType.Number, "Returns the absolute value of a number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
-        RegisterTyped("Min", Min, RuleScriptValueType.Number,
+        RegisterTyped("Min", Min, RuleScriptValueType.Number, "Returns the smaller of two numbers.",
             new("left", RuleScriptValueType.Number),
             new("right", RuleScriptValueType.Number));
-        RegisterTyped("Max", Max, RuleScriptValueType.Number,
+        RegisterTyped("Max", Max, RuleScriptValueType.Number, "Returns the larger of two numbers.",
             new("left", RuleScriptValueType.Number),
             new("right", RuleScriptValueType.Number));
-        RegisterTyped("Clamp", Clamp, RuleScriptValueType.Number,
+        RegisterTyped("Clamp", Clamp, RuleScriptValueType.Number, "Restricts a number to the inclusive min and max range.",
             new("value", RuleScriptValueType.Number),
             new("min", RuleScriptValueType.Number),
             new("max", RuleScriptValueType.Number));
-        RegisterTyped("Round", Round, RuleScriptValueType.Number,
+        RegisterTyped("Round", Round, RuleScriptValueType.Number, "Rounds a number to the nearest whole number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
-        RegisterTyped("Floor", Floor, RuleScriptValueType.Number,
+        RegisterTyped("Floor", Floor, RuleScriptValueType.Number, "Returns the greatest whole number less than or equal to the number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
-        RegisterTyped("Ceiling", Ceiling, RuleScriptValueType.Number,
+        RegisterTyped("Ceiling", Ceiling, RuleScriptValueType.Number, "Returns the smallest whole number greater than or equal to the number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
-        RegisterTyped("ParseBool", ParseBool, RuleScriptValueType.Boolean,
+        RegisterTyped("ParseBool", ParseBool, RuleScriptValueType.Boolean, "Parses a bool or string value as a boolean.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("IsNull", IsNull, RuleScriptValueType.Boolean,
+        RegisterTyped("IsNull", IsNull, RuleScriptValueType.Boolean, "Returns whether the supplied value is null.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("TypeOf", TypeOf, RuleScriptValueType.String,
+        RegisterTyped("TypeOf", TypeOf, RuleScriptValueType.String, "Returns the RuleScript type name for a value.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("Coalesce", Coalesce, RuleScriptValueType.Any,
+        RegisterTyped("Coalesce", Coalesce, RuleScriptValueType.Any, "Returns the value when it is not null; otherwise returns the fallback.",
             new("value", RuleScriptValueType.Any),
             new("fallback", RuleScriptValueType.Any));
-        RegisterTyped("JsonParse", JsonFunctions.JsonParse, RuleScriptValueType.Object,
+        RegisterTyped("JsonParse", JsonFunctions.JsonParse, RuleScriptValueType.Object, "Parses JSON text into RuleScript object, array, and primitive values.",
             new RuleScriptParameterSymbol("json", RuleScriptValueType.String));
-        RegisterTyped("JsonStringify", JsonFunctions.JsonStringify, RuleScriptValueType.String,
+        RegisterTyped("JsonStringify", JsonFunctions.JsonStringify, RuleScriptValueType.String, "Serializes a RuleScript value to JSON text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
-        RegisterTyped("JsonGet", JsonFunctions.JsonGet, RuleScriptValueType.Any,
+        RegisterTyped("JsonGet", JsonFunctions.JsonGet, RuleScriptValueType.Any, "Reads a value from a JSON-compatible object or array by path.",
             new("value", RuleScriptValueType.Any),
             new("path", RuleScriptValueType.String));
-        RegisterTyped("JsonSet", JsonFunctions.JsonSet, RuleScriptValueType.Any,
+        RegisterTyped("JsonSet", JsonFunctions.JsonSet, RuleScriptValueType.Any, "Sets a value in a JSON-compatible object or array by path and returns the updated root.",
             new("value", RuleScriptValueType.Any),
             new("path", RuleScriptValueType.String),
             new("newValue", RuleScriptValueType.Any));
-        RegisterTyped("JsonExists", JsonFunctions.JsonExists, RuleScriptValueType.Boolean,
+        RegisterTyped("JsonExists", JsonFunctions.JsonExists, RuleScriptValueType.Boolean, "Returns whether a path exists in a JSON-compatible object or array.",
             new("value", RuleScriptValueType.Any),
             new("path", RuleScriptValueType.String));
     }
@@ -137,10 +137,11 @@ public sealed class BuiltinFunctions
         string name,
         Func<IReadOnlyList<RuntimeValue>, RuntimeValue> function,
         RuleScriptValueType returnType,
+        string documentation,
         params RuleScriptParameterSymbol[] parameters)
     {
         Register(name, function);
-        _signatures[name] = new RuleScriptBuiltinFunctionSymbol(name, parameters, returnType);
+        _signatures[name] = new RuleScriptBuiltinFunctionSymbol(name, parameters, returnType, documentation);
     }
 
     public RuntimeValue Invoke(string name, IReadOnlyList<RuntimeValue> arguments)

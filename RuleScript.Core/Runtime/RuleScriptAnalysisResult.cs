@@ -185,7 +185,8 @@ public sealed class RuleScriptAnalysisResult
             .Select(symbol => new RuleScriptBuiltinFunctionSymbol(
                 symbol.Name,
                 symbol.Parameters,
-                symbol.ReturnType))
+                symbol.ReturnType,
+                symbol.Documentation))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ToArray()
             ?? [];

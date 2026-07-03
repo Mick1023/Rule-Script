@@ -184,6 +184,10 @@ public sealed class PublicApiUsabilityTests
         Assert.Contains("Read", result.FunctionNames);
         Assert.Contains("ToString", result.FunctionNames);
         Assert.Equal(["robot"], result.ImportAliases);
+
+        var toString = Assert.Single(result.BuiltinFunctions, function => function.Name == "ToString");
+        Assert.Equal("Converts a value to its invariant string representation.", toString.Documentation);
+        Assert.All(result.BuiltinFunctions, function => Assert.False(string.IsNullOrWhiteSpace(function.Documentation)));
     }
 
     [Fact]
@@ -296,6 +300,7 @@ public sealed class PublicApiUsabilityTests
         Assert.Contains("value", result.Symbols.VariableNames);
         Assert.Contains("localText", result.Symbols.VariableNames);
         Assert.Equal(["Format"], result.Symbols.UserFunctionNames);
+        Assert.All(result.Symbols.BuiltinFunctions, function => Assert.False(string.IsNullOrWhiteSpace(function.Documentation)));
     }
 
     [Fact]

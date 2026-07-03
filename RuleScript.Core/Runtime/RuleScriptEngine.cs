@@ -1666,7 +1666,8 @@ public sealed class RuleScriptEngine
             userFunctions,
             RegisteredFunctionNames,
             _builtinFunctions.Names,
-            importAliases);
+            importAliases,
+            builtinFunctions: _builtinFunctions.Signatures);
     }
 
     private void CollectImportedFunctionSymbolsFromTokens(IReadOnlyList<Token> tokens, ISet<string> userFunctions)

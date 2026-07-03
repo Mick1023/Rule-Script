@@ -8,7 +8,8 @@ public sealed class RuleScriptBuiltinFunctionSymbol
     public RuleScriptBuiltinFunctionSymbol(
         string name,
         IEnumerable<RuleScriptParameterSymbol> parameters,
-        RuleScriptValueType returnType)
+        RuleScriptValueType returnType,
+        string? documentation = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -18,6 +19,7 @@ public sealed class RuleScriptBuiltinFunctionSymbol
         Name = name;
         Parameters = parameters?.ToArray() ?? throw new ArgumentNullException(nameof(parameters));
         ReturnType = returnType;
+        Documentation = documentation;
     }
 
     public string Name { get; }
@@ -25,4 +27,6 @@ public sealed class RuleScriptBuiltinFunctionSymbol
     public IReadOnlyList<RuleScriptParameterSymbol> Parameters { get; }
 
     public RuleScriptValueType ReturnType { get; }
+
+    public string? Documentation { get; }
 }
