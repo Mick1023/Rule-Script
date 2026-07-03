@@ -170,7 +170,8 @@ public sealed class RuleScriptAnalysisResult
                 symbol.ReturnType,
                 symbol.IsAsync,
                 symbol.IsThreadSafe,
-                symbol.IsVariadic))
+                symbol.IsVariadic,
+                symbol.Documentation))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.IsAsync)
             .ToArray()

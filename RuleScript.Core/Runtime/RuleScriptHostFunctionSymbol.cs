@@ -11,7 +11,8 @@ public sealed class RuleScriptHostFunctionSymbol
         RuleScriptValueType returnType,
         bool isAsync = false,
         bool isThreadSafe = false,
-        bool isVariadic = false)
+        bool isVariadic = false,
+        string? documentation = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -24,6 +25,7 @@ public sealed class RuleScriptHostFunctionSymbol
         IsAsync = isAsync;
         IsThreadSafe = isThreadSafe;
         IsVariadic = isVariadic;
+        Documentation = documentation;
     }
 
     public string Name { get; }
@@ -37,4 +39,6 @@ public sealed class RuleScriptHostFunctionSymbol
     public bool IsThreadSafe { get; }
 
     public bool IsVariadic { get; }
+
+    public string? Documentation { get; }
 }
