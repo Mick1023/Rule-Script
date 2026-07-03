@@ -27,9 +27,9 @@ internal sealed class RuleScriptNavigationAnalyzer
             return null;
         }
 
-        if (symbol.IsExternal)
+        if (symbol.IsExternal && analyzer._declarations.TryGetValue(symbol.Key, out var externalDeclaration))
         {
-            return symbol.ToDefinition();
+            return externalDeclaration.ToDefinition();
         }
 
         return analyzer._declarations.TryGetValue(symbol.Key, out var declaration)
@@ -98,6 +98,7 @@ internal sealed class RuleScriptNavigationAnalyzer
             var importedSource = _engine.ImportResolver.ReadAllText(path);
             var importedStatements = new Parser.Parser(new Lexer.Lexer(importedSource).Tokenize()).Parse();
             AddImportedDeclarations(importedStatements, Path.GetDirectoryName(path) ?? baseDirectory);
+            VisitStatements(importedStatements, new NavigationScope(null, isFunctionScope: false), path);
 
             foreach (var function in importedStatements.OfType<FunctionDeclarationStatement>().Where(function => function.IsExported))
             {
@@ -395,6 +396,14 @@ internal sealed class RuleScriptNavigationAnalyzer
     private void AddDeclaration(NavigationSymbol symbol)
     {
         _declarations[symbol.Key] = symbol;
+        if (_symbols.Any(existing =>
+                existing.IsDeclaration == symbol.IsDeclaration
+                && string.Equals(existing.Key, symbol.Key, StringComparison.Ordinal)
+                && Equals(existing.SelectionRange, symbol.SelectionRange)))
+        {
+            return;
+        }
+
         AddSymbol(symbol);
     }
 
