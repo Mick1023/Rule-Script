@@ -12,4 +12,5 @@ public sealed record DestructuringVarStatement(
     DestructuringPattern Pattern,
     Expression Initializer,
     int? Line = null,
-    int? Column = null) : Statement;
+    int? Column = null,
+    string? Documentation = null) : Statement;

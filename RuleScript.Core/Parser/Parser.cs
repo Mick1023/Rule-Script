@@ -95,12 +95,12 @@ public sealed class Parser
 
         if (Match(TokenType.Var))
         {
-            return ParseVarStatement();
+            return ParseVarStatement(documentation);
         }
 
         if (Match(TokenType.Const))
         {
-            return ParseConstStatement();
+            return ParseConstStatement(documentation);
         }
 
         if (Match(TokenType.Export))
@@ -166,7 +166,7 @@ public sealed class Parser
         return ParseExpressionStatement();
     }
 
-    private Statement ParseVarStatement()
+    private Statement ParseVarStatement(string? documentation)
     {
         var start = Previous();
 
@@ -181,7 +181,8 @@ public sealed class Parser
                 pattern,
                 destructuringInitializer,
                 patternStart.Line,
-                patternStart.Column), start);
+                patternStart.Column,
+                documentation), start);
         }
 
         var name = Consume(TokenType.Identifier, "Expected variable name after 'var'.");
@@ -193,17 +194,17 @@ public sealed class Parser
         }
 
         Consume(TokenType.Semicolon, "Expected ';' after variable declaration.");
-        return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+        return Complete(new VarStatement(name.Lexeme, initializer, name.Line, name.Column, documentation), start);
     }
 
-    private ConstStatement ParseConstStatement()
+    private ConstStatement ParseConstStatement(string? documentation = null)
     {
         var start = Previous();
         var name = Consume(TokenType.Identifier, "Expected constant name after 'const'.");
         Consume(TokenType.Assign, "Expected '=' after constant name.");
         var initializer = ParseExpression();
         Consume(TokenType.Semicolon, "Expected ';' after constant declaration.");
-        return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column), start);
+        return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column, documentation), start);
     }
 
     private Statement ParseExportStatement(string? documentation)
@@ -215,7 +216,7 @@ public sealed class Parser
 
         if (Match(TokenType.Const))
         {
-            return ParseConstStatement() with { IsExported = true };
+            return ParseConstStatement(documentation) with { IsExported = true };
         }
 
         throw Error(Peek(), "Expected 'function' or 'const' after 'export'.");

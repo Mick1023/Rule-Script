@@ -7,4 +7,5 @@ public sealed record RuleScriptVariableSymbol(
     string Name,
     RuleScriptValueType Type,
     bool IsReadOnly = false,
-    bool IsExported = false);
+    bool IsExported = false,
+    string? Documentation = null);

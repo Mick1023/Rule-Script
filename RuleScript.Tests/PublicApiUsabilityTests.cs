@@ -191,6 +191,35 @@ public sealed class PublicApiUsabilityTests
     }
 
     [Fact]
+    public void Analyze_ReturnsVariableDocumentation()
+    {
+        var engine = new RuleScriptEngine();
+
+        var result = engine.Analyze("""
+            /// info1
+            var a = 1;
+
+            /// info2
+            const b = 0;
+
+            function Read():
+                /// local info
+                var local = a + b;
+                return local;
+            endfunction
+            """, line: 10, column: 24);
+
+        var a = Assert.Single(result.Variables, variable => variable.Name == "a");
+        var b = Assert.Single(result.Variables, variable => variable.Name == "b");
+        var local = Assert.Single(result.VisibleVariables, variable => variable.Name == "local");
+
+        Assert.Equal("info1", a.Documentation);
+        Assert.Equal("info2", b.Documentation);
+        Assert.True(b.IsReadOnly);
+        Assert.Equal("local info", local.Documentation);
+    }
+
+    [Fact]
     public void Analyze_IncludesFunctionsFromGlobalAndAliasImports()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
