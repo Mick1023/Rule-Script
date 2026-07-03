@@ -149,6 +149,10 @@ public sealed class Lexer
                 {
                     SkipLineComment();
                 }
+                else if (Match('*'))
+                {
+                    SkipBlockComment();
+                }
                 else
                 {
                     AddToken(TokenType.Slash);
@@ -272,6 +276,33 @@ public sealed class Lexer
         {
             Advance();
         }
+    }
+
+    private void SkipBlockComment()
+    {
+        var commentLine = _line;
+
+        while (!IsAtEnd())
+        {
+            if (Peek() == '*' && PeekNext() == '/')
+            {
+                Advance();
+                Advance();
+                return;
+            }
+
+            if (Peek() == '\n')
+            {
+                Advance();
+                NewLine();
+            }
+            else
+            {
+                Advance();
+            }
+        }
+
+        throw new SyntaxException("Unterminated multi-line comment.", commentLine, _tokenColumn, "/*");
     }
 
     private bool Match(char expected)
