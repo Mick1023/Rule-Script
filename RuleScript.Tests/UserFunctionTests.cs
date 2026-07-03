@@ -223,9 +223,13 @@ public sealed class UserFunctionTests
     }
 
     [Fact]
-    public void Recursion_ThrowsRuntimeException()
+    public void Recursion_StopsAtCallDepthLimit()
     {
-        var exception = Assert.Throws<RuntimeException>(() => Execute("""
+        var engine = new RuleScriptEngine
+        {
+            MaxCallDepth = 4
+        };
+        var exception = Assert.Throws<RuntimeException>(() => engine.Execute("""
             function Loop():
                 return Loop();
             endfunction
@@ -234,7 +238,7 @@ public sealed class UserFunctionTests
             """));
 
         Assert.Contains("Loop", exception.Message);
-        Assert.Contains("recursion", exception.Message);
+        Assert.Contains("Call depth limit of 4", exception.Message);
     }
 
     [Fact]

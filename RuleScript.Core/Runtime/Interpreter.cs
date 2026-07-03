@@ -37,6 +37,8 @@ public sealed class Interpreter
     private int _loopDepth;
     private long _executionStartedTimestamp;
     private long _executedStatements;
+    private ParallelExecutionState _executionState = new();
+    private bool _isParallelTask;
 
     public Interpreter(BuiltinFunctions builtinFunctions)
         : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal), 100000)
@@ -265,6 +267,9 @@ public sealed class Interpreter
                 case ForeachStatement foreachStatement:
                     ExecuteForeachStatement(foreachStatement, context);
                     break;
+                case ParallelStatementSyntax parallelStatement:
+                    ExecuteParallelStatement(parallelStatement, context);
+                    break;
                 case BreakStatement breakStatement:
                     ExecuteBreakStatement(breakStatement);
                     break;
@@ -335,6 +340,9 @@ public sealed class Interpreter
                     break;
                 case ForeachStatement foreachStatement:
                     await ExecuteForeachStatementAsync(foreachStatement, context, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ParallelStatementSyntax parallelStatement:
+                    await ExecuteParallelStatementAsync(parallelStatement, context, cancellationToken).ConfigureAwait(false);
                     break;
                 case BreakStatement breakStatement:
                     ExecuteBreakStatement(breakStatement);
@@ -1160,6 +1168,7 @@ public sealed class Interpreter
             IndexExpression index => EvaluateIndex(index, context),
             MemberAccessExpression memberAccess => EvaluateMemberAccess(memberAccess, context),
             ConditionalMemberAccessExpression memberAccess => EvaluateConditionalMemberAccess(memberAccess, context),
+            ParallelExpressionSyntax parallel => EvaluateParallelExpression(parallel, context),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
         };
     }
@@ -1183,6 +1192,7 @@ public sealed class Interpreter
             IndexExpression index => EvaluateIndexAsync(index, context, cancellationToken),
             MemberAccessExpression memberAccess => EvaluateMemberAccessAsync(memberAccess, context, cancellationToken),
             ConditionalMemberAccessExpression memberAccess => EvaluateConditionalMemberAccessAsync(memberAccess, context, cancellationToken),
+            ParallelExpressionSyntax parallel => EvaluateParallelExpressionAsync(parallel, context, cancellationToken),
             _ => throw new RuntimeException($"Unsupported expression type '{expression.GetType().Name}'.")
         };
     }
@@ -1568,6 +1578,7 @@ public sealed class Interpreter
         if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
         {
             _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
             return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
         }
 
@@ -1613,12 +1624,14 @@ public sealed class Interpreter
         if (_asyncHostFunctions.TryGetValue(expression.Name, out var asyncHostFunction))
         {
             _asyncHostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
             return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, signature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
         }
 
         if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
         {
             _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
+            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
             return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
         }
 
@@ -1705,11 +1718,6 @@ public sealed class Interpreter
 
         CheckCallDepth(function.Name, line, column);
 
-        if (_callStack.Contains(callId, StringComparer.Ordinal))
-        {
-            throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
-        }
-
         var localScope = new Dictionary<string, RuntimeValue>(StringComparer.Ordinal);
 
         for (var i = 0; i < function.Parameters.Count; i++)
@@ -1766,11 +1774,6 @@ public sealed class Interpreter
 
         CheckCallDepth(function.Name, line, column);
 
-        if (_callStack.Contains(callId, StringComparer.Ordinal))
-        {
-            throw new RuntimeException($"Function '{function.Name}' recursion is not supported.", line, column, function.Name);
-        }
-
         var localScope = new Dictionary<string, RuntimeValue>(StringComparer.Ordinal);
 
         for (var i = 0; i < function.Parameters.Count; i++)
@@ -1805,10 +1808,193 @@ public sealed class Interpreter
         }
     }
 
+    private void ExecuteParallelStatement(ParallelStatementSyntax statement, RuntimeContext context)
+    {
+        _ = ExecuteParallelTasks(statement.Tasks, context, collectResults: false);
+    }
+
+    private async Task ExecuteParallelStatementAsync(
+        ParallelStatementSyntax statement,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        _ = await ExecuteParallelTasksAsync(statement.Tasks, context, collectResults: false, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private RuntimeValue EvaluateParallelExpression(ParallelExpressionSyntax expression, RuntimeContext context)
+    {
+        var results = ExecuteParallelTasks(expression.Tasks, context, collectResults: true);
+        return RuntimeValue.FromObject(results.Select(result => result.Value).ToList());
+    }
+
+    private async Task<RuntimeValue> EvaluateParallelExpressionAsync(
+        ParallelExpressionSyntax expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var results = await ExecuteParallelTasksAsync(expression.Tasks, context, collectResults: true, cancellationToken)
+            .ConfigureAwait(false);
+        return RuntimeValue.FromObject(results.Select(result => result.Value).ToList());
+    }
+
+    private IReadOnlyList<RuntimeValue> ExecuteParallelTasks(
+        IReadOnlyList<TaskBlockSyntax> taskBlocks,
+        RuntimeContext context,
+        bool collectResults)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken);
+        var module = CurrentModule;
+        var tasks = taskBlocks.Select((block, index) => Task.Run(() =>
+        {
+            try
+            {
+                return CreateParallelInterpreter(module, cancellation.Token)
+                    .ExecuteTaskBlock(block, context, collectResults);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                cancellation.Cancel();
+                throw CreateParallelTaskException(index, block, exception);
+            }
+        }, cancellation.Token)).ToArray();
+
+        return Task.WhenAll(tasks).GetAwaiter().GetResult();
+    }
+
+    private async Task<IReadOnlyList<RuntimeValue>> ExecuteParallelTasksAsync(
+        IReadOnlyList<TaskBlockSyntax> taskBlocks,
+        RuntimeContext context,
+        bool collectResults,
+        CancellationToken cancellationToken)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken, cancellationToken);
+        var module = CurrentModule;
+        var tasks = taskBlocks.Select((block, index) => Task.Run(async () =>
+        {
+            try
+            {
+                return await CreateParallelInterpreter(module, cancellation.Token)
+                    .ExecuteTaskBlockAsync(block, context, collectResults, cancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                cancellation.Cancel();
+                throw CreateParallelTaskException(index, block, exception);
+            }
+        }, cancellation.Token)).ToArray();
+
+        return await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private RuntimeValue ExecuteTaskBlock(TaskBlockSyntax block, RuntimeContext context, bool collectResult)
+    {
+        _moduleStack.Push(_mainModule);
+        _localScopes.Push(new Dictionary<string, RuntimeValue>(StringComparer.Ordinal));
+
+        try
+        {
+            foreach (var statement in block.Body)
+            {
+                ExecuteStatement(statement, context);
+            }
+
+            return RuntimeValue.Null;
+        }
+        catch (ReturnSignalException signal) when (collectResult)
+        {
+            return signal.Value;
+        }
+        finally
+        {
+            _localScopes.Pop();
+            _moduleStack.Pop();
+        }
+    }
+
+    private async Task<RuntimeValue> ExecuteTaskBlockAsync(
+        TaskBlockSyntax block,
+        RuntimeContext context,
+        bool collectResult,
+        CancellationToken cancellationToken)
+    {
+        _moduleStack.Push(_mainModule);
+        _localScopes.Push(new Dictionary<string, RuntimeValue>(StringComparer.Ordinal));
+
+        try
+        {
+            foreach (var statement in block.Body)
+            {
+                await ExecuteStatementAsync(statement, context, cancellationToken).ConfigureAwait(false);
+            }
+
+            return RuntimeValue.Null;
+        }
+        catch (ReturnSignalException signal) when (collectResult)
+        {
+            return signal.Value;
+        }
+        finally
+        {
+            _localScopes.Pop();
+            _moduleStack.Pop();
+        }
+    }
+
+    private Interpreter CreateParallelInterpreter(ScriptModule module, CancellationToken cancellationToken)
+    {
+        var interpreter = new Interpreter(
+            _builtinFunctions,
+            _hostFunctions,
+            _asyncHostFunctions,
+            _hostFunctionSignatures,
+            _asyncHostFunctionSignatures,
+            _maxLoopIterations,
+            _loopIterationLimitEnabled,
+            _executionTimeout,
+            _executionTimeoutEnabled,
+            _maxCallDepth,
+            _callDepthLimitEnabled,
+            _maxExecutedStatements,
+            _statementExecutionLimitEnabled,
+            module,
+            _notifyRuntimeEvent,
+            _notifyRuntimeEventAsync,
+            _getBreakpoints,
+            _isStepExecution,
+            cancellationToken)
+        {
+            _executionState = _executionState,
+            _isParallelTask = true
+        };
+        return interpreter;
+    }
+
+    private static RuntimeException CreateParallelTaskException(int index, TaskBlockSyntax block, Exception exception)
+    {
+        return new RuntimeException(
+            $"Parallel task {index + 1} failed: {exception.Message}",
+            exception,
+            block.Line,
+            block.Column,
+            "ParallelTaskFailed");
+    }
+
     private void BeginExecution()
     {
         _executionStartedTimestamp = Stopwatch.GetTimestamp();
         _executedStatements = 0;
+        _executionState.StartedTimestamp = _executionStartedTimestamp;
+        Interlocked.Exchange(ref _executionState.ExecutedStatements, 0);
         _constantValues.Clear();
         _evaluatingConstants.Clear();
     }
@@ -1818,7 +2004,7 @@ public sealed class Interpreter
         var location = GetStatementLocation(statement);
 
         if (_executionTimeoutEnabled
-            && Stopwatch.GetElapsedTime(_executionStartedTimestamp) > _executionTimeout)
+            && Stopwatch.GetElapsedTime(_executionState.StartedTimestamp) > _executionTimeout)
         {
             throw new RuntimeException(
                 $"Execution timeout limit of {_executionTimeout} was exceeded.",
@@ -1827,7 +2013,7 @@ public sealed class Interpreter
                 "ExecutionTimeout");
         }
 
-        _executedStatements++;
+        _executedStatements = Interlocked.Increment(ref _executionState.ExecutedStatements);
 
         if (_statementExecutionLimitEnabled && _executedStatements > _maxExecutedStatements)
         {
@@ -2145,7 +2331,7 @@ public sealed class Interpreter
             return;
         }
 
-        if (arguments.Count != signature.Parameters.Count)
+        if (!signature.IsVariadic && arguments.Count != signature.Parameters.Count)
         {
             throw new RuntimeException(
                 $"Host function '{name}' expects {signature.Parameters.Count} argument(s), but received {arguments.Count}.",
@@ -2169,6 +2355,22 @@ public sealed class Interpreter
                 line,
                 column,
                 name);
+        }
+    }
+
+    private void EnsureHostFunctionThreadSafe(
+        string name,
+        RuleScriptHostFunctionSymbol? signature,
+        int? line,
+        int? column)
+    {
+        if (_isParallelTask && signature?.IsThreadSafe != true)
+        {
+            throw new RuntimeException(
+                $"Host function '{name}' is not marked thread-safe and cannot be called from a parallel task.",
+                line,
+                column,
+                "HostFunctionNotThreadSafe");
         }
     }
 

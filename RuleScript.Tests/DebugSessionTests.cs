@@ -91,6 +91,112 @@ public sealed class DebugSessionTests
     }
 
     [Fact]
+    public async Task ParallelBreakpoint_PausesRuntimeEventsFromAllTasksUntilContinue()
+    {
+        var observedEvents = 0;
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunctionAsync(
+            "Delay",
+            async (args, cancellationToken) =>
+            {
+                await Task.Delay(Convert.ToInt32(args[0]), cancellationToken);
+                return null;
+            },
+            threadSafe: true);
+        engine.AddBreakpoint(4);
+        var session = new RuleScriptDebugSession(engine);
+        session.RuntimeEvent += runtimeEvent =>
+        {
+            if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.CurrentLineChanged
+                or RuleScriptRuntimeEventKind.Print)
+            {
+                Interlocked.Increment(ref observedEvents);
+            }
+        };
+
+        var runTask = session.RunAsync("""
+            done = false;
+            parallel:
+                task:
+                    Delay(1);
+                    global.done = true;
+                end
+                task:
+                    while done == false:
+                        Print("Task Alive");
+                        Delay(5);
+                    end
+                end
+            end
+            """);
+        var pause = await session.WaitForPauseAsync(TestTimeout());
+
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+        Assert.Equal(4, pause.Location.Line);
+        await Task.Delay(50);
+        var countWhilePaused = Volatile.Read(ref observedEvents);
+        await Task.Delay(100);
+        Assert.Equal(countWhilePaused, Volatile.Read(ref observedEvents));
+
+        session.Continue();
+        var context = await runTask.WaitAsync(TestTimeout());
+
+        Assert.True(context.Get<bool>("done"));
+        Assert.False(session.IsPaused);
+    }
+
+    [Fact]
+    public async Task ParallelBreakpoint_StopReleasesAndCancelsAllPausedTasks()
+    {
+        var observedEvents = 0;
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunctionAsync(
+            "Delay",
+            async (args, cancellationToken) =>
+            {
+                await Task.Delay(Convert.ToInt32(args[0]), cancellationToken);
+                return null;
+            },
+            threadSafe: true);
+        engine.AddBreakpoint(4);
+        var session = new RuleScriptDebugSession(engine);
+        session.RuntimeEvent += runtimeEvent =>
+        {
+            if (runtimeEvent.Kind is RuleScriptRuntimeEventKind.CurrentLineChanged
+                or RuleScriptRuntimeEventKind.Print)
+            {
+                Interlocked.Increment(ref observedEvents);
+            }
+        };
+
+        var runTask = session.RunAsync("""
+            done = false;
+            parallel:
+                task:
+                    Delay(1);
+                    global.done = true;
+                end
+                task:
+                    while done == false:
+                        Print("Task Alive");
+                        Delay(5);
+                    end
+                end
+            end
+            """);
+        await session.WaitForPauseAsync(TestTimeout());
+
+        session.Stop();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => runTask.WaitAsync(TestTimeout()));
+        var countAfterStop = Volatile.Read(ref observedEvents);
+        await Task.Delay(100);
+
+        Assert.Equal(countAfterStop, Volatile.Read(ref observedEvents));
+        Assert.False(session.IsPaused);
+        Assert.Null(session.CurrentPause);
+    }
+
+    [Fact]
     public async Task RunAsync_BreakpointAtLineFivePausesAndContinueCompletesExecution()
     {
         var printedValues = new List<object?>();

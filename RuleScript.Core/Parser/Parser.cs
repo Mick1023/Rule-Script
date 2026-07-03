@@ -11,6 +11,7 @@ public sealed class Parser
     private List<SyntaxException>? _diagnostics;
     private int _current;
     private int _blockDepth;
+    private int _parallelDepth;
 
     public Parser(IReadOnlyList<Token> tokens)
     {
@@ -114,6 +115,16 @@ public sealed class Parser
         if (Match(TokenType.Switch))
         {
             return ParseSwitchStatement();
+        }
+
+        if (Match(TokenType.Parallel))
+        {
+            return ParseParallelStatement();
+        }
+
+        if (Match(TokenType.Task))
+        {
+            throw Error(Previous(), "task blocks are only allowed directly inside parallel blocks.");
         }
 
         if (Match(TokenType.Break))
@@ -506,6 +517,51 @@ public sealed class Parser
         return Complete(new ReturnStatement(value, returnToken.Line, returnToken.Column), returnToken);
     }
 
+    private ParallelStatementSyntax ParseParallelStatement()
+    {
+        var parallel = Previous();
+        var tasks = ParseParallelTasks(parallel);
+        return Complete(new ParallelStatementSyntax(tasks, parallel.Line, parallel.Column), parallel);
+    }
+
+    private ParallelExpressionSyntax ParseParallelExpression()
+    {
+        var parallel = Previous();
+        var tasks = ParseParallelTasks(parallel);
+        return new ParallelExpressionSyntax(tasks, parallel.Line, parallel.Column);
+    }
+
+    private IReadOnlyList<TaskBlockSyntax> ParseParallelTasks(Token parallel)
+    {
+        Consume(TokenType.Colon, "Expected ':' after 'parallel'.");
+        var tasks = new List<TaskBlockSyntax>();
+        _parallelDepth++;
+
+        try
+        {
+            while (!IsAtEnd() && !Check(TokenType.EndParallel) && !Check(TokenType.End))
+            {
+                var task = Consume(TokenType.Task, "Expected 'task' inside parallel block.");
+                Consume(TokenType.Colon, "Expected ':' after 'task'.");
+                var body = ParseBlock(TokenType.EndTask, TokenType.End);
+                ConsumeBlockEnd(TokenType.EndTask, "endtask", "task block");
+                tasks.Add(new TaskBlockSyntax(body, task.Line, task.Column));
+            }
+        }
+        finally
+        {
+            _parallelDepth--;
+        }
+
+        if (tasks.Count == 0)
+        {
+            throw Error(parallel, "parallel block requires at least one task.");
+        }
+
+        ConsumeBlockEnd(TokenType.EndParallel, "endparallel", "parallel block");
+        return tasks;
+    }
+
     private Statement[] ParseBlock(params TokenType[] terminators)
     {
         var statements = new List<Statement>();
@@ -742,6 +798,11 @@ public sealed class Parser
 
     private Expression ParsePrimary()
     {
+        if (Match(TokenType.Parallel))
+        {
+            return ParseParallelExpression();
+        }
+
         if (Match(TokenType.False))
         {
             return new LiteralExpression(false);
@@ -958,6 +1019,7 @@ public sealed class Parser
     {
         _current = 0;
         _blockDepth = 0;
+        _parallelDepth = 0;
         _diagnostics = null;
     }
 
@@ -972,6 +1034,8 @@ public sealed class Parser
             or TokenType.While
             or TokenType.Foreach
             or TokenType.Switch
+            or TokenType.Parallel
+            or TokenType.Task
             or TokenType.Break
             or TokenType.Continue
             or TokenType.Return

@@ -20,4 +20,12 @@ public static class RuleScriptDiagnosticCodes
     public const string NullAccess = "RS2012";
     public const string InvalidNullCoalescing = "RS2013";
     public const string DuplicateObjectProperty = "RS2014";
+    public const string ParallelRequiresTask = "RS3001";
+    public const string TaskOutsideParallel = "RS3002";
+    public const string ParallelTaskFailed = "RS3003";
+    public const string ParallelCancelled = "RS3004";
+    public const string HostFunctionNotThreadSafe = "RS3005";
+    public const string ParallelReturnTypeMismatch = "RS3006";
+    public const string InvalidParallelBlock = "RS3007";
+    public const string InvalidTaskBlock = "RS3008";
 }

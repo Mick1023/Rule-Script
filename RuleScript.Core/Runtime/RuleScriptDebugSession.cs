@@ -8,8 +8,7 @@ public sealed class RuleScriptDebugSession
     private readonly RuleScriptEngine _engine;
     private readonly object _sync = new();
     private CancellationTokenSource? _stopCancellation;
-    private ManualResetEventSlim? _resumeSignal;
-    private RuleScriptExecutionDirective _resumeDirective = RuleScriptExecutionDirective.Continue;
+    private TaskCompletionSource<RuleScriptExecutionDirective>? _resumeCompletion;
     private TaskCompletionSource<RuleScriptRuntimeEvent> _nextPause = CreatePauseCompletionSource();
     private bool _stopRequested;
 
@@ -177,7 +176,7 @@ public sealed class RuleScriptDebugSession
     /// </summary>
     public void Stop()
     {
-        ManualResetEventSlim? signal;
+        TaskCompletionSource<RuleScriptExecutionDirective>? resumeCompletion;
         CancellationTokenSource? stopCancellation;
         TaskCompletionSource<RuleScriptRuntimeEvent>? pauseCompletion;
 
@@ -186,15 +185,15 @@ public sealed class RuleScriptDebugSession
             _stopRequested = true;
             IsPaused = false;
             CurrentPause = null;
-            signal = _resumeSignal;
-            _resumeSignal = null;
+            resumeCompletion = _resumeCompletion;
+            _resumeCompletion = null;
             stopCancellation = _stopCancellation;
             pauseCompletion = _nextPause;
             _nextPause = CreatePauseCompletionSource();
         }
 
         pauseCompletion.TrySetCanceled();
-        signal?.Set();
+        resumeCompletion?.TrySetCanceled();
 
         try
         {
@@ -211,51 +210,28 @@ public sealed class RuleScriptDebugSession
         Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler,
         CancellationToken cancellationToken = default)
     {
-        RuntimeEvent?.Invoke(runtimeEvent);
-
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (runtimeEvent.Kind is not RuleScriptRuntimeEventKind.BreakpointHit and not RuleScriptRuntimeEventKind.StepPaused)
+        var isPauseEvent = IsPauseEvent(runtimeEvent);
+        var (resumeTask, ownsPause) = EnterPause(runtimeEvent, isPauseEvent);
+        if (resumeTask is not null && !ownsPause)
+        {
+            var resumedDirective = WaitForResume(resumeTask, cancellationToken);
+            if (isPauseEvent)
+            {
+                return resumedDirective;
+            }
+        }
+
+        RuntimeEvent?.Invoke(runtimeEvent);
+
+        if (!isPauseEvent)
         {
             return previousHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
         }
 
         previousHandler?.Invoke(runtimeEvent);
-
-        var signal = new ManualResetEventSlim(false);
-
-        lock (_sync)
-        {
-            IsPaused = true;
-            CurrentPause = runtimeEvent;
-            _resumeSignal = signal;
-            _nextPause.TrySetResult(runtimeEvent);
-        }
-
-        using var cancellationRegistration = cancellationToken.CanBeCanceled
-            ? cancellationToken.Register(static state => ((ManualResetEventSlim)state!).Set(), signal)
-            : default;
-
-        signal.Wait();
-
-        lock (_sync)
-        {
-            if (_stopRequested || cancellationToken.IsCancellationRequested)
-            {
-                IsPaused = false;
-                CurrentPause = null;
-
-                if (ReferenceEquals(_resumeSignal, signal))
-                {
-                    _resumeSignal = null;
-                }
-
-                _nextPause = CreatePauseCompletionSource();
-                throw new OperationCanceledException("Debug session was stopped.", cancellationToken);
-            }
-
-            return _resumeDirective;
-        }
+        return WaitForResume(resumeTask!, cancellationToken);
     }
 
     private async Task<RuleScriptExecutionDirective> HandleRuntimeEventAsync(
@@ -266,7 +242,18 @@ public sealed class RuleScriptDebugSession
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (runtimeEvent.Kind is not RuleScriptRuntimeEventKind.BreakpointHit and not RuleScriptRuntimeEventKind.StepPaused)
+        var isPauseEvent = IsPauseEvent(runtimeEvent);
+        var (resumeTask, ownsPause) = EnterPause(runtimeEvent, isPauseEvent);
+        if (resumeTask is not null && !ownsPause)
+        {
+            var resumedDirective = await WaitForResumeAsync(resumeTask, cancellationToken).ConfigureAwait(false);
+            if (isPauseEvent)
+            {
+                return resumedDirective;
+            }
+        }
+
+        if (!isPauseEvent)
         {
             RuntimeEvent?.Invoke(runtimeEvent);
 
@@ -278,6 +265,7 @@ public sealed class RuleScriptDebugSession
             return previousHandler?.Invoke(runtimeEvent) ?? RuleScriptExecutionDirective.Continue;
         }
 
+        RuntimeEvent?.Invoke(runtimeEvent);
         previousHandler?.Invoke(runtimeEvent);
 
         if (previousAsyncHandler is not null)
@@ -285,12 +273,92 @@ public sealed class RuleScriptDebugSession
             await previousAsyncHandler(runtimeEvent, cancellationToken).ConfigureAwait(false);
         }
 
-        return HandleRuntimeEvent(runtimeEvent, previousHandler: null, cancellationToken);
+        return await WaitForResumeAsync(resumeTask!, cancellationToken).ConfigureAwait(false);
+    }
+
+    private (Task<RuleScriptExecutionDirective>? ResumeTask, bool OwnsPause) EnterPause(
+        RuleScriptRuntimeEvent runtimeEvent,
+        bool isPauseEvent)
+    {
+        lock (_sync)
+        {
+            if (_stopRequested)
+            {
+                throw new OperationCanceledException("Debug session was stopped.");
+            }
+
+            if (IsPaused)
+            {
+                return (_resumeCompletion!.Task, false);
+            }
+
+            if (!isPauseEvent)
+            {
+                return (null, false);
+            }
+
+            _resumeCompletion = new TaskCompletionSource<RuleScriptExecutionDirective>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            IsPaused = true;
+            CurrentPause = runtimeEvent;
+            _nextPause.TrySetResult(runtimeEvent);
+            return (_resumeCompletion.Task, true);
+        }
+    }
+
+    private RuleScriptExecutionDirective WaitForResume(
+        Task<RuleScriptExecutionDirective> resumeTask,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var directive = resumeTask.WaitAsync(cancellationToken).GetAwaiter().GetResult();
+            ThrowIfStopped(cancellationToken);
+            return directive;
+        }
+        catch (OperationCanceledException)
+        {
+            throw new OperationCanceledException("Debug session was stopped.", cancellationToken);
+        }
+    }
+
+    private async Task<RuleScriptExecutionDirective> WaitForResumeAsync(
+        Task<RuleScriptExecutionDirective> resumeTask,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var directive = await resumeTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            ThrowIfStopped(cancellationToken);
+            return directive;
+        }
+        catch (OperationCanceledException)
+        {
+            throw new OperationCanceledException("Debug session was stopped.", cancellationToken);
+        }
+    }
+
+    private void ThrowIfStopped(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            if (_stopRequested)
+            {
+                throw new OperationCanceledException("Debug session was stopped.", cancellationToken);
+            }
+        }
+    }
+
+    private static bool IsPauseEvent(RuleScriptRuntimeEvent runtimeEvent)
+    {
+        return runtimeEvent.Kind is RuleScriptRuntimeEventKind.BreakpointHit
+            or RuleScriptRuntimeEventKind.StepPaused;
     }
 
     private void Resume(RuleScriptExecutionDirective directive)
     {
-        ManualResetEventSlim? signal;
+        TaskCompletionSource<RuleScriptExecutionDirective>? resumeCompletion;
 
         lock (_sync)
         {
@@ -299,19 +367,18 @@ public sealed class RuleScriptDebugSession
                 return;
             }
 
-            _resumeDirective = directive;
-            signal = _resumeSignal;
+            resumeCompletion = _resumeCompletion;
 
-            if (signal is not null)
+            if (resumeCompletion is not null)
             {
                 IsPaused = false;
                 CurrentPause = null;
-                _resumeSignal = null;
+                _resumeCompletion = null;
                 _nextPause = CreatePauseCompletionSource();
             }
         }
 
-        signal?.Set();
+        resumeCompletion?.TrySetResult(directive);
     }
 
     private void PrepareForRun()
@@ -320,8 +387,7 @@ public sealed class RuleScriptDebugSession
         {
             IsPaused = false;
             CurrentPause = null;
-            _resumeSignal = null;
-            _resumeDirective = RuleScriptExecutionDirective.Continue;
+            _resumeCompletion = null;
             _stopRequested = false;
             _nextPause = CreatePauseCompletionSource();
         }
@@ -350,7 +416,7 @@ public sealed class RuleScriptDebugSession
 
             IsPaused = false;
             CurrentPause = null;
-            _resumeSignal = null;
+            _resumeCompletion = null;
         }
     }
 

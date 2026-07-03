@@ -210,6 +210,73 @@ public sealed class Version120FeatureTests
     }
 
     [Fact]
+    public void Execute_CallDepthLimitDisabled_AllowsRecursionBeyondConfiguredDepth()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxCallDepth = 1,
+            CallDepthLimitEnabled = false
+        };
+        const string script = """
+            function Recurse(value):
+                if value == 0 then:
+                    return 42;
+                endif
+                return Recurse(value - 1);
+            endfunction
+            result = Recurse(3);
+            """;
+
+        var context = engine.Execute(script);
+
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public void Execute_RecursiveFunction_ReturnsValueWithinCallDepthLimit()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxCallDepth = 10
+        };
+        const string script = """
+            function Recurse(value):
+                if value == 0 then:
+                    return 42;
+                endif
+                return Recurse(value - 1);
+            endfunction
+            result = Recurse(3);
+            """;
+
+        var context = engine.Execute(script);
+
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RecursiveFunction_ReturnsValueWithinCallDepthLimit()
+    {
+        var engine = new RuleScriptEngine
+        {
+            MaxCallDepth = 10
+        };
+        const string script = """
+            function Recurse(value):
+                if value == 0 then:
+                    return 42;
+                endif
+                return Recurse(value - 1);
+            endfunction
+            result = Recurse(3);
+            """;
+
+        var context = await engine.ExecuteAsync(script);
+
+        Assert.Equal(42d, context.Get<double>("result"));
+    }
+
+    [Fact]
     public void Execute_TimeoutEnabled_StopsLongRunningExecution()
     {
         var engine = new RuleScriptEngine

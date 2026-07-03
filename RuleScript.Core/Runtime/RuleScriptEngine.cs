@@ -1,6 +1,8 @@
 using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Lexer;
 using RuleScript.Core.Parser.Ast;
+using System.Globalization;
+using System.Reflection;
 
 namespace RuleScript.Core.Runtime;
 
@@ -161,6 +163,53 @@ public sealed class RuleScriptEngine
         _hostFunctionSignatures.Remove(name);
     }
 
+    public void RegisterFunction(string name, Func<IReadOnlyList<object?>, object?> function, bool threadSafe)
+    {
+        RegisterFunction(name, function);
+        _hostFunctionSignatures[name] = new RuleScriptHostFunctionSymbol(
+            name, [], RuleScriptValueType.Unknown, isThreadSafe: threadSafe, isVariadic: true);
+    }
+
+    /// <summary>
+    /// Registers public instance methods decorated with <see cref="RuleScriptFunctionAttribute"/>.
+    /// </summary>
+    public int RegisterFunctions(object host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        var registered = 0;
+
+        foreach (var method in host.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public))
+        {
+            var attribute = method.GetCustomAttribute<RuleScriptFunctionAttribute>(inherit: true);
+            if (attribute is null)
+            {
+                continue;
+            }
+
+            if (typeof(Task).IsAssignableFrom(method.ReturnType))
+            {
+                throw new NotSupportedException(
+                    $"Attributed async host method '{method.Name}' is not supported; use RegisterFunctionAsync.");
+            }
+
+            var parameters = method.GetParameters();
+            var symbols = parameters
+                .Select(parameter => new RuleScriptParameterSymbol(parameter.Name!, FromClrType(parameter.ParameterType)))
+                .ToArray();
+            var name = string.IsNullOrWhiteSpace(attribute.Name) ? method.Name : attribute.Name;
+
+            RegisterFunction(
+                name!,
+                symbols,
+                method.ReturnType == typeof(void) ? RuleScriptValueType.Null : FromClrType(method.ReturnType),
+                arguments => method.Invoke(host, ConvertHostArguments(parameters, arguments)),
+                attribute.ThreadSafe);
+            registered++;
+        }
+
+        return registered;
+    }
+
     /// <summary>
     /// Registers or replaces a typed host function.
     /// </summary>
@@ -172,6 +221,19 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(function);
         var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: false);
+        _hostFunctions[name] = function;
+        _hostFunctionSignatures[name] = signature;
+    }
+
+    public void RegisterFunction(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        Func<IReadOnlyList<object?>, object?> function,
+        bool threadSafe)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: false, threadSafe);
         _hostFunctions[name] = function;
         _hostFunctionSignatures[name] = signature;
     }
@@ -190,6 +252,16 @@ public sealed class RuleScriptEngine
         _asyncHostFunctionSignatures.Remove(name);
     }
 
+    public void RegisterFunctionAsync(
+        string name,
+        Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
+        bool threadSafe)
+    {
+        RegisterFunctionAsync(name, function);
+        _asyncHostFunctionSignatures[name] = new RuleScriptHostFunctionSymbol(
+            name, [], RuleScriptValueType.Unknown, isAsync: true, isThreadSafe: threadSafe, isVariadic: true);
+    }
+
     /// <summary>
     /// Registers or replaces a typed async host function.
     /// </summary>
@@ -201,6 +273,19 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(function);
         var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: true);
+        _asyncHostFunctions[name] = function;
+        _asyncHostFunctionSignatures[name] = signature;
+    }
+
+    public void RegisterFunctionAsync(
+        string name,
+        IReadOnlyList<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
+        bool threadSafe)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        var signature = CreateHostFunctionSignature(name, parameters, returnType, isAsync: true, threadSafe);
         _asyncHostFunctions[name] = function;
         _asyncHostFunctionSignatures[name] = signature;
     }
@@ -438,9 +523,20 @@ public sealed class RuleScriptEngine
                 endColumn);
         }
 
-        var code = exception.Message.Contains("Duplicate parameter name", StringComparison.Ordinal)
-            ? RuleScriptDiagnosticCodes.DuplicateParameter
-            : RuleScriptDiagnosticCodes.SyntaxError;
+        var code = exception.Message switch
+        {
+            var message when message.Contains("Duplicate parameter name", StringComparison.Ordinal)
+                => RuleScriptDiagnosticCodes.DuplicateParameter,
+            var message when message.Contains("parallel block requires at least one task", StringComparison.Ordinal)
+                => RuleScriptDiagnosticCodes.ParallelRequiresTask,
+            var message when message.Contains("task blocks are only allowed", StringComparison.Ordinal)
+                => RuleScriptDiagnosticCodes.TaskOutsideParallel,
+            var message when message.Contains("inside parallel block", StringComparison.Ordinal)
+                => RuleScriptDiagnosticCodes.InvalidParallelBlock,
+            var message when message.Contains("task block", StringComparison.Ordinal)
+                => RuleScriptDiagnosticCodes.InvalidTaskBlock,
+            _ => RuleScriptDiagnosticCodes.SyntaxError
+        };
 
         return new RuleScriptDiagnostic(
             exception.Message,
@@ -513,7 +609,8 @@ public sealed class RuleScriptEngine
                 new RuleScriptHostFunctionSymbol(
                     builtinFunction.Name,
                     builtinFunction.Parameters,
-                    builtinFunction.ReturnType));
+                    builtinFunction.ReturnType,
+                    isThreadSafe: true));
         }
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
@@ -980,7 +1077,8 @@ public sealed class RuleScriptEngine
         string name,
         IReadOnlyList<RuleScriptParameterSymbol> parameters,
         RuleScriptValueType returnType,
-        bool isAsync)
+        bool isAsync,
+        bool isThreadSafe = false)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -1014,7 +1112,34 @@ public sealed class RuleScriptEngine
             }
         }
 
-        return new RuleScriptHostFunctionSymbol(name, parameters, returnType, isAsync);
+        return new RuleScriptHostFunctionSymbol(name, parameters, returnType, isAsync, isThreadSafe);
+    }
+
+    private static object?[] ConvertHostArguments(
+        IReadOnlyList<ParameterInfo> parameters,
+        IReadOnlyList<object?> arguments)
+    {
+        var converted = new object?[arguments.Count];
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var targetType = Nullable.GetUnderlyingType(parameters[index].ParameterType)
+                ?? parameters[index].ParameterType;
+            converted[index] = arguments[index] is null || targetType.IsInstanceOfType(arguments[index])
+                ? arguments[index]
+                : Convert.ChangeType(arguments[index], targetType, CultureInfo.InvariantCulture);
+        }
+        return converted;
+    }
+
+    private static RuleScriptValueType FromClrType(Type type)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        if (type == typeof(void)) return RuleScriptValueType.Null;
+        if (type == typeof(bool)) return RuleScriptValueType.Boolean;
+        if (type == typeof(string) || type == typeof(char)) return RuleScriptValueType.String;
+        if (type.IsPrimitive || type == typeof(decimal)) return RuleScriptValueType.Number;
+        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type) && type != typeof(string)) return RuleScriptValueType.Array;
+        return type == typeof(object) ? RuleScriptValueType.Any : RuleScriptValueType.Object;
     }
 
     private CancellationTokenSource CreateStopCancellation()
