@@ -11,6 +11,8 @@ public enum TokenType
     False,
     Null,
     DocumentationComment,
+    RegionStart,
+    RegionEnd,
 
     Var,
     Const,

@@ -15,8 +15,14 @@ public sealed class Parser
 
     public Parser(IReadOnlyList<Token> tokens)
     {
-        _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
+        ArgumentNullException.ThrowIfNull(tokens);
+        Regions = ParseRegions(tokens);
+        _tokens = tokens
+            .Where(token => token.Type is not TokenType.RegionStart and not TokenType.RegionEnd)
+            .ToArray();
     }
+
+    public IReadOnlyList<RuleScriptRegion> Regions { get; }
 
     public IReadOnlyList<Statement> Parse()
     {
@@ -1047,6 +1053,34 @@ public sealed class Parser
         _blockDepth = 0;
         _parallelDepth = 0;
         _diagnostics = null;
+    }
+
+    private static IReadOnlyList<RuleScriptRegion> ParseRegions(IReadOnlyList<Token> tokens)
+    {
+        var openRegions = new Stack<Token>();
+        var regions = new List<RuleScriptRegion>();
+
+        foreach (var token in tokens)
+        {
+            if (token.Type == TokenType.RegionStart)
+            {
+                openRegions.Push(token);
+            }
+            else if (token.Type == TokenType.RegionEnd && openRegions.TryPop(out var start))
+            {
+                regions.Add(new RuleScriptRegion(
+                    start.Literal?.ToString() ?? string.Empty,
+                    start.Line,
+                    start.Column,
+                    token.Line,
+                    token.EndColumn));
+            }
+        }
+
+        return regions
+            .OrderBy(region => region.StartLine)
+            .ThenBy(region => region.StartColumn)
+            .ToArray();
     }
 
     private static bool IsStatementStart(TokenType type)

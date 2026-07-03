@@ -144,6 +144,9 @@ public sealed class Lexer
                 }
 
                 break;
+            case '#':
+                ScanRegionDirective();
+                break;
             case '/':
                 if (Match('/'))
                 {
@@ -299,6 +302,42 @@ public sealed class Lexer
         }
 
         AddToken(TokenType.DocumentationComment, content);
+    }
+
+    private void ScanRegionDirective()
+    {
+        while (!IsAtEnd() && Peek() != '\n')
+        {
+            Advance();
+        }
+
+        var directive = _source[_start.._current];
+        if (TryGetDirectiveValue(directive, "#region", out var name))
+        {
+            AddToken(TokenType.RegionStart, name);
+            return;
+        }
+
+        if (TryGetDirectiveValue(directive, "#endregion", out _))
+        {
+            AddToken(TokenType.RegionEnd);
+            return;
+        }
+
+        throw new SyntaxException($"Unsupported directive '{directive}'.", _line, _tokenColumn, directive);
+    }
+
+    private static bool TryGetDirectiveValue(string directive, string keyword, out string value)
+    {
+        if (!directive.StartsWith(keyword, StringComparison.Ordinal)
+            || (directive.Length > keyword.Length && !char.IsWhiteSpace(directive[keyword.Length])))
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        value = directive[keyword.Length..].Trim();
+        return true;
     }
 
     private void SkipBlockComment()
