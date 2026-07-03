@@ -287,7 +287,7 @@ public sealed class Lexer
 
     private void ScanLineComment()
     {
-        while (!IsAtEnd() && Peek() != '\n')
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
         {
             Advance();
         }
@@ -300,7 +300,7 @@ public sealed class Lexer
 
     private void ScanDocumentationComment()
     {
-        while (!IsAtEnd() && Peek() != '\n')
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
         {
             Advance();
         }
@@ -316,7 +316,7 @@ public sealed class Lexer
 
     private void ScanRegionDirective()
     {
-        while (!IsAtEnd() && Peek() != '\n')
+        while (!IsAtEnd() && Peek() is not '\r' and not '\n')
         {
             Advance();
         }

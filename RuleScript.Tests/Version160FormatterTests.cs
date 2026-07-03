@@ -22,7 +22,7 @@ public sealed class Version160FormatterTests
 
         var formatted = RuleScriptFormatterCore.Format(source);
 
-        Assert.Equal("""
+        Assert.Equal(NormalizeExpected("""
             if value == 1 then:
                 result = "A";
             elseif value == 2 then:
@@ -30,7 +30,7 @@ public sealed class Version160FormatterTests
             else:
                 result = "C";
             endif
-            """ + "\n", formatted);
+            """), formatted);
     }
 
     [Fact]
@@ -47,14 +47,14 @@ public sealed class Version160FormatterTests
 
         var formatted = RuleScriptFormatterCore.Format(source);
 
-        Assert.Equal("""
+        Assert.Equal(NormalizeExpected("""
             while index < 2:
                 foreach item in items:
                     total = total + item;
                 endforeach
                 index = index + 1;
             endwhile
-            """ + "\n", formatted);
+            """), formatted);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class Version160FormatterTests
 
         var formatted = RuleScriptFormatterCore.Format(source);
 
-        Assert.Equal("""
+        Assert.Equal(NormalizeExpected("""
             import "common.rules" as common;
             export function Update(items):
                 var player = { name: "Mick", scores: [1, 2] };
@@ -80,7 +80,7 @@ public sealed class Version160FormatterTests
                 player.scores[0] = 3;
                 return player;
             endfunction
-            """ + "\n", formatted);
+            """), formatted);
     }
 
     [Theory]
@@ -151,4 +151,6 @@ public sealed class Version160FormatterTests
 
         Assert.Equal(before, after);
     }
+
+    private static string NormalizeExpected(string value) => value.ReplaceLineEndings("\n") + "\n";
 }
