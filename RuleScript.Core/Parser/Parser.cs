@@ -488,7 +488,11 @@ public sealed class Parser
                     typeName = typeToken.Lexeme;
                 }
 
-                parameterDefinitions.Add(new FunctionParameterDefinition(parameter.Lexeme, typeName));
+                parameterDefinitions.Add(new FunctionParameterDefinition(
+                    parameter.Lexeme,
+                    typeName,
+                    parameter.Line,
+                    parameter.Column));
             }
             while (Match(TokenType.Comma));
         }
@@ -501,6 +505,8 @@ public sealed class Parser
         ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
         var declaration = new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column)
         {
+            NameLine = name.Line,
+            NameColumn = name.Column,
             ParameterDefinitions = parameterDefinitions,
             Documentation = documentation
         };

@@ -10,6 +10,25 @@ namespace RuleScript.Core;
 public static class RuleScriptLanguageService
 {
     /// <summary>
+    /// Gets the definition metadata for the symbol at the requested 1-based source position.
+    /// </summary>
+    public static RuleScriptDefinitionInfo? GetDefinition(string source, int line, int column)
+    {
+        return GetDefinition(new RuleScriptEngine(), source, line, column);
+    }
+
+    /// <summary>
+    /// Gets the definition metadata for the symbol at the requested 1-based source position using the supplied engine metadata.
+    /// </summary>
+    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptEngine engine, string source, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(source);
+
+        return RuleScriptNavigationAnalyzer.GetDefinition(engine, source, line, column);
+    }
+
+    /// <summary>
     /// Parses named region directives and returns their folding ranges.
     /// </summary>
     public static IReadOnlyList<RuleScriptRegion> GetRegions(string source)

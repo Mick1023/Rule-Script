@@ -11,6 +11,10 @@ public sealed record FunctionDeclarationStatement(
 
     public string? Documentation { get; init; }
 
+    public int? NameLine { get; init; }
+
+    public int? NameColumn { get; init; }
+
     public IReadOnlyList<FunctionParameterDefinition> ParameterDefinitions { get; init; } =
         Parameters.Select(parameter => new FunctionParameterDefinition(parameter)).ToArray();
 }
