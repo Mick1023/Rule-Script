@@ -198,30 +198,67 @@ public sealed class RuleScriptEngine
                 continue;
             }
 
-            if (typeof(Task).IsAssignableFrom(method.ReturnType))
+            var isAsync = TryGetAttributedAsyncResultType(method.ReturnType, out var asyncResultType);
+            if (!isAsync && typeof(Task).IsAssignableFrom(method.ReturnType))
             {
                 throw new NotSupportedException(
-                    $"Attributed async host method '{method.Name}' is not supported; use RegisterFunctionAsync.");
+                    $"Attributed async host method '{method.Name}' must return Task or Task<T>.");
             }
 
             var parameters = method.GetParameters();
-            var symbols = parameters
+            var cancellationTokenIndexes = parameters
+                .Select((parameter, index) => (parameter, index))
+                .Where(item => item.parameter.ParameterType == typeof(CancellationToken))
+                .Select(item => item.index)
+                .ToArray();
+            if (cancellationTokenIndexes.Length > 1
+                || (cancellationTokenIndexes.Length == 1 && cancellationTokenIndexes[0] != parameters.Length - 1))
+            {
+                throw new NotSupportedException(
+                    $"Attributed host method '{method.Name}' may declare CancellationToken only as its final parameter.");
+            }
+
+            var injectCancellationToken = cancellationTokenIndexes.Length == 1;
+            var scriptParameters = injectCancellationToken ? parameters[..^1] : parameters;
+            var symbols = scriptParameters
                 .Select(parameter => new RuleScriptParameterSymbol(parameter.Name!, FromClrType(parameter.ParameterType)))
                 .ToArray();
             var name = string.IsNullOrWhiteSpace(attribute.Name) ? method.Name : attribute.Name;
-
-            RegisterFunction(
-                name!,
-                arguments => method.Invoke(host, ConvertHostArguments(parameters, arguments)),
-                new RuleScriptHostFunctionOptions
-                {
-                    Parameters = symbols,
-                    ReturnType = method.ReturnType == typeof(void)
+            var options = new RuleScriptHostFunctionOptions
+            {
+                Parameters = symbols,
+                ReturnType = isAsync
+                    ? asyncResultType is null
+                        ? RuleScriptValueType.Null
+                        : FromClrType(asyncResultType)
+                    : method.ReturnType == typeof(void)
                         ? RuleScriptValueType.Null
                         : FromClrType(method.ReturnType),
-                    ThreadSafe = attribute.ThreadSafe,
-                    Documentation = attribute.Documentation
-                });
+                ThreadSafe = attribute.ThreadSafe,
+                Documentation = attribute.Documentation
+            };
+
+            if (isAsync)
+            {
+                RegisterFunctionAsync(
+                    name!,
+                    (arguments, cancellationToken) => InvokeAttributedFunctionAsync(
+                        host,
+                        method,
+                        scriptParameters,
+                        arguments,
+                        injectCancellationToken,
+                        cancellationToken),
+                    options);
+            }
+            else
+            {
+                RegisterFunction(
+                    name!,
+                    arguments => method.Invoke(host, ConvertHostArguments(scriptParameters, arguments)),
+                    options);
+            }
+
             registered++;
         }
 
@@ -1222,6 +1259,55 @@ public sealed class RuleScriptEngine
                 : Convert.ChangeType(arguments[index], targetType, CultureInfo.InvariantCulture);
         }
         return converted;
+    }
+
+    private static bool TryGetAttributedAsyncResultType(Type returnType, out Type? resultType)
+    {
+        if (returnType == typeof(Task))
+        {
+            resultType = null;
+            return true;
+        }
+
+        if (returnType.IsGenericType && returnType.GetGenericTypeDefinition() == typeof(Task<>))
+        {
+            resultType = returnType.GenericTypeArguments[0];
+            return true;
+        }
+
+        resultType = null;
+        return false;
+    }
+
+    private static async Task<object?> InvokeAttributedFunctionAsync(
+        object host,
+        MethodInfo method,
+        IReadOnlyList<ParameterInfo> scriptParameters,
+        IReadOnlyList<object?> arguments,
+        bool injectCancellationToken,
+        CancellationToken cancellationToken)
+    {
+        var converted = ConvertHostArguments(scriptParameters, arguments);
+        object?[] invocationArguments;
+
+        if (injectCancellationToken)
+        {
+            invocationArguments = new object?[converted.Length + 1];
+            converted.CopyTo(invocationArguments, 0);
+            invocationArguments[^1] = cancellationToken;
+        }
+        else
+        {
+            invocationArguments = converted;
+        }
+
+        var task = method.Invoke(host, invocationArguments) as Task
+            ?? throw new InvalidOperationException($"Attributed async host method '{method.Name}' returned null.");
+        await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        return method.ReturnType == typeof(Task)
+            ? null
+            : method.ReturnType.GetProperty(nameof(Task<object>.Result))!.GetValue(task);
     }
 
     private static RuleScriptValueType FromClrType(Type type)
