@@ -64,14 +64,9 @@ internal sealed class RuleScriptNavigationAnalyzer
         var statements = new Parser.Parser(tokens).Parse();
         _analysis = _engine.Analyze(source);
 
-        foreach (var function in _analysis.HostFunctions)
+        foreach (var function in _analysis.Functions.Where(IsExternalFunction))
         {
-            AddExternalFunction(function.Name, RuleScriptSymbolKind.HostFunction, function.Parameters, function.ReturnType, function.Documentation);
-        }
-
-        foreach (var function in _analysis.BuiltinFunctions)
-        {
-            AddExternalFunction(function.Name, RuleScriptSymbolKind.HostFunction, function.Parameters, function.ReturnType, function.Documentation);
+            AddExternalFunction(function);
         }
 
         AddImportedDeclarations(statements, ResolveWorkingDirectory());
@@ -278,10 +273,9 @@ internal sealed class RuleScriptNavigationAnalyzer
             return;
         }
 
-        var hostKey = Key(RuleScriptSymbolKind.HostFunction, name);
-        if (_declarations.TryGetValue(hostKey, out var hostFunction))
+        if (TryFindExternalFunction(name, out var externalFunction))
         {
-            AddSymbol(hostFunction with { Range = range, SelectionRange = range, IsDeclaration = false });
+            AddSymbol(externalFunction with { Range = range, SelectionRange = range, IsDeclaration = false });
         }
     }
 
@@ -357,23 +351,18 @@ internal sealed class RuleScriptNavigationAnalyzer
         AddSymbol(declaration with { Range = range, SelectionRange = range, IsDeclaration = false });
     }
 
-    private void AddExternalFunction(
-        string name,
-        RuleScriptSymbolKind kind,
-        IReadOnlyList<RuleScriptParameterSymbol> parameters,
-        RuleScriptValueType returnType,
-        string? documentation)
+    private void AddExternalFunction(RuleScriptFunctionSymbol function)
     {
         AddDeclaration(new NavigationSymbol(
-            name,
-            kind,
+            function.Name,
+            ToNavigationKind(function.Kind),
             Range: null,
             SelectionRange: null,
             IsDeclaration: true,
-            documentation,
+            function.Documentation,
             IsExternal: true,
-            parameters,
-            returnType));
+            function.Parameters,
+            function.ReturnType));
     }
 
     private NavigationSymbol CreateFunctionDeclaration(string name, FunctionDeclarationStatement function, string? file)
@@ -457,6 +446,37 @@ internal sealed class RuleScriptNavigationAnalyzer
         return span is null
             ? null
             : new RuleScriptSourceRange(file, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
+    }
+
+    private bool TryFindExternalFunction(string name, out NavigationSymbol function)
+    {
+        var symbolKind = _analysis.Functions
+            .FirstOrDefault(function => string.Equals(function.Name, name, StringComparison.Ordinal) && IsExternalFunction(function))
+            ?.Kind;
+
+        if (symbolKind is not null
+            && _declarations.TryGetValue(Key(ToNavigationKind(symbolKind.Value), name), out function!))
+        {
+            return true;
+        }
+
+        function = null!;
+        return false;
+    }
+
+    private static bool IsExternalFunction(RuleScriptFunctionSymbol function)
+    {
+        return function.Kind is RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin;
+    }
+
+    private static RuleScriptSymbolKind ToNavigationKind(RuleScriptFunctionKind kind)
+    {
+        return kind switch
+        {
+            RuleScriptFunctionKind.User or RuleScriptFunctionKind.Imported => RuleScriptSymbolKind.Function,
+            RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin => RuleScriptSymbolKind.HostFunction,
+            _ => RuleScriptSymbolKind.Function
+        };
     }
 
     private static string Key(RuleScriptSymbolKind kind, string name)
