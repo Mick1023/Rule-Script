@@ -1,3 +1,4 @@
+using RuleScript.Core.Diagnostics;
 using RuleScript.Core.Runtime;
 
 namespace RuleScript.Tests;
@@ -126,5 +127,45 @@ public sealed class FunctionSymbolUnificationTests
         Assert.Same(builtinSymbol, builtin.Function);
         Assert.NotNull(builtinSymbol.BuiltinMetadata);
         Assert.Equal("Converts to text.", builtinSymbol.Documentation);
+    }
+
+    [Fact]
+    public void FunctionResolver_ResolvesUnifiedFunctionSymbolsByName()
+    {
+        var first = new RuleScriptFunctionSymbol(
+            "Read",
+            [],
+            RuleScriptValueType.Number,
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: null,
+            kind: RuleScriptFunctionKind.User);
+        var replacement = new RuleScriptFunctionSymbol(
+            "Read",
+            [new RuleScriptParameterSymbol("id", RuleScriptValueType.Number)],
+            RuleScriptValueType.String,
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: "Replacement.",
+            kind: RuleScriptFunctionKind.Host,
+            hostMetadata: new RuleScriptHostFunctionMetadata(IsThreadSafe: true));
+        var resolver = new RuleScriptFunctionResolver([first, replacement]);
+
+        var resolved = resolver.ResolveFunction("Read");
+
+        Assert.Same(replacement, resolved);
+        Assert.Null(resolver.ResolveFunction("Missing"));
+        Assert.Equal(["Read"], resolver.Functions.Select(function => function.Name));
+    }
+
+    [Fact]
+    public void Diagnostics_UseUnifiedFunctionResolverForMissingFunctions()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("var value = Missing(1);");
+
+        var diagnostic = Assert.Single(
+            result.Diagnostics,
+            item => item.Code == RuleScriptDiagnosticCodes.UndefinedFunction);
+        Assert.Equal("Function 'Missing' is not defined.", diagnostic.Message);
     }
 }

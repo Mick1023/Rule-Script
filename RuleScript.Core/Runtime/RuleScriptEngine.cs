@@ -691,34 +691,17 @@ public sealed class RuleScriptEngine
                 variableNames.Select(name => new RuleScriptVariableSymbol(name, RuleScriptValueType.Unknown)));
         }
 
-        var availableFunctions = new HashSet<string>(userFunctionNames, StringComparer.Ordinal);
-        availableFunctions.UnionWith(functionSymbols.Keys);
-        availableFunctions.UnionWith(RegisteredFunctionNames);
-        availableFunctions.UnionWith(_builtinFunctions.Names);
-        var hostSymbols = registeredHostFunctions
-            .GroupBy(function => function.Name, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
-        foreach (var builtinFunction in builtinFunctions)
-        {
-            hostSymbols.TryAdd(
-                builtinFunction.Name,
-                new RuleScriptFunctionSymbol(
-                    builtinFunction.Name,
-                    builtinFunction.Parameters,
-                    builtinFunction.ReturnType,
-                    isReturnTypeNullable: false,
-                    isExported: false,
-                    documentation: builtinFunction.Documentation,
-                    kind: RuleScriptFunctionKind.Builtin,
-                    hostMetadata: new RuleScriptHostFunctionMetadata(IsThreadSafe: true),
-                    builtinMetadata: new RuleScriptBuiltinFunctionMetadata()));
-        }
+        var functionResolver = CreateFunctionResolver(
+            userFunctionNames,
+            functionSymbols.Values,
+            RegisteredFunctionNames,
+            registeredHostFunctions,
+            _builtinFunctions.Names,
+            builtinFunctions);
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
             _knownVariables,
-            availableFunctions,
-            functionSymbols,
-            hostSymbols,
+            functionResolver,
             importedConstantTypes)
             .Concat(typedSymbols.Diagnostics)
             .ToArray();
@@ -735,6 +718,91 @@ public sealed class RuleScriptEngine
             registeredHostFunctions,
             semanticDiagnostics,
             builtinFunctions);
+    }
+
+    private static RuleScriptFunctionResolver CreateFunctionResolver(
+        IEnumerable<string> userFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> userFunctions,
+        IEnumerable<string> hostFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> hostFunctions,
+        IEnumerable<string> builtinFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> builtinFunctions)
+    {
+        return new RuleScriptFunctionResolver(
+            SnapshotResolverFunctions(
+                userFunctionNames,
+                userFunctions,
+                hostFunctionNames,
+                hostFunctions,
+                builtinFunctionNames,
+                builtinFunctions));
+    }
+
+    private static IReadOnlyList<RuleScriptFunctionSymbol> SnapshotResolverFunctions(
+        IEnumerable<string> userFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> userFunctions,
+        IEnumerable<string> hostFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> hostFunctions,
+        IEnumerable<string> builtinFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> builtinFunctions)
+    {
+        var functions = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
+
+        AddFunctions(functions, userFunctions);
+        AddFallbackFunctions(functions, userFunctionNames, RuleScriptFunctionKind.User);
+        AddFunctions(functions, hostFunctions);
+        AddFallbackFunctions(functions, hostFunctionNames, RuleScriptFunctionKind.Host);
+        AddFunctions(functions, builtinFunctions.Select(CreateThreadSafeBuiltinFunction));
+        AddFallbackFunctions(functions, builtinFunctionNames, RuleScriptFunctionKind.Builtin);
+
+        return functions.Values.ToArray();
+    }
+
+    private static void AddFunctions(
+        IDictionary<string, RuleScriptFunctionSymbol> functions,
+        IEnumerable<RuleScriptFunctionSymbol> symbols)
+    {
+        foreach (var symbol in symbols)
+        {
+            functions[symbol.Name] = symbol;
+        }
+    }
+
+    private static void AddFallbackFunctions(
+        IDictionary<string, RuleScriptFunctionSymbol> functions,
+        IEnumerable<string> names,
+        RuleScriptFunctionKind kind)
+    {
+        foreach (var name in names)
+        {
+            functions.TryAdd(
+                name,
+                new RuleScriptFunctionSymbol(
+                    name,
+                    [],
+                    RuleScriptValueType.Unknown,
+                    isReturnTypeNullable: false,
+                    isExported: false,
+                    documentation: null,
+                    kind: kind));
+        }
+    }
+
+    private static RuleScriptFunctionSymbol CreateThreadSafeBuiltinFunction(RuleScriptFunctionSymbol function)
+    {
+        return new RuleScriptFunctionSymbol(
+            function.Name,
+            function.Parameters,
+            function.ReturnType,
+            function.IsReturnTypeNullable,
+            function.IsExported,
+            function.Documentation,
+            RuleScriptFunctionKind.Builtin,
+            function.Location,
+            function.Range,
+            hostMetadata: new RuleScriptHostFunctionMetadata(IsThreadSafe: true),
+            builtinMetadata: function.BuiltinMetadata ?? new RuleScriptBuiltinFunctionMetadata(),
+            importMetadata: function.ImportMetadata);
     }
 
     private void CollectImportedFunctionSignatures(
