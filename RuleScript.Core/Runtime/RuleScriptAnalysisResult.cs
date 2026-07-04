@@ -1,5 +1,7 @@
 namespace RuleScript.Core.Runtime;
 
+#pragma warning disable CS0618
+
 /// <summary>
 /// Represents static script symbols collected for editor tooling.
 /// </summary>
@@ -14,9 +16,9 @@ public sealed class RuleScriptAnalysisResult
         IEnumerable<RuleScriptVariableSymbol>? variables = null,
         IEnumerable<RuleScriptFunctionSymbol>? userFunctions = null,
         IEnumerable<RuleScriptVariableSymbol>? visibleVariables = null,
-        IEnumerable<RuleScriptHostFunctionSymbol>? hostFunctions = null,
+        IEnumerable<RuleScriptFunctionSymbol>? hostFunctions = null,
         IEnumerable<RuleScriptDiagnostic>? diagnostics = null,
-        IEnumerable<RuleScriptBuiltinFunctionSymbol>? builtinFunctions = null)
+        IEnumerable<RuleScriptFunctionSymbol>? builtinFunctions = null)
     {
         VariableNames = Snapshot(variableNames);
         UserFunctionNames = Snapshot(userFunctionNames);
@@ -32,6 +34,13 @@ public sealed class RuleScriptAnalysisResult
         VisibleVariableNames = Snapshot(VisibleVariables.Select(variable => variable.Name));
         HostFunctions = SnapshotHostFunctions(hostFunctions);
         BuiltinFunctions = SnapshotBuiltinFunctions(builtinFunctions);
+        Functions = SnapshotAllFunctions(
+            UserFunctions,
+            UserFunctionNames,
+            HostFunctions.Select(function => function.ToFunctionSymbol()),
+            HostFunctionNames,
+            BuiltinFunctions.Select(function => function.ToFunctionSymbol()),
+            BuiltinFunctionNames);
         Diagnostics = diagnostics?.ToArray() ?? [];
     }
 
@@ -85,6 +94,11 @@ public sealed class RuleScriptAnalysisResult
     /// Gets typed signatures for built-in functions that expose analysis metadata.
     /// </summary>
     public IReadOnlyList<RuleScriptBuiltinFunctionSymbol> BuiltinFunctions { get; }
+
+    /// <summary>
+    /// Gets all function signatures available to editor tooling. Function origin is represented by <see cref="RuleScriptFunctionSymbol.Kind"/>.
+    /// </summary>
+    public IReadOnlyList<RuleScriptFunctionSymbol> Functions { get; }
 
     /// <summary>
     /// Gets all callable function names available from the current script and engine.
@@ -148,7 +162,13 @@ public sealed class RuleScriptAnalysisResult
                     symbol.ReturnType,
                     symbol.IsReturnTypeNullable,
                     symbol.IsExported,
-                    symbol.Documentation);
+                    symbol.Documentation,
+                    symbol.Kind,
+                    symbol.Location,
+                    symbol.Range,
+                    symbol.HostMetadata,
+                    symbol.BuiltinMetadata,
+                    symbol.ImportMetadata);
             }
         }
 
@@ -161,17 +181,10 @@ public sealed class RuleScriptAnalysisResult
     }
 
     private static IReadOnlyList<RuleScriptHostFunctionSymbol> SnapshotHostFunctions(
-        IEnumerable<RuleScriptHostFunctionSymbol>? symbols)
+        IEnumerable<RuleScriptFunctionSymbol>? symbols)
     {
         return symbols?
-            .Select(symbol => new RuleScriptHostFunctionSymbol(
-                symbol.Name,
-                symbol.Parameters,
-                symbol.ReturnType,
-                symbol.IsAsync,
-                symbol.IsThreadSafe,
-                symbol.IsVariadic,
-                symbol.Documentation))
+            .Select(symbol => new RuleScriptHostFunctionSymbol(symbol))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.IsAsync)
             .ToArray()
@@ -179,16 +192,62 @@ public sealed class RuleScriptAnalysisResult
     }
 
     private static IReadOnlyList<RuleScriptBuiltinFunctionSymbol> SnapshotBuiltinFunctions(
-        IEnumerable<RuleScriptBuiltinFunctionSymbol>? symbols)
+        IEnumerable<RuleScriptFunctionSymbol>? symbols)
     {
         return symbols?
-            .Select(symbol => new RuleScriptBuiltinFunctionSymbol(
-                symbol.Name,
-                symbol.Parameters,
-                symbol.ReturnType,
-                symbol.Documentation))
+            .Select(symbol => new RuleScriptBuiltinFunctionSymbol(symbol))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ToArray()
             ?? [];
     }
+
+    private static IReadOnlyList<RuleScriptFunctionSymbol> SnapshotAllFunctions(
+        IEnumerable<RuleScriptFunctionSymbol> userFunctions,
+        IEnumerable<string> userFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> hostFunctions,
+        IEnumerable<string> hostFunctionNames,
+        IEnumerable<RuleScriptFunctionSymbol> builtinFunctions,
+        IEnumerable<string> builtinFunctionNames)
+    {
+        var byName = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
+
+        AddFunctions(byName, userFunctions);
+        AddFallbacks(byName, userFunctionNames, RuleScriptFunctionKind.User);
+        AddFunctions(byName, hostFunctions);
+        AddFallbacks(byName, hostFunctionNames, RuleScriptFunctionKind.Host);
+        AddFunctions(byName, builtinFunctions);
+        AddFallbacks(byName, builtinFunctionNames, RuleScriptFunctionKind.Builtin);
+
+        return byName.Values.OrderBy(symbol => symbol.Name, StringComparer.Ordinal).ToArray();
+    }
+
+    private static void AddFunctions(
+        IDictionary<string, RuleScriptFunctionSymbol> symbols,
+        IEnumerable<RuleScriptFunctionSymbol> functions)
+    {
+        foreach (var function in functions)
+        {
+            symbols[function.Name] = function;
+        }
+    }
+
+    private static void AddFallbacks(
+        IDictionary<string, RuleScriptFunctionSymbol> symbols,
+        IEnumerable<string> names,
+        RuleScriptFunctionKind kind)
+    {
+        foreach (var name in names)
+        {
+            symbols.TryAdd(name, new RuleScriptFunctionSymbol(
+                name,
+                [],
+                RuleScriptValueType.Unknown,
+                isReturnTypeNullable: false,
+                isExported: false,
+                documentation: null,
+                kind: kind));
+        }
+    }
 }
+
+#pragma warning restore CS0618

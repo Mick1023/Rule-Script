@@ -7,7 +7,7 @@ namespace RuleScript.Core.Runtime;
 public sealed class BuiltinFunctions
 {
     private readonly Dictionary<string, Func<IReadOnlyList<RuntimeValue>, RuntimeValue>> _functions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptBuiltinFunctionSymbol> _signatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptFunctionSymbol> _signatures = new(StringComparer.Ordinal);
 
     public BuiltinFunctions()
     {
@@ -120,7 +120,7 @@ public sealed class BuiltinFunctions
 
     public IEnumerable<string> Names => _functions.Keys;
 
-    internal IReadOnlyCollection<RuleScriptBuiltinFunctionSymbol> Signatures => _signatures.Values;
+    internal IReadOnlyCollection<RuleScriptFunctionSymbol> Signatures => _signatures.Values;
 
     public void Register(string name, Func<IReadOnlyList<RuntimeValue>, RuntimeValue> function)
     {
@@ -141,7 +141,15 @@ public sealed class BuiltinFunctions
         params RuleScriptParameterSymbol[] parameters)
     {
         Register(name, function);
-        _signatures[name] = new RuleScriptBuiltinFunctionSymbol(name, parameters, returnType, documentation);
+        _signatures[name] = new RuleScriptFunctionSymbol(
+            name,
+            parameters,
+            returnType,
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: documentation,
+            kind: RuleScriptFunctionKind.Builtin,
+            builtinMetadata: new RuleScriptBuiltinFunctionMetadata());
     }
 
     public RuntimeValue Invoke(string name, IReadOnlyList<RuntimeValue> arguments)

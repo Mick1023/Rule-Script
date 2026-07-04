@@ -11,8 +11,8 @@ public sealed class RuleScriptEngine
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _hostFunctionSignatures = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptHostFunctionSymbol> _asyncHostFunctionSignatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptFunctionSymbol> _hostFunctionSignatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleScriptFunctionSymbol> _asyncHostFunctionSignatures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuleScriptValueType> _knownVariables = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private readonly object _executionSync = new();
@@ -107,11 +107,22 @@ public sealed class RuleScriptEngine
     /// <summary>
     /// Gets typed host function signatures registered on the engine.
     /// </summary>
+#pragma warning disable CS0618
     public IReadOnlyList<RuleScriptHostFunctionSymbol> RegisteredHostFunctions =>
+        RegisteredFunctionSymbols
+            .Where(symbol => symbol.Kind == RuleScriptFunctionKind.Host)
+            .Select(symbol => new RuleScriptHostFunctionSymbol(symbol))
+            .ToArray();
+#pragma warning restore CS0618
+
+    /// <summary>
+    /// Gets typed function symbols registered on the engine.
+    /// </summary>
+    public IReadOnlyList<RuleScriptFunctionSymbol> RegisteredFunctionSymbols =>
         _hostFunctionSignatures.Values
             .Concat(_asyncHostFunctionSignatures.Values)
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
-            .ThenBy(symbol => symbol.IsAsync)
+            .ThenBy(symbol => symbol.HostMetadata?.IsAsync ?? false)
             .ToArray();
 
     /// <summary>
@@ -645,7 +656,7 @@ public sealed class RuleScriptEngine
         int? cursorColumn,
         bool fallbackVisibleToAll = false)
     {
-        var registeredHostFunctions = RegisteredHostFunctions;
+        var registeredHostFunctions = RegisteredFunctionSymbols;
         var builtinFunctions = _builtinFunctions.Signatures;
         var importedConstantTypes = CollectImportedConstantTypes(statements, ResolveWorkingDirectory());
         var hostReturnTypes = registeredHostFunctions
@@ -691,11 +702,16 @@ public sealed class RuleScriptEngine
         {
             hostSymbols.TryAdd(
                 builtinFunction.Name,
-                new RuleScriptHostFunctionSymbol(
+                new RuleScriptFunctionSymbol(
                     builtinFunction.Name,
                     builtinFunction.Parameters,
                     builtinFunction.ReturnType,
-                    isThreadSafe: true));
+                    isReturnTypeNullable: false,
+                    isExported: false,
+                    documentation: builtinFunction.Documentation,
+                    kind: RuleScriptFunctionKind.Builtin,
+                    hostMetadata: new RuleScriptHostFunctionMetadata(IsThreadSafe: true),
+                    builtinMetadata: new RuleScriptBuiltinFunctionMetadata()));
         }
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
@@ -757,7 +773,11 @@ public sealed class RuleScriptEngine
                     function.ReturnType,
                     function.IsReturnTypeNullable,
                     function.IsExported,
-                    function.Documentation);
+                    function.Documentation,
+                    RuleScriptFunctionKind.Imported,
+                    WithFile(function.Location, path),
+                    WithFile(function.Range, path),
+                    importMetadata: new RuleScriptImportFunctionMetadata(path, import.Alias, function.Name));
             }
         }
     }
@@ -878,7 +898,47 @@ public sealed class RuleScriptEngine
             declaration.Name,
             parameters,
             RuleScriptValueType.Unknown,
-            documentation: declaration.Documentation);
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: declaration.Documentation,
+            kind: RuleScriptFunctionKind.User,
+            location: CreateLocation(declaration),
+            range: CreateRange(declaration));
+    }
+
+    private static RuleScriptSourceLocation? CreateLocation(FunctionDeclarationStatement declaration)
+    {
+        var line = declaration.NameLine ?? declaration.Line;
+        var column = declaration.NameColumn ?? declaration.Column;
+        return line.HasValue || column.HasValue
+            ? new RuleScriptSourceLocation(null, line, column)
+            : null;
+    }
+
+    private static RuleScriptSourceRange? CreateRange(FunctionDeclarationStatement declaration)
+    {
+        return declaration.SourceSpan is null
+            ? null
+            : new RuleScriptSourceRange(
+                null,
+                declaration.SourceSpan.StartLine,
+                declaration.SourceSpan.StartColumn,
+                declaration.SourceSpan.EndLine,
+                declaration.SourceSpan.EndColumn);
+    }
+
+    private static RuleScriptSourceLocation? WithFile(RuleScriptSourceLocation? location, string file)
+    {
+        return location is null
+            ? new RuleScriptSourceLocation(file, null, null)
+            : location with { File = file };
+    }
+
+    private static RuleScriptSourceRange? WithFile(RuleScriptSourceRange? range, string file)
+    {
+        return range is null
+            ? null
+            : range with { File = file };
     }
 
     /// <summary>
@@ -1163,7 +1223,7 @@ public sealed class RuleScriptEngine
             cancellationToken);
     }
 
-    private static RuleScriptHostFunctionSymbol CreateHostFunctionSignature(
+    private static RuleScriptFunctionSymbol CreateHostFunctionSignature(
         string name,
         IReadOnlyList<RuleScriptParameterSymbol> parameters,
         RuleScriptValueType returnType,
@@ -1203,16 +1263,18 @@ public sealed class RuleScriptEngine
             }
         }
 
-        return new RuleScriptHostFunctionSymbol(
+        return new RuleScriptFunctionSymbol(
             name,
             parameters,
             returnType,
-            isAsync,
-            isThreadSafe,
-            documentation: documentation);
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: documentation,
+            kind: RuleScriptFunctionKind.Host,
+            hostMetadata: new RuleScriptHostFunctionMetadata(isAsync, isThreadSafe));
     }
 
-    private static RuleScriptHostFunctionSymbol CreateHostFunctionSignature(
+    private static RuleScriptFunctionSymbol CreateHostFunctionSignature(
         string name,
         RuleScriptHostFunctionOptions options,
         bool isAsync)
@@ -1235,14 +1297,15 @@ public sealed class RuleScriptEngine
             throw new ArgumentOutOfRangeException(nameof(options), "Host function return type is invalid.");
         }
 
-        return new RuleScriptHostFunctionSymbol(
+        return new RuleScriptFunctionSymbol(
             name,
             [],
             options.ReturnType,
-            isAsync,
-            options.ThreadSafe,
-            isVariadic: true,
-            documentation: options.Documentation);
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: options.Documentation,
+            kind: RuleScriptFunctionKind.Host,
+            hostMetadata: new RuleScriptHostFunctionMetadata(isAsync, options.ThreadSafe, IsVariadic: true));
     }
 
     private static object?[] ConvertHostArguments(

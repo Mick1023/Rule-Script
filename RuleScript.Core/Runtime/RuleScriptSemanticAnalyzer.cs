@@ -11,7 +11,7 @@ internal static class RuleScriptSemanticAnalyzer
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions,
         IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
@@ -327,7 +327,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         switch (statement)
         {
@@ -554,7 +554,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         var returnTypes = new List<RuleScriptTypeInfo>(tasks.Count);
         var previous = AnalyzingParallelTask.Value;
@@ -611,7 +611,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         var initializerType = AnalyzeExpression(
             statement.Initializer,
@@ -764,7 +764,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions,
         SourceSpan? span)
     {
         switch (target)
@@ -880,7 +880,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         foreach (var statement in statements)
         {
@@ -895,7 +895,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         switch (expression)
         {
@@ -1055,7 +1055,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         var left = AnalyzeExpression(expression.Left, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
         var right = AnalyzeExpression(expression.Right, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
@@ -1116,7 +1116,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         var left = AnalyzeExpression(binary.Left, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
         var right = AnalyzeExpression(binary.Right, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
@@ -1167,7 +1167,7 @@ internal static class RuleScriptSemanticAnalyzer
         ICollection<RuleScriptDiagnostic> diagnostics,
         IReadOnlySet<string> availableFunctions,
         IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctions)
     {
         var argumentTypes = arguments
             .Select(argument => AnalyzeExpression(argument, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions))
@@ -1194,11 +1194,11 @@ internal static class RuleScriptSemanticAnalyzer
 
         if (hostFunctions.TryGetValue(name, out var hostFunction))
         {
-            if (!hostFunction.IsVariadic)
+            if (hostFunction.HostMetadata?.IsVariadic != true)
             {
                 ValidateArguments(name, argumentTypes, hostFunction.Parameters, line, column, diagnostics);
             }
-            if (AnalyzingParallelTask.Value && !hostFunction.IsThreadSafe)
+            if (AnalyzingParallelTask.Value && hostFunction.HostMetadata?.IsThreadSafe != true)
             {
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe,

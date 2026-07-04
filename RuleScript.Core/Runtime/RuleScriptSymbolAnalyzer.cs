@@ -124,7 +124,10 @@ internal static class RuleScriptSymbolAnalyzer
                 returnType.Kind,
                 returnType.IsNullable,
                 function.IsExported,
-                function.Documentation);
+                function.Documentation,
+                RuleScriptFunctionKind.User,
+                CreateLocation(function),
+                CreateRange(function));
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -805,5 +808,26 @@ internal static class RuleScriptSymbolAnalyzer
                     : null))
             .OrderBy(value => value.Name, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static RuleScriptSourceLocation? CreateLocation(FunctionDeclarationStatement function)
+    {
+        var line = function.NameLine ?? function.Line;
+        var column = function.NameColumn ?? function.Column;
+        return line.HasValue || column.HasValue
+            ? new RuleScriptSourceLocation(null, line, column)
+            : null;
+    }
+
+    private static RuleScriptSourceRange? CreateRange(FunctionDeclarationStatement function)
+    {
+        return function.SourceSpan is null
+            ? null
+            : new RuleScriptSourceRange(
+                null,
+                function.SourceSpan.StartLine,
+                function.SourceSpan.StartColumn,
+                function.SourceSpan.EndLine,
+                function.SourceSpan.EndColumn);
     }
 }
