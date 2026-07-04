@@ -97,6 +97,7 @@ public sealed class Version170NavigationTests
         Assert.Null(currentFileCall.File);
         Assert.Equal(3, currentFileCall.Line);
         Assert.Equal(1, currentFileCall.Column);
+        Assert.Equal(13, currentFileCall.EndColumn);
     }
 
     [Fact]

@@ -58,4 +58,14 @@ public sealed class SourceLocationMapperTests
         Assert.True(RuleScriptSourceMapper.Contains(span, 3, 1));
         Assert.False(RuleScriptSourceMapper.Contains(span, 4, 5));
     }
+
+    [Fact]
+    public void Contains_SourceRangeUsesSameHalfOpenSemantics()
+    {
+        var range = new RuleScriptSourceRange("main.rules", 2, 3, 4, 5);
+
+        Assert.True(RuleScriptSourceMapper.Contains(range, 2, 3));
+        Assert.True(RuleScriptSourceMapper.Contains(range, 3, 1));
+        Assert.False(RuleScriptSourceMapper.Contains(range, 4, 5));
+    }
 }

@@ -256,7 +256,7 @@ internal sealed class RuleScriptNavigationAnalyzer
 
     private NavigationSymbol? FindSymbol(int line, int column)
     {
-        return _symbols.LastOrDefault(symbol => symbol.SelectionRange is not null && Contains(symbol.SelectionRange, line, column));
+        return _symbols.LastOrDefault(symbol => RuleScriptSourceMapper.Contains(symbol.SelectionRange, line, column));
     }
 
     private void AddFunctionReference(string name, int? line, int? column, string? file)
@@ -367,11 +367,11 @@ internal sealed class RuleScriptNavigationAnalyzer
 
     private NavigationSymbol CreateFunctionDeclaration(string name, FunctionDeclarationStatement function, string? file)
     {
-        var selectionRange = CreateRange(file, function.NameLine, function.NameColumn, function.Name);
+        var selectionRange = RuleScriptSourceMapper.CreateTokenRange(file, function.NameLine, function.NameColumn, function.Name);
         return new NavigationSymbol(
             name,
             RuleScriptSymbolKind.Function,
-            ToRange(file, function.SourceSpan) ?? selectionRange,
+            RuleScriptSourceMapper.CreateRange(file, function.SourceSpan) ?? selectionRange,
             selectionRange,
             IsDeclaration: true,
             function.Documentation,
@@ -416,36 +416,17 @@ internal sealed class RuleScriptNavigationAnalyzer
             : Path.Combine(baseDirectory, path));
     }
 
-    private static bool Contains(RuleScriptSourceRange range, int line, int column)
-    {
-        return (line > range.StartLine || (line == range.StartLine && column >= range.StartColumn))
-            && (line < range.EndLine || (line == range.EndLine && column < range.EndColumn));
-    }
-
     private static bool TryCreateRange(string? file, int? line, int? column, string name, out RuleScriptSourceRange range)
     {
         range = null!;
-        if (line is null || column is null)
+        var tokenRange = RuleScriptSourceMapper.CreateTokenRange(file, line, column, name);
+        if (tokenRange is null)
         {
             return false;
         }
 
-        range = CreateRange(file, line, column, name);
+        range = tokenRange;
         return true;
-    }
-
-    private static RuleScriptSourceRange CreateRange(string? file, int? line, int? column, string name)
-    {
-        var startLine = line ?? 1;
-        var startColumn = column ?? 1;
-        return new RuleScriptSourceRange(file, startLine, startColumn, startLine, startColumn + name.Length);
-    }
-
-    private static RuleScriptSourceRange? ToRange(string? file, SourceSpan? span)
-    {
-        return span is null
-            ? null
-            : new RuleScriptSourceRange(file, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
     }
 
     private bool TryFindExternalFunction(string name, out NavigationSymbol function)

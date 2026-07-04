@@ -71,8 +71,23 @@ internal static class RuleScriptSourceMapper
             return false;
         }
 
-        var afterStart = line > span.StartLine || (line == span.StartLine && column >= span.StartColumn);
-        var beforeEnd = line < span.EndLine || (line == span.EndLine && column < span.EndColumn);
+        return Contains(span.StartLine, span.StartColumn, span.EndLine, span.EndColumn, line, column);
+    }
+
+    public static bool Contains(RuleScriptSourceRange? range, int line, int column)
+    {
+        if (range is null)
+        {
+            return false;
+        }
+
+        return Contains(range.StartLine, range.StartColumn, range.EndLine, range.EndColumn, line, column);
+    }
+
+    private static bool Contains(int startLine, int startColumn, int endLine, int endColumn, int line, int column)
+    {
+        var afterStart = line > startLine || (line == startLine && column >= startColumn);
+        var beforeEnd = line < endLine || (line == endLine && column < endColumn);
         return afterStart && beforeEnd;
     }
 }
