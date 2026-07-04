@@ -72,8 +72,13 @@ public sealed class MaintenanceRefactorRegressionTests
             item => item.Code == RuleScriptDiagnosticCodes.UndefinedFunction);
 
         Assert.Equal("123", context.Get<string>("result"));
-        Assert.Equal(expectedFormatted, formatted);
+        Assert.Equal(NormalizeLineEndings(expectedFormatted), NormalizeLineEndings(formatted));
         Assert.Equal("Function 'Missing' is not defined.", diagnostic.Message);
         Assert.Equal(RuleScriptDiagnosticSeverity.Error, diagnostic.Severity);
+    }
+
+    private static string NormalizeLineEndings(string value)
+    {
+        return value.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }
