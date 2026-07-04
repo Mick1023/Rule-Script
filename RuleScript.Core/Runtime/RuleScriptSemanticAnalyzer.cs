@@ -1367,16 +1367,8 @@ internal static class RuleScriptSemanticAnalyzer
         string? tokenText,
         SourceSpan? span = null)
     {
-        RuleScriptSourceRange? range = span is not null
-            ? new RuleScriptSourceRange(null, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn)
-            : line.HasValue && column.HasValue
-                ? new RuleScriptSourceRange(
-                    null,
-                    line.Value,
-                    column.Value,
-                    line.Value,
-                    column.Value + Math.Max(tokenText?.Length ?? 0, 1))
-                : null;
+        var range = RuleScriptSourceMapper.CreateRange(null, span)
+            ?? RuleScriptSourceMapper.CreateTokenRange(null, line, column, tokenText);
 
         return new RuleScriptDiagnostic(message, line, column, tokenText, null, range)
         {

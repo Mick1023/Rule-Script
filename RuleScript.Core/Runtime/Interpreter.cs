@@ -2218,10 +2218,7 @@ public sealed class Interpreter
 
     private RuleScriptSourceRange? GetStatementRange(Statement statement)
     {
-        var span = statement.SourceSpan;
-        return span is null
-            ? null
-            : new RuleScriptSourceRange(CurrentModule.Name, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
+        return RuleScriptSourceMapper.CreateRange(CurrentModule.Name, statement.SourceSpan);
     }
 
     private RuleScriptBreakpoint? GetTriggeredBreakpoint(RuleScriptSourceLocation location, RuntimeContext context)

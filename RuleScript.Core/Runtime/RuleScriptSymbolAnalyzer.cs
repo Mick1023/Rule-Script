@@ -126,8 +126,11 @@ internal static class RuleScriptSymbolAnalyzer
                 function.IsExported,
                 function.Documentation,
                 RuleScriptFunctionKind.User,
-                CreateLocation(function),
-                CreateRange(function));
+                RuleScriptSourceMapper.CreateLocation(
+                    null,
+                    function.NameLine ?? function.Line,
+                    function.NameColumn ?? function.Column),
+                RuleScriptSourceMapper.CreateRange(null, function.SourceSpan));
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -163,7 +166,7 @@ internal static class RuleScriptSymbolAnalyzer
 
             if (cursorLine.HasValue
                 && cursorColumn.HasValue
-                && Contains(function.SourceSpan, cursorLine.Value, cursorColumn.Value))
+                && RuleScriptSourceMapper.Contains(function.SourceSpan, cursorLine.Value, cursorColumn.Value))
             {
                 cursorLocals = locals;
             }
@@ -783,18 +786,6 @@ internal static class RuleScriptSymbolAnalyzer
         }
     }
 
-    private static bool Contains(SourceSpan? span, int line, int column)
-    {
-        if (span is null)
-        {
-            return false;
-        }
-
-        var afterStart = line > span.StartLine || (line == span.StartLine && column >= span.StartColumn);
-        var beforeEnd = line < span.EndLine || (line == span.EndLine && column < span.EndColumn);
-        return afterStart && beforeEnd;
-    }
-
     private static IReadOnlyList<RuleScriptVariableSymbol> ToSymbols(
         IDictionary<string, RuleScriptTypeInfo> values,
         IReadOnlyDictionary<string, string>? documentation = null)
@@ -810,24 +801,4 @@ internal static class RuleScriptSymbolAnalyzer
             .ToArray();
     }
 
-    private static RuleScriptSourceLocation? CreateLocation(FunctionDeclarationStatement function)
-    {
-        var line = function.NameLine ?? function.Line;
-        var column = function.NameColumn ?? function.Column;
-        return line.HasValue || column.HasValue
-            ? new RuleScriptSourceLocation(null, line, column)
-            : null;
-    }
-
-    private static RuleScriptSourceRange? CreateRange(FunctionDeclarationStatement function)
-    {
-        return function.SourceSpan is null
-            ? null
-            : new RuleScriptSourceRange(
-                null,
-                function.SourceSpan.StartLine,
-                function.SourceSpan.StartColumn,
-                function.SourceSpan.EndLine,
-                function.SourceSpan.EndColumn);
-    }
 }

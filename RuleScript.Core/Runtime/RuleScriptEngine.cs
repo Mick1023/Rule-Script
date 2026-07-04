@@ -604,20 +604,13 @@ public sealed class RuleScriptEngine
 
     private static RuleScriptDiagnostic CreateDiagnostic(SyntaxException exception)
     {
-        RuleScriptSourceRange? range = null;
-
-        if (exception.Line.HasValue && exception.Column.HasValue)
-        {
-            var endLine = exception.EndLine ?? exception.Line.Value;
-            var endColumn = exception.EndColumn
-                ?? exception.Column.Value + Math.Max(exception.TokenText?.Length ?? 0, 1);
-            range = new RuleScriptSourceRange(
-                exception.SourceFile,
-                exception.Line.Value,
-                exception.Column.Value,
-                endLine,
-                endColumn);
-        }
+        var range = RuleScriptSourceMapper.CreateTokenRange(
+            exception.SourceFile,
+            exception.Line,
+            exception.Column,
+            exception.EndLine,
+            exception.EndColumn,
+            exception.TokenText);
 
         var code = exception.Message switch
         {
@@ -843,8 +836,8 @@ public sealed class RuleScriptEngine
                     function.IsExported,
                     function.Documentation,
                     RuleScriptFunctionKind.Imported,
-                    WithFile(function.Location, path),
-                    WithFile(function.Range, path),
+                    RuleScriptSourceMapper.WithFile(function.Location, path),
+                    RuleScriptSourceMapper.WithFile(function.Range, path),
                     importMetadata: new RuleScriptImportFunctionMetadata(path, import.Alias, function.Name));
             }
         }
@@ -970,43 +963,11 @@ public sealed class RuleScriptEngine
             isExported: false,
             documentation: declaration.Documentation,
             kind: RuleScriptFunctionKind.User,
-            location: CreateLocation(declaration),
-            range: CreateRange(declaration));
-    }
-
-    private static RuleScriptSourceLocation? CreateLocation(FunctionDeclarationStatement declaration)
-    {
-        var line = declaration.NameLine ?? declaration.Line;
-        var column = declaration.NameColumn ?? declaration.Column;
-        return line.HasValue || column.HasValue
-            ? new RuleScriptSourceLocation(null, line, column)
-            : null;
-    }
-
-    private static RuleScriptSourceRange? CreateRange(FunctionDeclarationStatement declaration)
-    {
-        return declaration.SourceSpan is null
-            ? null
-            : new RuleScriptSourceRange(
+            location: RuleScriptSourceMapper.CreateLocation(
                 null,
-                declaration.SourceSpan.StartLine,
-                declaration.SourceSpan.StartColumn,
-                declaration.SourceSpan.EndLine,
-                declaration.SourceSpan.EndColumn);
-    }
-
-    private static RuleScriptSourceLocation? WithFile(RuleScriptSourceLocation? location, string file)
-    {
-        return location is null
-            ? new RuleScriptSourceLocation(file, null, null)
-            : location with { File = file };
-    }
-
-    private static RuleScriptSourceRange? WithFile(RuleScriptSourceRange? range, string file)
-    {
-        return range is null
-            ? null
-            : range with { File = file };
+                declaration.NameLine ?? declaration.Line,
+                declaration.NameColumn ?? declaration.Column),
+            range: RuleScriptSourceMapper.CreateRange(null, declaration.SourceSpan));
     }
 
     /// <summary>
