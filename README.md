@@ -70,11 +70,12 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
+- [v1.8.0 maintenance notes](docs/releases/v1.8.0.md)
 - [v1.7.0 release notes](docs/releases/v1.7.0.md)
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.7.0 release notes](docs/releases/v1.7.0.md) for Navigation API metadata, Go To Definition, and Find References support.
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.8.0 maintenance notes](docs/releases/v1.8.0.md) for unified function symbols, shared source ranges, and reusable document analysis. See the [v1.7.0 release notes](docs/releases/v1.7.0.md) for Navigation API metadata, Go To Definition, and Find References support.
 
 ```bash
 dotnet build RuleScript.sln
