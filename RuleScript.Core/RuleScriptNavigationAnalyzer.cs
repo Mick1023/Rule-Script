@@ -5,21 +5,22 @@ namespace RuleScript.Core;
 
 internal sealed class RuleScriptNavigationAnalyzer
 {
+    private readonly RuleScriptDocumentAnalysisResult _document;
     private readonly RuleScriptEngine _engine;
     private readonly Dictionary<string, NavigationSymbol> _declarations = new(StringComparer.Ordinal);
     private readonly List<NavigationSymbol> _symbols = [];
     private readonly HashSet<string> _loadedImports = new(StringComparer.OrdinalIgnoreCase);
-    private RuleScriptAnalysisResult _analysis = null!;
 
-    private RuleScriptNavigationAnalyzer(RuleScriptEngine engine)
+    private RuleScriptNavigationAnalyzer(RuleScriptDocumentAnalysisResult document)
     {
-        _engine = engine;
+        _document = document;
+        _engine = document.Engine;
     }
 
-    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptEngine engine, string source, int line, int column)
+    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptDocumentAnalysisResult document, int line, int column)
     {
-        var analyzer = new RuleScriptNavigationAnalyzer(engine);
-        analyzer.Analyze(source);
+        var analyzer = new RuleScriptNavigationAnalyzer(document);
+        analyzer.Analyze();
         var symbol = analyzer.FindSymbol(line, column);
 
         if (symbol is null)
@@ -37,10 +38,10 @@ internal sealed class RuleScriptNavigationAnalyzer
             : null;
     }
 
-    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptEngine engine, string source, int line, int column)
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptDocumentAnalysisResult document, int line, int column)
     {
-        var analyzer = new RuleScriptNavigationAnalyzer(engine);
-        analyzer.Analyze(source);
+        var analyzer = new RuleScriptNavigationAnalyzer(document);
+        analyzer.Analyze();
         var symbol = analyzer.FindSymbol(line, column);
 
         if (symbol is null)
@@ -58,19 +59,15 @@ internal sealed class RuleScriptNavigationAnalyzer
             .ToArray();
     }
 
-    private void Analyze(string source)
+    private void Analyze()
     {
-        var tokens = new Lexer.Lexer(source).Tokenize();
-        var statements = new Parser.Parser(tokens).Parse();
-        _analysis = _engine.Analyze(source);
-
-        foreach (var function in _analysis.Functions.Where(IsExternalFunction))
+        foreach (var function in _document.Analysis.Functions.Where(IsExternalFunction))
         {
             AddExternalFunction(function);
         }
 
-        AddImportedDeclarations(statements, ResolveWorkingDirectory());
-        VisitStatements(statements, new NavigationScope(null, isFunctionScope: false), file: null);
+        AddImportedDeclarations(_document.Statements, ResolveWorkingDirectory());
+        VisitStatements(_document.Statements, new NavigationScope(null, isFunctionScope: false), file: null);
     }
 
     private void AddImportedDeclarations(IEnumerable<Statement> statements, string baseDirectory)
@@ -431,7 +428,7 @@ internal sealed class RuleScriptNavigationAnalyzer
 
     private bool TryFindExternalFunction(string name, out NavigationSymbol function)
     {
-        var symbolKind = _analysis.Functions
+        var symbolKind = _document.Analysis.Functions
             .FirstOrDefault(function => string.Equals(function.Name, name, StringComparison.Ordinal) && IsExternalFunction(function))
             ?.Kind;
 

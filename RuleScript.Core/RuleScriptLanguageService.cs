@@ -10,6 +10,29 @@ namespace RuleScript.Core;
 public static class RuleScriptLanguageService
 {
     /// <summary>
+    /// Parses and analyzes a document once so multiple editor features can reuse the same result.
+    /// </summary>
+    public static RuleScriptDocumentAnalysisResult AnalyzeDocument(string source)
+    {
+        return AnalyzeDocument(new RuleScriptEngine(), source);
+    }
+
+    /// <summary>
+    /// Parses and analyzes a document once using the supplied engine metadata.
+    /// </summary>
+    public static RuleScriptDocumentAnalysisResult AnalyzeDocument(RuleScriptEngine engine, string source)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(source);
+
+        var tokens = new Lexer.Lexer(source).Tokenize();
+        var parser = new Parser.Parser(tokens);
+        var statements = parser.Parse();
+        var analysis = engine.AnalyzeParsedDocument(statements);
+        return new RuleScriptDocumentAnalysisResult(engine, source, tokens, statements, parser.Regions, analysis);
+    }
+
+    /// <summary>
     /// Gets the definition metadata for the symbol at the requested 1-based source position.
     /// </summary>
     public static RuleScriptDefinitionInfo? GetDefinition(string source, int line, int column)
@@ -25,7 +48,17 @@ public static class RuleScriptLanguageService
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(source);
 
-        return RuleScriptNavigationAnalyzer.GetDefinition(engine, source, line, column);
+        return GetDefinition(AnalyzeDocument(engine, source), line, column);
+    }
+
+    /// <summary>
+    /// Gets the definition metadata for the symbol at the requested 1-based source position using a reusable document analysis.
+    /// </summary>
+    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return RuleScriptNavigationAnalyzer.GetDefinition(document, line, column);
     }
 
     /// <summary>
@@ -44,7 +77,17 @@ public static class RuleScriptLanguageService
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(source);
 
-        return RuleScriptNavigationAnalyzer.FindReferences(engine, source, line, column);
+        return FindReferences(AnalyzeDocument(engine, source), line, column);
+    }
+
+    /// <summary>
+    /// Finds declaration and usage metadata for the symbol at the requested 1-based source position using a reusable document analysis.
+    /// </summary>
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return RuleScriptNavigationAnalyzer.FindReferences(document, line, column);
     }
 
     /// <summary>
@@ -67,8 +110,8 @@ public static class RuleScriptLanguageService
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
 
-        return new RuleScriptEngine()
-            .Analyze(source)
+        return AnalyzeDocument(source)
+            .Analysis
             .UserFunctions
             .LastOrDefault(function => string.Equals(function.Name, functionName, StringComparison.Ordinal))
             ?.Documentation;

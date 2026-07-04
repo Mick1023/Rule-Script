@@ -512,6 +512,16 @@ public sealed class RuleScriptEngine
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
         var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+        return AnalyzeParsedDocument(statements, cursorLine, cursorColumn);
+    }
+
+    internal RuleScriptAnalysisResult AnalyzeParsedDocument(
+        IReadOnlyList<Statement> statements,
+        int? cursorLine = null,
+        int? cursorColumn = null)
+    {
+        ArgumentNullException.ThrowIfNull(statements);
+
         var variables = new HashSet<string>(StringComparer.Ordinal);
         var userFunctions = new HashSet<string>(StringComparer.Ordinal);
         var importAliases = new HashSet<string>(StringComparer.Ordinal);
