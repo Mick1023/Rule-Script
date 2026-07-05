@@ -49,25 +49,21 @@ internal static class RuleScriptSymbolAnalyzer
         var variableDocumentation = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionDeclarations = statements
             .OfType<FunctionDeclarationStatement>()
-            .GroupBy(function => function.Name, StringComparer.Ordinal)
-            .Select(group => group.Last())
             .ToArray();
         var functionParameters = functionDeclarations.ToDictionary(
-            function => function.Name,
+            function => function,
             function => function.ParameterDefinitions.Select(parameter =>
             {
                 var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
                     ? parsed
                     : RuleScriptValueType.Unknown;
                 return new RuleScriptParameterSymbol(parameter.Name, type);
-            }).ToArray(),
-            StringComparer.Ordinal);
+            }).ToArray());
         var functionReturnTypes = functionDeclarations.ToDictionary(
-            function => function.Name,
+            function => function,
             function => TryGetDeclaredReturnType(function, out var declared)
                 ? RuleScriptTypeInfo.From(declared)
-                : RuleScriptTypeInfo.Unknown,
-            StringComparer.Ordinal);
+                : RuleScriptTypeInfo.Unknown);
         Dictionary<string, RuleScriptTypeInfo>? cursorLocals = null;
 
         foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
@@ -81,7 +77,7 @@ internal static class RuleScriptSymbolAnalyzer
             var callableReturnTypes = new Dictionary<string, RuleScriptTypeInfo>(hostReturnTypes, StringComparer.Ordinal);
             foreach (var returnType in functionReturnTypes)
             {
-                callableReturnTypes[returnType.Key] = returnType.Value;
+                callableReturnTypes[returnType.Key.Name] = returnType.Value;
             }
 
             foreach (var function in functionDeclarations)
@@ -93,12 +89,12 @@ internal static class RuleScriptSymbolAnalyzer
 
                 var analysis = InferFunctionReturnType(
                     function,
-                    functionParameters[function.Name],
+                    functionParameters[function],
                     globals,
                     callableReturnTypes);
-                if (!TypesEquivalent(functionReturnTypes[function.Name], analysis.Type))
+                if (!TypesEquivalent(functionReturnTypes[function], analysis.Type))
                 {
-                    functionReturnTypes[function.Name] = analysis.Type;
+                    functionReturnTypes[function] = analysis.Type;
                     changed = true;
                 }
             }
@@ -112,7 +108,7 @@ internal static class RuleScriptSymbolAnalyzer
         var finalCallableReturnTypes = new Dictionary<string, RuleScriptTypeInfo>(hostReturnTypes, StringComparer.Ordinal);
         foreach (var returnType in functionReturnTypes)
         {
-            finalCallableReturnTypes[returnType.Key] = returnType.Value;
+            finalCallableReturnTypes[returnType.Key.Name] = returnType.Value;
         }
 
         foreach (var statement in statements.Where(statement => statement is not FunctionDeclarationStatement))
@@ -124,11 +120,11 @@ internal static class RuleScriptSymbolAnalyzer
 
         var functions = functionDeclarations.Select(function =>
         {
-            var returnType = functionReturnTypes[function.Name];
+            var returnType = functionReturnTypes[function];
             var hasDeclaredReturnType = TryGetDeclaredReturnType(function, out var declaredReturnType);
             return new RuleScriptFunctionSymbol(
                 function.Name,
-                functionParameters[function.Name],
+                functionParameters[function],
                 returnType.Kind,
                 returnType.IsNullable,
                 function.IsExported,
@@ -146,7 +142,7 @@ internal static class RuleScriptSymbolAnalyzer
 
         foreach (var function in functionDeclarations)
         {
-            var parameters = functionParameters[function.Name];
+            var parameters = functionParameters[function];
             var finalAnalysis = InferFunctionReturnType(function, parameters, globals, finalCallableReturnTypes);
             if (finalAnalysis.HasIncompatibleReturns)
             {

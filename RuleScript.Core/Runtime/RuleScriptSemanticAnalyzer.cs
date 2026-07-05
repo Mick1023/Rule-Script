@@ -35,20 +35,43 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
-        var functionDeclarations = new HashSet<string>(StringComparer.Ordinal);
+        var functionSignatures = new Dictionary<string, FunctionDeclarationStatement>(StringComparer.Ordinal);
+        var functionReturnTypes = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
-            if (!functionDeclarations.Add(function.Name))
+            var parameters = CreateParameterSymbols(function);
+            var signature = RuleScriptFunctionSymbol.CreateSignature(function.Name, parameters);
+            var signatureKey = RuleScriptFunctionSymbol.CreateSignatureKey(function.Name, parameters);
+
+            if (!functionSignatures.TryAdd(signatureKey, function))
             {
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.DuplicateDeclaration,
                     RuleScriptDiagnosticSeverity.Error,
-                    $"Function '{function.Name}' is declared more than once.",
+                    $"Duplicate function signature '{signature}'.",
                     function.Line,
                     function.Column,
                     function.Name,
                     function.SourceSpan));
+            }
+
+            if (TryGetDeclaredReturnType(function, out var declaredReturnType)
+                && functionReturnTypes.TryGetValue(function.Name, out var existingReturnType)
+                && existingReturnType != declaredReturnType)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Function overloads for '{function.Name}' must use the same return type.",
+                    function.Line,
+                    function.Column,
+                    function.Name,
+                    function.SourceSpan));
+            }
+            else if (declaredReturnType != RuleScriptValueType.Unknown)
+            {
+                functionReturnTypes.TryAdd(function.Name, declaredReturnType);
             }
         }
 
@@ -1026,6 +1049,17 @@ internal static class RuleScriptSemanticAnalyzer
         return false;
     }
 
+    private static IReadOnlyList<RuleScriptParameterSymbol> CreateParameterSymbols(FunctionDeclarationStatement function)
+    {
+        return function.ParameterDefinitions.Select(parameter =>
+        {
+            var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
+                ? parsed
+                : RuleScriptValueType.Unknown;
+            return new RuleScriptParameterSymbol(parameter.Name, type);
+        }).ToArray();
+    }
+
     private static RuleScriptTypeInfo AnalyzeExpression(
         Expression? expression,
         IDictionary<string, RuleScriptTypeInfo> scope,
@@ -1303,9 +1337,9 @@ internal static class RuleScriptSemanticAnalyzer
             .Select(argument => AnalyzeExpression(argument, scope, globals, diagnostics, functionResolver))
             .ToArray();
 
-        var function = functionResolver.ResolveFunction(name);
+        var candidates = functionResolver.ResolveFunctions(name);
 
-        if (function is null)
+        if (candidates.Count == 0)
         {
             diagnostics.Add(Create(
                 RuleScriptDiagnosticCodes.UndefinedFunction,
@@ -1314,6 +1348,12 @@ internal static class RuleScriptSemanticAnalyzer
                 line,
                 column,
                 name));
+            return RuleScriptTypeInfo.Unknown;
+        }
+
+        var function = ResolveOverload(name, candidates, argumentTypes, line, column, diagnostics);
+        if (function is null)
+        {
             return RuleScriptTypeInfo.Unknown;
         }
 
@@ -1326,7 +1366,7 @@ internal static class RuleScriptSemanticAnalyzer
 
         if (function.Kind is RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin)
         {
-            if (function.HostMetadata?.IsVariadic != true)
+            if (function.HostMetadata?.IsVariadic != true && function.HostMetadata is not null)
             {
                 ValidateArguments(name, argumentTypes, function.Parameters, line, column, diagnostics);
             }
@@ -1383,6 +1423,107 @@ internal static class RuleScriptSemanticAnalyzer
                     name));
             }
         }
+    }
+
+    private static RuleScriptFunctionSymbol? ResolveOverload(
+        string name,
+        IReadOnlyList<RuleScriptFunctionSymbol> candidates,
+        IReadOnlyList<RuleScriptTypeInfo> arguments,
+        int? line,
+        int? column,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        var matches = candidates
+            .Select(candidate => new
+            {
+                Function = candidate,
+                Score = GetOverloadScore(candidate, arguments)
+            })
+            .Where(candidate => candidate.Score >= 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            foreach (var candidate in candidates.Where(candidate => candidate.Parameters.Count == arguments.Count))
+            {
+                ValidateArguments(name, arguments, candidate.Parameters, line, column, diagnostics);
+            }
+
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.UndefinedFunction,
+                RuleScriptDiagnosticSeverity.Error,
+                $"No matching overload for function '{name}'.",
+                line,
+                column,
+                name));
+            return null;
+        }
+
+        var bestScore = matches[0].Score;
+        var bestMatches = matches.Where(match => match.Score == bestScore).ToArray();
+        if (bestMatches.Length > 1)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.TypeMismatch,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Ambiguous overload for function '{name}'.",
+                line,
+                column,
+                name));
+            return null;
+        }
+
+        return bestMatches[0].Function;
+    }
+
+    private static int GetOverloadScore(
+        RuleScriptFunctionSymbol function,
+        IReadOnlyList<RuleScriptTypeInfo> arguments)
+    {
+        if (function.HostMetadata?.IsVariadic == true)
+        {
+            return 0;
+        }
+
+        if (function.HostMetadata is null
+            && function.Kind == RuleScriptFunctionKind.Host
+            && function.Parameters.Count == 0)
+        {
+            return 0;
+        }
+
+        if (function.Parameters.Count != arguments.Count)
+        {
+            return -1;
+        }
+
+        var score = 0;
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var expected = function.Parameters[index].Type;
+            var actual = arguments[index];
+
+            if (expected is RuleScriptValueType.Any or RuleScriptValueType.Unknown)
+            {
+                continue;
+            }
+
+            if (!IsKnown(actual) || actual.Kind == RuleScriptValueType.Any)
+            {
+                score++;
+                continue;
+            }
+
+            if (expected != actual.Kind)
+            {
+                return -1;
+            }
+
+            score += 2;
+        }
+
+        return score;
     }
 
     private static void RequireType(

@@ -79,6 +79,8 @@ public sealed class RuleScriptFunctionSymbol
 
     public IReadOnlyList<RuleScriptParameterSymbol> Parameters { get; }
 
+    public string Signature => CreateSignature(Name, Parameters);
+
     public RuleScriptValueType ReturnType { get; }
 
     public RuleScriptValueType DeclaredReturnType { get; }
@@ -104,4 +106,19 @@ public sealed class RuleScriptFunctionSymbol
     public RuleScriptImportFunctionMetadata? ImportMetadata { get; }
 
     public object? Metadata { get; }
+
+    public static string CreateSignature(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
+    {
+        return $"{name}({string.Join(", ", parameters.Select(parameter => RuleScriptTypeFacts.ToDisplayName(NormalizeSignatureType(parameter.Type))))})";
+    }
+
+    internal static string CreateSignatureKey(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
+    {
+        return $"{name}({string.Join(",", parameters.Select(parameter => NormalizeSignatureType(parameter.Type).ToString()))})";
+    }
+
+    private static RuleScriptValueType NormalizeSignatureType(RuleScriptValueType type)
+    {
+        return type == RuleScriptValueType.Unknown ? RuleScriptValueType.Any : type;
+    }
 }
