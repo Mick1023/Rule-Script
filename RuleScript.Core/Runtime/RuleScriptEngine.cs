@@ -1570,7 +1570,10 @@ public sealed class RuleScriptEngine
 
             foreach (var function in importedModule.PublicFunctions)
             {
-                module.Functions[function.Key] = function.Value;
+                foreach (var overload in function.Value)
+                {
+                    module.AddFunction(overload);
+                }
             }
 
             foreach (var constant in importedModule.PublicConstants)
@@ -1582,10 +1585,10 @@ public sealed class RuleScriptEngine
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
             var userFunction = new UserFunction(function, module);
-            module.Functions[function.Name] = userFunction;
+            module.AddFunction(userFunction);
             if (function.IsExported)
             {
-                module.PublicFunctions[function.Name] = userFunction;
+                module.AddPublicFunction(userFunction);
             }
         }
 

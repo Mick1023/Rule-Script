@@ -254,6 +254,61 @@ public sealed class Version190StronglyTypedFunctionTests
         Assert.Contains(result.Symbols.Functions, value => value.Name == "ToString" && value.Kind == RuleScriptFunctionKind.Builtin);
     }
 
+    [Fact]
+    public void Execute_UserFunctionOverloadsDispatchByRuntimeArgumentType()
+    {
+        var context = new RuleScriptEngine().Execute("""
+            function Format(value: number) -> string:
+                return "number:" + ToString(value);
+            endfunction
+            function Format(value: string) -> string:
+                return "string:" + value;
+            endfunction
+            numberText = Format(7);
+            stringText = Format("ok");
+            """);
+
+        Assert.Equal("number:7", context.Get<string>("numberText"));
+        Assert.Equal("string:ok", context.Get<string>("stringText"));
+    }
+
+    [Fact]
+    public void Execute_UserAndHostOverloadsShareName()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction(
+            "Format",
+            [new RuleScriptParameterSymbol("value", RuleScriptValueType.String)],
+            RuleScriptValueType.String,
+            args => $"host:{args[0]}");
+
+        var context = engine.Execute("""
+            function Format(value: number) -> string:
+                return "user:" + ToString(value);
+            endfunction
+            numberText = Format(7);
+            stringText = Format("ok");
+            """);
+
+        Assert.Equal("user:7", context.Get<string>("numberText"));
+        Assert.Equal("host:ok", context.Get<string>("stringText"));
+    }
+
+    [Fact]
+    public void Execute_UserAndBuiltinOverloadsShareName()
+    {
+        var context = new RuleScriptEngine().Execute("""
+            function ToString(value: number) -> string:
+                return "user:" + value;
+            endfunction
+            numberText = ToString(7);
+            boolText = ToString(true);
+            """);
+
+        Assert.Equal("user:7", context.Get<string>("numberText"));
+        Assert.Equal("true", context.Get<string>("boolText"));
+    }
+
     private static IReadOnlyList<Statement> Parse(string script)
     {
         var lexer = new Lexer(script);
