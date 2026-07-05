@@ -17,7 +17,7 @@ public sealed class Version140FunctionReturnTypeTests
 
         AssertFunctionType(result, "GetAge", RuleScriptValueType.Number);
         AssertVariableType(result, "age", RuleScriptValueType.Number);
-        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(result);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class Version140FunctionReturnTypeTests
         var function = AssertFunctionType(result, "Label", RuleScriptValueType.String);
 
         Assert.False(function.IsReturnTypeNullable);
-        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(result);
     }
 
     [Fact]
@@ -93,7 +93,9 @@ public sealed class Version140FunctionReturnTypeTests
             endfunction
             """);
 
-        var diagnostic = Assert.Single(result.Diagnostics, value => value.Code == RuleScriptDiagnosticCodes.TypeMismatch);
+        var diagnostic = Assert.Single(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Error);
         Assert.Contains("incompatible value types", diagnostic.Message, StringComparison.Ordinal);
         Assert.Equal(RuleScriptDiagnosticSeverity.Error, diagnostic.Severity);
     }
@@ -132,7 +134,7 @@ public sealed class Version140FunctionReturnTypeTests
 
         AssertFunctionType(result, "IsEven", RuleScriptValueType.Boolean);
         AssertFunctionType(result, "IsOdd", RuleScriptValueType.Boolean);
-        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(result);
     }
 
     [Fact]
@@ -157,7 +159,7 @@ public sealed class Version140FunctionReturnTypeTests
             """);
 
         AssertVariableType(result, "value", RuleScriptValueType.Number);
-        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(result);
     }
 
     [Fact]
@@ -192,5 +194,10 @@ public sealed class Version140FunctionReturnTypeTests
         RuleScriptValueType type)
     {
         Assert.Equal(type, Assert.Single(result.Variables, value => value.Name == name).Type);
+    }
+
+    private static void AssertNoErrors(RuleScriptAnalysisResult result)
+    {
+        Assert.DoesNotContain(result.Diagnostics, value => value.Severity == RuleScriptDiagnosticSeverity.Error);
     }
 }

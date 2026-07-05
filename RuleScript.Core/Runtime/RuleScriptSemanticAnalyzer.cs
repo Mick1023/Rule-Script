@@ -6,6 +6,15 @@ namespace RuleScript.Core.Runtime;
 internal static class RuleScriptSemanticAnalyzer
 {
     private static readonly AsyncLocal<bool> AnalyzingParallelTask = new();
+
+    private readonly record struct FunctionReturnContext(
+        string FunctionName,
+        RuleScriptValueType DeclaredReturnType);
+
+    private readonly record struct FunctionReturnShape(
+        bool HasValueReturn,
+        bool AlwaysReturns);
+
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
@@ -82,6 +91,10 @@ internal static class RuleScriptSemanticAnalyzer
                 locals[parameter.Name] = RuleScriptTypeInfo.From(type);
             }
 
+            var returnContext = TryGetDeclaredReturnType(function, out var declaredReturnType)
+                ? new FunctionReturnContext(function.Name, declaredReturnType)
+                : (FunctionReturnContext?)null;
+
             var previousParallelState = AnalyzingParallelTask.Value;
             AnalyzingParallelTask.Value = parallelReachableFunctions.Contains(function.Name);
             try
@@ -94,12 +107,41 @@ internal static class RuleScriptSemanticAnalyzer
                         globals,
                         localDeclarations,
                         diagnostics,
-                        functionResolver);
+                        functionResolver,
+                        returnContext);
                 }
             }
             finally
             {
                 AnalyzingParallelTask.Value = previousParallelState;
+            }
+
+            var returnShape = AnalyzeFunctionReturnShape(function.Body);
+            if (returnContext is { } declaredContext)
+            {
+                if (declaredContext.DeclaredReturnType != RuleScriptValueType.Void
+                    && !returnShape.AlwaysReturns)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.TypeMismatch,
+                        RuleScriptDiagnosticSeverity.Warning,
+                        "Not all code paths return a value.",
+                        function.Line,
+                        function.Column,
+                        function.Name,
+                        function.SourceSpan));
+                }
+            }
+            else if (returnShape.HasValueReturn)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Warning,
+                    $"Function '{function.Name}' returns a value but has no declared return type. Consider adding '-> number'.",
+                    function.Line,
+                    function.Column,
+                    function.Name,
+                    function.SourceSpan));
             }
         }
 
@@ -319,7 +361,8 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IRuleScriptFunctionResolver functionResolver)
+        IRuleScriptFunctionResolver functionResolver,
+        FunctionReturnContext? returnContext = null)
     {
         switch (statement)
         {
@@ -396,7 +439,11 @@ internal static class RuleScriptSemanticAnalyzer
                 break;
 
             case ReturnStatement returnStatement:
-                AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, functionResolver);
+                var returnType = AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, functionResolver);
+                if (returnContext is { } context)
+                {
+                    ValidateReturnType(context, returnStatement, returnType, diagnostics);
+                }
                 break;
 
             case IfStatement conditional:
@@ -409,8 +456,8 @@ internal static class RuleScriptSemanticAnalyzer
                     "if",
                     conditional.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, functionResolver);
-                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
+                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 break;
 
             case SwitchStatement switchStatement:
@@ -465,12 +512,12 @@ internal static class RuleScriptSemanticAnalyzer
                         }
                     }
 
-                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, functionResolver);
+                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 }
 
                 if (switchStatement.DefaultBranch is not null)
                 {
-                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, functionResolver);
+                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 }
                 else
                 {
@@ -496,7 +543,7 @@ internal static class RuleScriptSemanticAnalyzer
                     "while",
                     loop.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 break;
 
             case ForeachStatement loop:
@@ -516,7 +563,7 @@ internal static class RuleScriptSemanticAnalyzer
 
                 var hadPrevious = scope.TryGetValue(loop.VariableName, out var previousType);
                 scope[loop.VariableName] = iterableType.ElementType ?? RuleScriptTypeInfo.Unknown;
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
 
                 if (hadPrevious)
                 {
@@ -858,12 +905,125 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IRuleScriptFunctionResolver functionResolver)
+        IRuleScriptFunctionResolver functionResolver,
+        FunctionReturnContext? returnContext = null)
     {
         foreach (var statement in statements)
         {
-            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, functionResolver);
+            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, functionResolver, returnContext);
         }
+    }
+
+    private static void ValidateReturnType(
+        FunctionReturnContext context,
+        ReturnStatement statement,
+        RuleScriptTypeInfo actual,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        if (context.DeclaredReturnType == RuleScriptValueType.Void)
+        {
+            if (statement.Value is not null)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Function '{context.FunctionName}' declares return type void and cannot return a value.",
+                    statement.Line,
+                    statement.Column,
+                    "return",
+                    statement.SourceSpan));
+            }
+
+            return;
+        }
+
+        if (!IsKnown(actual) || actual.Kind == RuleScriptValueType.Any)
+        {
+            return;
+        }
+
+        if (actual.Kind != context.DeclaredReturnType)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.TypeMismatch,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Function '{context.FunctionName}' declares return type {RuleScriptTypeFacts.ToDisplayName(context.DeclaredReturnType)}, but returns {RuleScriptTypeFacts.ToDisplayName(actual.Kind)}.",
+                statement.Line,
+                statement.Column,
+                "return",
+                statement.SourceSpan));
+        }
+    }
+
+    private static FunctionReturnShape AnalyzeFunctionReturnShape(IReadOnlyList<Statement> statements)
+    {
+        var hasValueReturn = false;
+        var alwaysReturns = false;
+
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case ReturnStatement returned:
+                    hasValueReturn |= returned.Value is not null;
+                    alwaysReturns = true;
+                    break;
+                case IfStatement conditional:
+                    var thenShape = AnalyzeFunctionReturnShape(conditional.ThenBranch);
+                    var elseShape = AnalyzeFunctionReturnShape(conditional.ElseBranch);
+                    hasValueReturn |= thenShape.HasValueReturn || elseShape.HasValueReturn;
+                    alwaysReturns = conditional.ElseBranch.Count > 0
+                        && thenShape.AlwaysReturns
+                        && elseShape.AlwaysReturns;
+                    break;
+                case SwitchStatement switchStatement:
+                    var switchAlwaysReturns = switchStatement.DefaultBranch is not null;
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        var caseShape = AnalyzeFunctionReturnShape(switchCase.Body);
+                        hasValueReturn |= caseShape.HasValueReturn;
+                        switchAlwaysReturns &= caseShape.AlwaysReturns;
+                    }
+
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        var defaultShape = AnalyzeFunctionReturnShape(switchStatement.DefaultBranch);
+                        hasValueReturn |= defaultShape.HasValueReturn;
+                        switchAlwaysReturns &= defaultShape.AlwaysReturns;
+                    }
+
+                    alwaysReturns = switchAlwaysReturns;
+                    break;
+                case WhileStatement loop:
+                    var whileShape = AnalyzeFunctionReturnShape(loop.Body);
+                    hasValueReturn |= whileShape.HasValueReturn;
+                    break;
+                case ForeachStatement loop:
+                    var foreachShape = AnalyzeFunctionReturnShape(loop.Body);
+                    hasValueReturn |= foreachShape.HasValueReturn;
+                    break;
+            }
+
+            if (alwaysReturns)
+            {
+                break;
+            }
+        }
+
+        return new FunctionReturnShape(hasValueReturn, alwaysReturns);
+    }
+
+    private static bool TryGetDeclaredReturnType(
+        FunctionDeclarationStatement function,
+        out RuleScriptValueType returnType)
+    {
+        if (function.ReturnTypeName is not null && RuleScriptTypeFacts.TryParse(function.ReturnTypeName, out returnType))
+        {
+            return true;
+        }
+
+        returnType = RuleScriptValueType.Unknown;
+        return false;
     }
 
     private static RuleScriptTypeInfo AnalyzeExpression(

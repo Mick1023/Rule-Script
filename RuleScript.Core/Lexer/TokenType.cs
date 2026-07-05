@@ -49,6 +49,7 @@ public enum TokenType
 
     Plus,
     Minus,
+    Arrow,
     Star,
     Slash,
     Percent,

@@ -168,7 +168,9 @@ public sealed class RuleScriptAnalysisResult
                     symbol.Range,
                     symbol.HostMetadata,
                     symbol.BuiltinMetadata,
-                    symbol.ImportMetadata);
+                    symbol.ImportMetadata,
+                    symbol.DeclaredReturnType,
+                    symbol.IsReturnTypeDeclared);
             }
         }
 

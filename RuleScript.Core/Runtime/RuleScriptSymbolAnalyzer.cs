@@ -64,7 +64,9 @@ internal static class RuleScriptSymbolAnalyzer
             StringComparer.Ordinal);
         var functionReturnTypes = functionDeclarations.ToDictionary(
             function => function.Name,
-            _ => RuleScriptTypeInfo.Unknown,
+            function => TryGetDeclaredReturnType(function, out var declared)
+                ? RuleScriptTypeInfo.From(declared)
+                : RuleScriptTypeInfo.Unknown,
             StringComparer.Ordinal);
         Dictionary<string, RuleScriptTypeInfo>? cursorLocals = null;
 
@@ -84,6 +86,11 @@ internal static class RuleScriptSymbolAnalyzer
 
             foreach (var function in functionDeclarations)
             {
+                if (TryGetDeclaredReturnType(function, out _))
+                {
+                    continue;
+                }
+
                 var analysis = InferFunctionReturnType(
                     function,
                     functionParameters[function.Name],
@@ -118,6 +125,7 @@ internal static class RuleScriptSymbolAnalyzer
         var functions = functionDeclarations.Select(function =>
         {
             var returnType = functionReturnTypes[function.Name];
+            var hasDeclaredReturnType = TryGetDeclaredReturnType(function, out var declaredReturnType);
             return new RuleScriptFunctionSymbol(
                 function.Name,
                 functionParameters[function.Name],
@@ -130,7 +138,9 @@ internal static class RuleScriptSymbolAnalyzer
                     null,
                     function.NameLine ?? function.Line,
                     function.NameColumn ?? function.Column),
-                RuleScriptSourceMapper.CreateRange(null, function.SourceSpan));
+                RuleScriptSourceMapper.CreateRange(null, function.SourceSpan),
+                declaredReturnType: hasDeclaredReturnType ? declaredReturnType : null,
+                isReturnTypeDeclared: hasDeclaredReturnType);
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -799,6 +809,19 @@ internal static class RuleScriptSymbolAnalyzer
                     : null))
             .OrderBy(value => value.Name, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static bool TryGetDeclaredReturnType(
+        FunctionDeclarationStatement function,
+        out RuleScriptValueType returnType)
+    {
+        if (function.ReturnTypeName is not null && RuleScriptTypeFacts.TryParse(function.ReturnTypeName, out returnType))
+        {
+            return true;
+        }
+
+        returnType = RuleScriptValueType.Unknown;
+        return false;
     }
 
 }
