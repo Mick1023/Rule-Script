@@ -13,7 +13,8 @@ internal static class RuleScriptSemanticAnalyzer
 
     private readonly record struct FunctionReturnShape(
         bool HasValueReturn,
-        bool AlwaysReturns);
+        bool AlwaysReturns,
+        RuleScriptValueType SuggestedReturnType);
 
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
@@ -139,9 +140,25 @@ internal static class RuleScriptSemanticAnalyzer
                 AnalyzingParallelTask.Value = previousParallelState;
             }
 
-            var returnShape = AnalyzeFunctionReturnShape(function.Body);
+            var returnShape = AnalyzeFunctionReturnShape(function.Body, locals, globals, functionResolver);
             if (returnContext is { } declaredContext)
             {
+                var untypedParameters = function.ParameterDefinitions
+                    .Where(parameter => parameter.TypeName is null)
+                    .Select(parameter => parameter.Name)
+                    .ToArray();
+                if (untypedParameters.Length > 0)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.TypeMismatch,
+                        RuleScriptDiagnosticSeverity.Warning,
+                        CreateMissingParameterTypesMessage(function.Name, untypedParameters),
+                        function.Line,
+                        function.Column,
+                        function.Name,
+                        function.SourceSpan));
+                }
+
                 if (declaredContext.DeclaredReturnType != RuleScriptValueType.Void
                     && !returnShape.AlwaysReturns)
                 {
@@ -160,7 +177,7 @@ internal static class RuleScriptSemanticAnalyzer
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.TypeMismatch,
                     RuleScriptDiagnosticSeverity.Warning,
-                    $"Function '{function.Name}' returns a value but has no declared return type. Consider adding '-> number'.",
+                    CreateMissingReturnTypeMessage(function.Name, returnShape.SuggestedReturnType),
                     function.Line,
                     function.Column,
                     function.Name,
@@ -178,6 +195,23 @@ internal static class RuleScriptSemanticAnalyzer
         ReportReadonlyAssignments(statements, readonlyNames, diagnostics);
 
         return diagnostics;
+    }
+
+    private static string CreateMissingParameterTypesMessage(string functionName, IReadOnlyList<string> parameterNames)
+    {
+        var quotedNames = string.Join(", ", parameterNames.Select(parameter => $"'{parameter}'"));
+        return parameterNames.Count == 1
+            ? $"Function '{functionName}' declares a return type but parameter {quotedNames} has no declared type. Consider adding a parameter type annotation."
+            : $"Function '{functionName}' declares a return type but parameters {quotedNames} have no declared type. Consider adding parameter type annotations.";
+    }
+
+    private static string CreateMissingReturnTypeMessage(string functionName, RuleScriptValueType suggestedReturnType)
+    {
+        var displayType = suggestedReturnType is RuleScriptValueType.Unknown or RuleScriptValueType.Any or RuleScriptValueType.Void
+            ? RuleScriptTypeFacts.ToDisplayName(RuleScriptValueType.Number)
+            : RuleScriptTypeFacts.ToDisplayName(suggestedReturnType);
+
+        return $"Function '{functionName}' returns a value but has no declared return type. Consider adding '-> {displayType}'.";
     }
 
     private static IReadOnlySet<string> FindParallelReachableFunctions(IReadOnlyList<Statement> statements)
@@ -978,23 +1012,42 @@ internal static class RuleScriptSemanticAnalyzer
         }
     }
 
-    private static FunctionReturnShape AnalyzeFunctionReturnShape(IReadOnlyList<Statement> statements)
+    private static FunctionReturnShape AnalyzeFunctionReturnShape(
+        IReadOnlyList<Statement> statements,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IRuleScriptFunctionResolver functionResolver)
     {
         var hasValueReturn = false;
         var alwaysReturns = false;
+        var suggestedReturnType = RuleScriptValueType.Unknown;
 
         foreach (var statement in statements)
         {
             switch (statement)
             {
                 case ReturnStatement returned:
-                    hasValueReturn |= returned.Value is not null;
+                    if (returned.Value is not null)
+                    {
+                        hasValueReturn = true;
+                        suggestedReturnType = MergeSuggestedReturnType(
+                            suggestedReturnType,
+                            AnalyzeExpression(
+                                returned.Value,
+                                scope,
+                                globals,
+                                new List<RuleScriptDiagnostic>(),
+                                functionResolver).Kind);
+                    }
+
                     alwaysReturns = true;
                     break;
                 case IfStatement conditional:
-                    var thenShape = AnalyzeFunctionReturnShape(conditional.ThenBranch);
-                    var elseShape = AnalyzeFunctionReturnShape(conditional.ElseBranch);
+                    var thenShape = AnalyzeFunctionReturnShape(conditional.ThenBranch, scope, globals, functionResolver);
+                    var elseShape = AnalyzeFunctionReturnShape(conditional.ElseBranch, scope, globals, functionResolver);
                     hasValueReturn |= thenShape.HasValueReturn || elseShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, thenShape.SuggestedReturnType);
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, elseShape.SuggestedReturnType);
                     alwaysReturns = conditional.ElseBranch.Count > 0
                         && thenShape.AlwaysReturns
                         && elseShape.AlwaysReturns;
@@ -1003,27 +1056,31 @@ internal static class RuleScriptSemanticAnalyzer
                     var switchAlwaysReturns = switchStatement.DefaultBranch is not null;
                     foreach (var switchCase in switchStatement.Cases)
                     {
-                        var caseShape = AnalyzeFunctionReturnShape(switchCase.Body);
+                        var caseShape = AnalyzeFunctionReturnShape(switchCase.Body, scope, globals, functionResolver);
                         hasValueReturn |= caseShape.HasValueReturn;
+                        suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, caseShape.SuggestedReturnType);
                         switchAlwaysReturns &= caseShape.AlwaysReturns;
                     }
 
                     if (switchStatement.DefaultBranch is not null)
                     {
-                        var defaultShape = AnalyzeFunctionReturnShape(switchStatement.DefaultBranch);
+                        var defaultShape = AnalyzeFunctionReturnShape(switchStatement.DefaultBranch, scope, globals, functionResolver);
                         hasValueReturn |= defaultShape.HasValueReturn;
+                        suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, defaultShape.SuggestedReturnType);
                         switchAlwaysReturns &= defaultShape.AlwaysReturns;
                     }
 
                     alwaysReturns = switchAlwaysReturns;
                     break;
                 case WhileStatement loop:
-                    var whileShape = AnalyzeFunctionReturnShape(loop.Body);
+                    var whileShape = AnalyzeFunctionReturnShape(loop.Body, scope, globals, functionResolver);
                     hasValueReturn |= whileShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, whileShape.SuggestedReturnType);
                     break;
                 case ForeachStatement loop:
-                    var foreachShape = AnalyzeFunctionReturnShape(loop.Body);
+                    var foreachShape = AnalyzeFunctionReturnShape(loop.Body, scope, globals, functionResolver);
                     hasValueReturn |= foreachShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, foreachShape.SuggestedReturnType);
                     break;
             }
 
@@ -1033,7 +1090,24 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
-        return new FunctionReturnShape(hasValueReturn, alwaysReturns);
+        return new FunctionReturnShape(hasValueReturn, alwaysReturns, suggestedReturnType);
+    }
+
+    private static RuleScriptValueType MergeSuggestedReturnType(
+        RuleScriptValueType current,
+        RuleScriptValueType candidate)
+    {
+        if (candidate is RuleScriptValueType.Unknown or RuleScriptValueType.Any)
+        {
+            return current;
+        }
+
+        if (current is RuleScriptValueType.Unknown or RuleScriptValueType.Any)
+        {
+            return candidate;
+        }
+
+        return current == candidate ? current : RuleScriptValueType.Unknown;
     }
 
     private static bool TryGetDeclaredReturnType(

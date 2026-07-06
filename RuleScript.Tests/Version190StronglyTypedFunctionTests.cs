@@ -120,6 +120,51 @@ public sealed class Version190StronglyTypedFunctionTests
     }
 
     [Fact]
+    public void Analyze_OldSyntaxSuggestsInferredReturnType()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            function Test1():
+                return "Test 1";
+            end
+            """);
+
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Warning
+            && value.Message == "Function 'Test1' returns a value but has no declared return type. Consider adding '-> string'.");
+    }
+
+    [Fact]
+    public void Analyze_DeclaredReturnTypeWarnsWhenParametersAreUntyped()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            function Add(a, b, c) -> number:
+                return a + b + c;
+            end
+            """);
+
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Warning
+            && value.Message == "Function 'Add' declares a return type but parameters 'a', 'b', 'c' have no declared type. Consider adding parameter type annotations.");
+    }
+
+    [Fact]
+    public void Analyze_DeclaredReturnTypeWarningListsOnlyUntypedParameters()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            function Add(a: number, b, c: number) -> number:
+                return a + c;
+            end
+            """);
+
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Warning
+            && value.Message == "Function 'Add' declares a return type but parameter 'b' has no declared type. Consider adding a parameter type annotation.");
+    }
+
+    [Fact]
     public void Analyze_FunctionOverloadsResolveByArgumentType()
     {
         var result = new RuleScriptEngine().TryAnalyze("""
