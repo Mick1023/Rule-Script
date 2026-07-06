@@ -9,9 +9,7 @@ internal static class RuleScriptSemanticAnalyzer
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IRuleScriptFunctionResolver functionResolver,
         IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
@@ -55,9 +53,7 @@ internal static class RuleScriptSemanticAnalyzer
                 globals,
                 globalDeclarations,
                 diagnostics,
-                availableFunctions,
-                userFunctions,
-                hostFunctions);
+                functionResolver);
         }
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
@@ -98,9 +94,7 @@ internal static class RuleScriptSemanticAnalyzer
                         globals,
                         localDeclarations,
                         diagnostics,
-                        availableFunctions,
-                        userFunctions,
-                        hostFunctions);
+                        functionResolver);
                 }
             }
             finally
@@ -325,14 +319,12 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         switch (statement)
         {
             case VarStatement variable:
-                var variableType = AnalyzeExpression(variable.Initializer, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var variableType = AnalyzeExpression(variable.Initializer, scope, globals, diagnostics, functionResolver);
 
                 if (!declarations.Add(variable.Name))
                 {
@@ -350,7 +342,7 @@ internal static class RuleScriptSemanticAnalyzer
                 break;
 
             case ConstStatement constant:
-                var constantType = AnalyzeExpression(constant.Initializer, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var constantType = AnalyzeExpression(constant.Initializer, scope, globals, diagnostics, functionResolver);
                 if (!declarations.Add(constant.Name))
                 {
                     diagnostics.Add(Create(
@@ -372,48 +364,44 @@ internal static class RuleScriptSemanticAnalyzer
                     globals,
                     declarations,
                     diagnostics,
-                    availableFunctions,
-                    userFunctions,
-                    hostFunctions);
+                    functionResolver);
                 break;
 
             case AssignmentStatement assignment:
-                var assignedType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var assignedType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, functionResolver);
                 ReportAssignmentMismatch(assignment.Name, assignedType, scope, assignment.Line, assignment.Column, assignment.SourceSpan, diagnostics);
                 scope[assignment.Name] = assignedType;
                 break;
 
             case TargetAssignmentStatement assignment:
-                var assignedTargetType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var assignedTargetType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, functionResolver);
                 AnalyzeAssignmentTarget(
                     assignment.Target,
                     assignedTargetType,
                     scope,
                     globals,
                     diagnostics,
-                    availableFunctions,
-                    userFunctions,
-                    hostFunctions,
+                    functionResolver,
                     assignment.SourceSpan);
                 break;
 
             case GlobalAssignmentStatement assignment:
-                var assignedGlobalType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var assignedGlobalType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, functionResolver);
                 ReportAssignmentMismatch(assignment.Name, assignedGlobalType, globals, assignment.Line, assignment.Column, assignment.SourceSpan, diagnostics);
                 globals[assignment.Name] = assignedGlobalType;
                 break;
 
             case ExpressionStatement expression:
-                AnalyzeExpression(expression.Expression, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeExpression(expression.Expression, scope, globals, diagnostics, functionResolver);
                 break;
 
             case ReturnStatement returnStatement:
-                AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, functionResolver);
                 break;
 
             case IfStatement conditional:
                 RequireType(
-                    AnalyzeExpression(conditional.Condition, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions),
+                    AnalyzeExpression(conditional.Condition, scope, globals, diagnostics, functionResolver),
                     RuleScriptValueType.Boolean,
                     "If condition",
                     conditional.Line,
@@ -421,12 +409,12 @@ internal static class RuleScriptSemanticAnalyzer
                     "if",
                     conditional.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
-                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, functionResolver);
                 break;
 
             case SwitchStatement switchStatement:
-                var switchType = AnalyzeExpression(switchStatement.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var switchType = AnalyzeExpression(switchStatement.Value, scope, globals, diagnostics, functionResolver);
                 var constants = new Dictionary<SwitchConstant, bool>();
                 var analyzedGuards = new HashSet<Expression>(ReferenceEqualityComparer.Instance);
 
@@ -434,12 +422,12 @@ internal static class RuleScriptSemanticAnalyzer
                 {
                     foreach (var label in switchCase.Labels)
                     {
-                        var labelType = AnalyzeExpression(label.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                        var labelType = AnalyzeExpression(label.Value, scope, globals, diagnostics, functionResolver);
 
                         if (label.Guard is not null && analyzedGuards.Add(label.Guard))
                         {
                             RequireType(
-                                AnalyzeExpression(label.Guard, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions),
+                                AnalyzeExpression(label.Guard, scope, globals, diagnostics, functionResolver),
                                 RuleScriptValueType.Boolean,
                                 "Switch case guard",
                                 label.Line,
@@ -477,12 +465,12 @@ internal static class RuleScriptSemanticAnalyzer
                         }
                     }
 
-                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, functionResolver);
                 }
 
                 if (switchStatement.DefaultBranch is not null)
                 {
-                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, functionResolver);
                 }
                 else
                 {
@@ -500,7 +488,7 @@ internal static class RuleScriptSemanticAnalyzer
 
             case WhileStatement loop:
                 RequireType(
-                    AnalyzeExpression(loop.Condition, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions),
+                    AnalyzeExpression(loop.Condition, scope, globals, diagnostics, functionResolver),
                     RuleScriptValueType.Boolean,
                     "While condition",
                     loop.Line,
@@ -508,11 +496,11 @@ internal static class RuleScriptSemanticAnalyzer
                     "while",
                     loop.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
                 break;
 
             case ForeachStatement loop:
-                var iterableType = AnalyzeExpression(loop.Iterable, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var iterableType = AnalyzeExpression(loop.Iterable, scope, globals, diagnostics, functionResolver);
 
                 if (IsKnown(iterableType) && iterableType.Kind is not RuleScriptValueType.Array and not RuleScriptValueType.String)
                 {
@@ -528,7 +516,7 @@ internal static class RuleScriptSemanticAnalyzer
 
                 var hadPrevious = scope.TryGetValue(loop.VariableName, out var previousType);
                 scope[loop.VariableName] = iterableType.ElementType ?? RuleScriptTypeInfo.Unknown;
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
 
                 if (hadPrevious)
                 {
@@ -542,7 +530,7 @@ internal static class RuleScriptSemanticAnalyzer
                 break;
 
             case ParallelStatementSyntax parallel:
-                AnalyzeParallelTasks(parallel.Tasks, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeParallelTasks(parallel.Tasks, scope, globals, diagnostics, functionResolver);
                 break;
         }
     }
@@ -552,9 +540,7 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         var returnTypes = new List<RuleScriptTypeInfo>(tasks.Count);
         var previous = AnalyzingParallelTask.Value;
@@ -568,12 +554,12 @@ internal static class RuleScriptSemanticAnalyzer
                 var returns = task.Body.OfType<ReturnStatement>().ToArray();
                 foreach (var statement in task.Body)
                 {
-                    AnalyzeStatement(statement, taskScope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                    AnalyzeStatement(statement, taskScope, globals, declarations, diagnostics, functionResolver);
                 }
 
                 returnTypes.Add(returns.Length == 0
                     ? RuleScriptTypeInfo.From(RuleScriptValueType.Null)
-                    : AnalyzeExpression(returns[0].Value, taskScope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions));
+                    : AnalyzeExpression(returns[0].Value, taskScope, globals, diagnostics, functionResolver));
             }
         }
         finally
@@ -609,18 +595,14 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         var initializerType = AnalyzeExpression(
             statement.Initializer,
             scope,
             globals,
             diagnostics,
-            availableFunctions,
-            userFunctions,
-            hostFunctions);
+            functionResolver);
         var expectedType = statement.Pattern is ArrayDestructuringPattern
             ? RuleScriptValueType.Array
             : RuleScriptValueType.Object;
@@ -762,9 +744,7 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions,
+        IRuleScriptFunctionResolver functionResolver,
         SourceSpan? span)
     {
         switch (target)
@@ -778,7 +758,7 @@ internal static class RuleScriptSemanticAnalyzer
                 globals[identifier.Name] = assignedType;
                 return;
             case MemberAccessExpression member:
-                var receiverType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var receiverType = AnalyzeExpression(member.Target, scope, globals, diagnostics, functionResolver);
 
                 if (receiverType.TryGetProperty(member.MemberName, out var propertyType))
                 {
@@ -819,8 +799,8 @@ internal static class RuleScriptSemanticAnalyzer
 
                 return;
             case IndexExpression index:
-                var receiver = AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-                var indexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var receiver = AnalyzeExpression(index.Target, scope, globals, diagnostics, functionResolver);
+                var indexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, functionResolver);
 
                 if (IsKnown(indexType) && indexType.Kind != RuleScriptValueType.Number)
                 {
@@ -860,7 +840,7 @@ internal static class RuleScriptSemanticAnalyzer
 
                 return;
             default:
-                AnalyzeExpression(target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                AnalyzeExpression(target, scope, globals, diagnostics, functionResolver);
                 ReportInvalidAssignment(
                     $"Expression '{target.GetType().Name}' is not assignable.",
                     span?.StartLine,
@@ -878,13 +858,11 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         foreach (var statement in statements)
         {
-            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, availableFunctions, userFunctions, hostFunctions);
+            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, functionResolver);
         }
     }
 
@@ -893,9 +871,7 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         switch (expression)
         {
@@ -905,13 +881,13 @@ internal static class RuleScriptSemanticAnalyzer
                 return RuleScriptTypeInfo.FromValue(literal.Value);
             case ArrayExpression array:
                 return RuleScriptTypeInfo.CreateArray(array.Elements.Select(element =>
-                    AnalyzeExpression(element, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions)));
+                    AnalyzeExpression(element, scope, globals, diagnostics, functionResolver)));
             case ObjectLiteralExpression objectLiteral:
                 var properties = new Dictionary<string, RuleScriptTypeInfo>(StringComparer.Ordinal);
 
                 foreach (var property in objectLiteral.Properties)
                 {
-                    var inferredPropertyType = AnalyzeExpression(property.Value, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                    var inferredPropertyType = AnalyzeExpression(property.Value, scope, globals, diagnostics, functionResolver);
 
                     if (!properties.TryAdd(property.Name, inferredPropertyType))
                     {
@@ -955,20 +931,20 @@ internal static class RuleScriptSemanticAnalyzer
                     identifier.Name));
                 return RuleScriptTypeInfo.Unknown;
             case UnaryExpression unary:
-                var operandType = AnalyzeExpression(unary.Operand, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var operandType = AnalyzeExpression(unary.Operand, scope, globals, diagnostics, functionResolver);
                 var expectedUnaryType = unary.Operator == TokenType.Bang ? RuleScriptValueType.Boolean : RuleScriptValueType.Number;
                 RequireType(operandType, expectedUnaryType, $"Operator '{unary.TokenText}'", unary.Line, unary.Column, unary.TokenText, null, diagnostics);
                 return RuleScriptTypeInfo.From(expectedUnaryType);
             case BinaryExpression binary:
-                return AnalyzeBinary(binary, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                return AnalyzeBinary(binary, scope, globals, diagnostics, functionResolver);
             case NullCoalescingExpression coalescing:
-                return AnalyzeNullCoalescing(coalescing, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                return AnalyzeNullCoalescing(coalescing, scope, globals, diagnostics, functionResolver);
             case FunctionCallExpression call:
-                return AnalyzeFunctionCall(call.Name, call.Arguments, call.Line, call.Column, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                return AnalyzeFunctionCall(call.Name, call.Arguments, call.Line, call.Column, scope, globals, diagnostics, functionResolver);
             case ModuleFunctionCallExpression call:
-                return AnalyzeFunctionCall($"{call.ModuleName}.{call.FunctionName}", call.Arguments, call.Line, call.Column, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                return AnalyzeFunctionCall($"{call.ModuleName}.{call.FunctionName}", call.Arguments, call.Line, call.Column, scope, globals, diagnostics, functionResolver);
             case IndexExpression index:
-                var analyzedIndexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var analyzedIndexType = AnalyzeExpression(index.Index, scope, globals, diagnostics, functionResolver);
 
                 if (IsKnown(analyzedIndexType) && analyzedIndexType.Kind != RuleScriptValueType.Number)
                 {
@@ -981,10 +957,10 @@ internal static class RuleScriptSemanticAnalyzer
                         "["));
                 }
 
-                return AnalyzeExpression(index.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions).ElementType
+                return AnalyzeExpression(index.Target, scope, globals, diagnostics, functionResolver).ElementType
                     ?? RuleScriptTypeInfo.Unknown;
             case MemberAccessExpression member:
-                var targetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var targetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, functionResolver);
 
                 if (targetType.Kind == RuleScriptValueType.Null || targetType.IsNullable)
                 {
@@ -1015,7 +991,7 @@ internal static class RuleScriptSemanticAnalyzer
 
                 return RuleScriptTypeInfo.Unknown;
             case ConditionalMemberAccessExpression member:
-                var conditionalTargetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+                var conditionalTargetType = AnalyzeExpression(member.Target, scope, globals, diagnostics, functionResolver);
 
                 if (conditionalTargetType.Kind == RuleScriptValueType.Null)
                 {
@@ -1042,7 +1018,7 @@ internal static class RuleScriptSemanticAnalyzer
                 return RuleScriptTypeInfo.Unknown.MakeNullable();
             case ParallelExpressionSyntax parallel:
                 return RuleScriptTypeInfo.CreateArray(AnalyzeParallelTasks(
-                    parallel.Tasks, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions));
+                    parallel.Tasks, scope, globals, diagnostics, functionResolver));
             default:
                 return RuleScriptTypeInfo.Unknown;
         }
@@ -1053,12 +1029,10 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
-        var left = AnalyzeExpression(expression.Left, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-        var right = AnalyzeExpression(expression.Right, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+        var left = AnalyzeExpression(expression.Left, scope, globals, diagnostics, functionResolver);
+        var right = AnalyzeExpression(expression.Right, scope, globals, diagnostics, functionResolver);
 
         if (IsKnown(left) && !left.CanBeNull)
         {
@@ -1114,12 +1088,10 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
-        var left = AnalyzeExpression(binary.Left, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
-        var right = AnalyzeExpression(binary.Right, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions);
+        var left = AnalyzeExpression(binary.Left, scope, globals, diagnostics, functionResolver);
+        var right = AnalyzeExpression(binary.Right, scope, globals, diagnostics, functionResolver);
 
         if (binary.Operator is TokenType.And or TokenType.Or)
         {
@@ -1165,15 +1137,15 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> scope,
         IDictionary<string, RuleScriptTypeInfo> globals,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IReadOnlySet<string> availableFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> userFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctions)
+        IRuleScriptFunctionResolver functionResolver)
     {
         var argumentTypes = arguments
-            .Select(argument => AnalyzeExpression(argument, scope, globals, diagnostics, availableFunctions, userFunctions, hostFunctions))
+            .Select(argument => AnalyzeExpression(argument, scope, globals, diagnostics, functionResolver))
             .ToArray();
 
-        if (!availableFunctions.Contains(name))
+        var function = functionResolver.ResolveFunction(name);
+
+        if (function is null)
         {
             diagnostics.Add(Create(
                 RuleScriptDiagnosticCodes.UndefinedFunction,
@@ -1185,20 +1157,20 @@ internal static class RuleScriptSemanticAnalyzer
             return RuleScriptTypeInfo.Unknown;
         }
 
-        if (userFunctions.TryGetValue(name, out var userFunction))
+        if (function.Kind is RuleScriptFunctionKind.User or RuleScriptFunctionKind.Imported)
         {
-            ValidateArguments(name, argumentTypes, userFunction.Parameters, line, column, diagnostics);
-            var returnType = RuleScriptTypeInfo.From(userFunction.ReturnType);
-            return userFunction.IsReturnTypeNullable ? returnType.MakeNullable() : returnType;
+            ValidateArguments(name, argumentTypes, function.Parameters, line, column, diagnostics);
+            var returnType = RuleScriptTypeInfo.From(function.ReturnType);
+            return function.IsReturnTypeNullable ? returnType.MakeNullable() : returnType;
         }
 
-        if (hostFunctions.TryGetValue(name, out var hostFunction))
+        if (function.Kind is RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin)
         {
-            if (!hostFunction.IsVariadic)
+            if (function.HostMetadata?.IsVariadic != true)
             {
-                ValidateArguments(name, argumentTypes, hostFunction.Parameters, line, column, diagnostics);
+                ValidateArguments(name, argumentTypes, function.Parameters, line, column, diagnostics);
             }
-            if (AnalyzingParallelTask.Value && !hostFunction.IsThreadSafe)
+            if (AnalyzingParallelTask.Value && function.HostMetadata?.IsThreadSafe != true)
             {
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.HostFunctionNotThreadSafe,
@@ -1208,7 +1180,7 @@ internal static class RuleScriptSemanticAnalyzer
                     column,
                     name));
             }
-            return RuleScriptTypeInfo.From(hostFunction.ReturnType);
+            return RuleScriptTypeInfo.From(function.ReturnType);
         }
 
         if (AnalyzingParallelTask.Value)
@@ -1395,16 +1367,8 @@ internal static class RuleScriptSemanticAnalyzer
         string? tokenText,
         SourceSpan? span = null)
     {
-        RuleScriptSourceRange? range = span is not null
-            ? new RuleScriptSourceRange(null, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn)
-            : line.HasValue && column.HasValue
-                ? new RuleScriptSourceRange(
-                    null,
-                    line.Value,
-                    column.Value,
-                    line.Value,
-                    column.Value + Math.Max(tokenText?.Length ?? 0, 1))
-                : null;
+        var range = RuleScriptSourceMapper.CreateRange(null, span)
+            ?? RuleScriptSourceMapper.CreateTokenRange(null, line, column, tokenText);
 
         return new RuleScriptDiagnostic(message, line, column, tokenText, null, range)
         {

@@ -12,8 +12,8 @@ public sealed class Interpreter
     private readonly BuiltinFunctions _builtinFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
     private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions;
-    private readonly IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> _hostFunctionSignatures;
-    private readonly IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> _asyncHostFunctionSignatures;
+    private readonly IReadOnlyDictionary<string, RuleScriptFunctionSymbol> _hostFunctionSignatures;
+    private readonly IReadOnlyDictionary<string, RuleScriptFunctionSymbol> _asyncHostFunctionSignatures;
     private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
     private readonly bool _loopIterationLimitEnabled;
@@ -53,8 +53,8 @@ public sealed class Interpreter
             builtinFunctions,
             hostFunctions,
             new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal),
-            new Dictionary<string, RuleScriptHostFunctionSymbol>(StringComparer.Ordinal),
-            new Dictionary<string, RuleScriptHostFunctionSymbol>(StringComparer.Ordinal),
+            new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal),
+            new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal),
             maxLoopIterations,
             true,
             TimeSpan.FromSeconds(30),
@@ -75,8 +75,8 @@ public sealed class Interpreter
         BuiltinFunctions builtinFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
         IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> asyncHostFunctions,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> hostFunctionSignatures,
-        IReadOnlyDictionary<string, RuleScriptHostFunctionSymbol> asyncHostFunctionSignatures,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctionSignatures,
+        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> asyncHostFunctionSignatures,
         int maxLoopIterations,
         bool loopIterationLimitEnabled,
         TimeSpan executionTimeout,
@@ -2218,10 +2218,7 @@ public sealed class Interpreter
 
     private RuleScriptSourceRange? GetStatementRange(Statement statement)
     {
-        var span = statement.SourceSpan;
-        return span is null
-            ? null
-            : new RuleScriptSourceRange(CurrentModule.Name, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
+        return RuleScriptSourceMapper.CreateRange(CurrentModule.Name, statement.SourceSpan);
     }
 
     private RuleScriptBreakpoint? GetTriggeredBreakpoint(RuleScriptSourceLocation location, RuntimeContext context)
@@ -2262,7 +2259,7 @@ public sealed class Interpreter
         string name,
         Func<IReadOnlyList<object?>, object?> function,
         IReadOnlyList<RuntimeValue> arguments,
-        RuleScriptHostFunctionSymbol? signature,
+        RuleScriptFunctionSymbol? signature,
         int? line,
         int? column)
     {
@@ -2292,7 +2289,7 @@ public sealed class Interpreter
         string name,
         Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function,
         IReadOnlyList<RuntimeValue> arguments,
-        RuleScriptHostFunctionSymbol? signature,
+        RuleScriptFunctionSymbol? signature,
         int? line,
         int? column,
         CancellationToken cancellationToken)
@@ -2322,7 +2319,7 @@ public sealed class Interpreter
     private static void ValidateHostFunctionArguments(
         string name,
         IReadOnlyList<RuntimeValue> arguments,
-        RuleScriptHostFunctionSymbol? signature,
+        RuleScriptFunctionSymbol? signature,
         int? line,
         int? column)
     {
@@ -2331,7 +2328,7 @@ public sealed class Interpreter
             return;
         }
 
-        if (!signature.IsVariadic && arguments.Count != signature.Parameters.Count)
+        if (signature.HostMetadata?.IsVariadic != true && arguments.Count != signature.Parameters.Count)
         {
             throw new RuntimeException(
                 $"Host function '{name}' expects {signature.Parameters.Count} argument(s), but received {arguments.Count}.",
@@ -2360,11 +2357,11 @@ public sealed class Interpreter
 
     private void EnsureHostFunctionThreadSafe(
         string name,
-        RuleScriptHostFunctionSymbol? signature,
+        RuleScriptFunctionSymbol? signature,
         int? line,
         int? column)
     {
-        if (_isParallelTask && signature?.IsThreadSafe != true)
+        if (_isParallelTask && signature?.HostMetadata?.IsThreadSafe != true)
         {
             throw new RuntimeException(
                 $"Host function '{name}' is not marked thread-safe and cannot be called from a parallel task.",
@@ -2377,7 +2374,7 @@ public sealed class Interpreter
     private static void ValidateHostFunctionReturn(
         string name,
         object? result,
-        RuleScriptHostFunctionSymbol? signature,
+        RuleScriptFunctionSymbol? signature,
         int? line,
         int? column)
     {

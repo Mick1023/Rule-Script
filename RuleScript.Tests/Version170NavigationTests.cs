@@ -97,6 +97,7 @@ public sealed class Version170NavigationTests
         Assert.Null(currentFileCall.File);
         Assert.Equal(3, currentFileCall.Line);
         Assert.Equal(1, currentFileCall.Column);
+        Assert.Equal(13, currentFileCall.EndColumn);
     }
 
     [Fact]
@@ -113,6 +114,50 @@ public sealed class Version170NavigationTests
         Assert.Single(definition.Parameters);
         Assert.Equal(RuleScriptValueType.Any, definition.ReturnType);
         Assert.Contains("supplied value", definition.Documentation);
+    }
+
+    [Fact]
+    public void GetDefinition_RegisteredHostFunction_UsesUnifiedFunctionMetadata()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction(
+            "HostScore",
+            _ => 42,
+            new RuleScriptHostFunctionOptions
+            {
+                Parameters = [new RuleScriptParameterSymbol("playerId", RuleScriptValueType.String)],
+                ReturnType = RuleScriptValueType.Number,
+                Documentation = "Reads the player's score."
+            });
+        const string source = """HostScore("p1");""";
+
+        var definition = RuleScriptLanguageService.GetDefinition(engine, source, 1, 1);
+
+        Assert.NotNull(definition);
+        Assert.Equal(("HostScore", RuleScriptSymbolKind.HostFunction, true), (definition.Name, definition.Kind, definition.IsExternal));
+        Assert.Single(definition.Parameters, parameter => parameter.Name == "playerId" && parameter.Type == RuleScriptValueType.String);
+        Assert.Equal(RuleScriptValueType.Number, definition.ReturnType);
+        Assert.Equal("Reads the player's score.", definition.Documentation);
+
+        var symbol = Assert.Single(engine.Analyze(source).Functions, function => function.Name == "HostScore");
+        Assert.Equal(RuleScriptFunctionKind.Host, symbol.Kind);
+    }
+
+    [Fact]
+    public void GetDefinition_BuiltinFunction_UsesUnifiedFunctionMetadata()
+    {
+        const string source = """ToString(1);""";
+
+        var definition = RuleScriptLanguageService.GetDefinition(source, 1, 1);
+
+        Assert.NotNull(definition);
+        Assert.Equal(("ToString", RuleScriptSymbolKind.HostFunction, true), (definition.Name, definition.Kind, definition.IsExternal));
+        Assert.Single(definition.Parameters, parameter => parameter.Name == "value" && parameter.Type == RuleScriptValueType.Any);
+        Assert.Equal(RuleScriptValueType.String, definition.ReturnType);
+        Assert.Contains("invariant string", definition.Documentation);
+
+        var symbol = Assert.Single(new RuleScriptEngine().Analyze(source).Functions, function => function.Name == "ToString");
+        Assert.Equal(RuleScriptFunctionKind.Builtin, symbol.Kind);
     }
 
     [Fact]

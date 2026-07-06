@@ -1,7 +1,7 @@
 namespace RuleScript.Core.Runtime;
 
 /// <summary>
-/// Describes a user-defined function and its input parameters.
+/// Describes a function and its editor-facing metadata.
 /// </summary>
 public sealed class RuleScriptFunctionSymbol
 {
@@ -17,10 +17,39 @@ public sealed class RuleScriptFunctionSymbol
         bool isReturnTypeNullable = false,
         bool isExported = false,
         string? documentation = null)
+        : this(
+            name,
+            parameters,
+            returnType,
+            isReturnTypeNullable,
+            isExported,
+            documentation,
+            RuleScriptFunctionKind.User)
+    {
+    }
+
+    public RuleScriptFunctionSymbol(
+        string name,
+        IEnumerable<RuleScriptParameterSymbol> parameters,
+        RuleScriptValueType returnType,
+        bool isReturnTypeNullable,
+        bool isExported,
+        string? documentation,
+        RuleScriptFunctionKind kind,
+        RuleScriptSourceLocation? location = null,
+        RuleScriptSourceRange? range = null,
+        RuleScriptHostFunctionMetadata? hostMetadata = null,
+        RuleScriptBuiltinFunctionMetadata? builtinMetadata = null,
+        RuleScriptImportFunctionMetadata? importMetadata = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("Function name cannot be empty.", nameof(name));
+        }
+
+        if (!Enum.IsDefined(kind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind));
         }
 
         Name = name;
@@ -29,6 +58,13 @@ public sealed class RuleScriptFunctionSymbol
         IsReturnTypeNullable = isReturnTypeNullable;
         IsExported = isExported;
         Documentation = documentation;
+        Kind = kind;
+        Location = location;
+        Range = range;
+        HostMetadata = hostMetadata;
+        BuiltinMetadata = builtinMetadata;
+        ImportMetadata = importMetadata;
+        Metadata = hostMetadata ?? (object?)builtinMetadata ?? importMetadata;
     }
 
     public string Name { get; }
@@ -42,4 +78,18 @@ public sealed class RuleScriptFunctionSymbol
     public bool IsExported { get; }
 
     public string? Documentation { get; }
+
+    public RuleScriptFunctionKind Kind { get; }
+
+    public RuleScriptSourceLocation? Location { get; }
+
+    public RuleScriptSourceRange? Range { get; }
+
+    public RuleScriptHostFunctionMetadata? HostMetadata { get; }
+
+    public RuleScriptBuiltinFunctionMetadata? BuiltinMetadata { get; }
+
+    public RuleScriptImportFunctionMetadata? ImportMetadata { get; }
+
+    public object? Metadata { get; }
 }

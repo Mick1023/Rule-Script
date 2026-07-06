@@ -5,21 +5,22 @@ namespace RuleScript.Core;
 
 internal sealed class RuleScriptNavigationAnalyzer
 {
+    private readonly RuleScriptDocumentAnalysisResult _document;
     private readonly RuleScriptEngine _engine;
     private readonly Dictionary<string, NavigationSymbol> _declarations = new(StringComparer.Ordinal);
     private readonly List<NavigationSymbol> _symbols = [];
     private readonly HashSet<string> _loadedImports = new(StringComparer.OrdinalIgnoreCase);
-    private RuleScriptAnalysisResult _analysis = null!;
 
-    private RuleScriptNavigationAnalyzer(RuleScriptEngine engine)
+    private RuleScriptNavigationAnalyzer(RuleScriptDocumentAnalysisResult document)
     {
-        _engine = engine;
+        _document = document;
+        _engine = document.Engine;
     }
 
-    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptEngine engine, string source, int line, int column)
+    public static RuleScriptDefinitionInfo? GetDefinition(RuleScriptDocumentAnalysisResult document, int line, int column)
     {
-        var analyzer = new RuleScriptNavigationAnalyzer(engine);
-        analyzer.Analyze(source);
+        var analyzer = new RuleScriptNavigationAnalyzer(document);
+        analyzer.Analyze();
         var symbol = analyzer.FindSymbol(line, column);
 
         if (symbol is null)
@@ -37,10 +38,10 @@ internal sealed class RuleScriptNavigationAnalyzer
             : null;
     }
 
-    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptEngine engine, string source, int line, int column)
+    public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptDocumentAnalysisResult document, int line, int column)
     {
-        var analyzer = new RuleScriptNavigationAnalyzer(engine);
-        analyzer.Analyze(source);
+        var analyzer = new RuleScriptNavigationAnalyzer(document);
+        analyzer.Analyze();
         var symbol = analyzer.FindSymbol(line, column);
 
         if (symbol is null)
@@ -58,24 +59,15 @@ internal sealed class RuleScriptNavigationAnalyzer
             .ToArray();
     }
 
-    private void Analyze(string source)
+    private void Analyze()
     {
-        var tokens = new Lexer.Lexer(source).Tokenize();
-        var statements = new Parser.Parser(tokens).Parse();
-        _analysis = _engine.Analyze(source);
-
-        foreach (var function in _analysis.HostFunctions)
+        foreach (var function in _document.Analysis.Functions.Where(IsExternalFunction))
         {
-            AddExternalFunction(function.Name, RuleScriptSymbolKind.HostFunction, function.Parameters, function.ReturnType, function.Documentation);
+            AddExternalFunction(function);
         }
 
-        foreach (var function in _analysis.BuiltinFunctions)
-        {
-            AddExternalFunction(function.Name, RuleScriptSymbolKind.HostFunction, function.Parameters, function.ReturnType, function.Documentation);
-        }
-
-        AddImportedDeclarations(statements, ResolveWorkingDirectory());
-        VisitStatements(statements, new NavigationScope(null, isFunctionScope: false), file: null);
+        AddImportedDeclarations(_document.Statements, ResolveWorkingDirectory());
+        VisitStatements(_document.Statements, new NavigationScope(null, isFunctionScope: false), file: null);
     }
 
     private void AddImportedDeclarations(IEnumerable<Statement> statements, string baseDirectory)
@@ -261,7 +253,7 @@ internal sealed class RuleScriptNavigationAnalyzer
 
     private NavigationSymbol? FindSymbol(int line, int column)
     {
-        return _symbols.LastOrDefault(symbol => symbol.SelectionRange is not null && Contains(symbol.SelectionRange, line, column));
+        return _symbols.LastOrDefault(symbol => RuleScriptSourceMapper.Contains(symbol.SelectionRange, line, column));
     }
 
     private void AddFunctionReference(string name, int? line, int? column, string? file)
@@ -278,10 +270,9 @@ internal sealed class RuleScriptNavigationAnalyzer
             return;
         }
 
-        var hostKey = Key(RuleScriptSymbolKind.HostFunction, name);
-        if (_declarations.TryGetValue(hostKey, out var hostFunction))
+        if (TryFindExternalFunction(name, out var externalFunction))
         {
-            AddSymbol(hostFunction with { Range = range, SelectionRange = range, IsDeclaration = false });
+            AddSymbol(externalFunction with { Range = range, SelectionRange = range, IsDeclaration = false });
         }
     }
 
@@ -357,32 +348,27 @@ internal sealed class RuleScriptNavigationAnalyzer
         AddSymbol(declaration with { Range = range, SelectionRange = range, IsDeclaration = false });
     }
 
-    private void AddExternalFunction(
-        string name,
-        RuleScriptSymbolKind kind,
-        IReadOnlyList<RuleScriptParameterSymbol> parameters,
-        RuleScriptValueType returnType,
-        string? documentation)
+    private void AddExternalFunction(RuleScriptFunctionSymbol function)
     {
         AddDeclaration(new NavigationSymbol(
-            name,
-            kind,
+            function.Name,
+            ToNavigationKind(function.Kind),
             Range: null,
             SelectionRange: null,
             IsDeclaration: true,
-            documentation,
+            function.Documentation,
             IsExternal: true,
-            parameters,
-            returnType));
+            function.Parameters,
+            function.ReturnType));
     }
 
     private NavigationSymbol CreateFunctionDeclaration(string name, FunctionDeclarationStatement function, string? file)
     {
-        var selectionRange = CreateRange(file, function.NameLine, function.NameColumn, function.Name);
+        var selectionRange = RuleScriptSourceMapper.CreateTokenRange(file, function.NameLine, function.NameColumn, function.Name);
         return new NavigationSymbol(
             name,
             RuleScriptSymbolKind.Function,
-            ToRange(file, function.SourceSpan) ?? selectionRange,
+            RuleScriptSourceMapper.CreateRange(file, function.SourceSpan) ?? selectionRange,
             selectionRange,
             IsDeclaration: true,
             function.Documentation,
@@ -427,36 +413,48 @@ internal sealed class RuleScriptNavigationAnalyzer
             : Path.Combine(baseDirectory, path));
     }
 
-    private static bool Contains(RuleScriptSourceRange range, int line, int column)
-    {
-        return (line > range.StartLine || (line == range.StartLine && column >= range.StartColumn))
-            && (line < range.EndLine || (line == range.EndLine && column < range.EndColumn));
-    }
-
     private static bool TryCreateRange(string? file, int? line, int? column, string name, out RuleScriptSourceRange range)
     {
         range = null!;
-        if (line is null || column is null)
+        var tokenRange = RuleScriptSourceMapper.CreateTokenRange(file, line, column, name);
+        if (tokenRange is null)
         {
             return false;
         }
 
-        range = CreateRange(file, line, column, name);
+        range = tokenRange;
         return true;
     }
 
-    private static RuleScriptSourceRange CreateRange(string? file, int? line, int? column, string name)
+    private bool TryFindExternalFunction(string name, out NavigationSymbol function)
     {
-        var startLine = line ?? 1;
-        var startColumn = column ?? 1;
-        return new RuleScriptSourceRange(file, startLine, startColumn, startLine, startColumn + name.Length);
+        var symbolKind = _document.Analysis.Functions
+            .FirstOrDefault(function => string.Equals(function.Name, name, StringComparison.Ordinal) && IsExternalFunction(function))
+            ?.Kind;
+
+        if (symbolKind is not null
+            && _declarations.TryGetValue(Key(ToNavigationKind(symbolKind.Value), name), out function!))
+        {
+            return true;
+        }
+
+        function = null!;
+        return false;
     }
 
-    private static RuleScriptSourceRange? ToRange(string? file, SourceSpan? span)
+    private static bool IsExternalFunction(RuleScriptFunctionSymbol function)
     {
-        return span is null
-            ? null
-            : new RuleScriptSourceRange(file, span.StartLine, span.StartColumn, span.EndLine, span.EndColumn);
+        return function.Kind is RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin;
+    }
+
+    private static RuleScriptSymbolKind ToNavigationKind(RuleScriptFunctionKind kind)
+    {
+        return kind switch
+        {
+            RuleScriptFunctionKind.User or RuleScriptFunctionKind.Imported => RuleScriptSymbolKind.Function,
+            RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin => RuleScriptSymbolKind.HostFunction,
+            _ => RuleScriptSymbolKind.Function
+        };
     }
 
     private static string Key(RuleScriptSymbolKind kind, string name)
