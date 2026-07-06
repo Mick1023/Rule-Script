@@ -679,13 +679,25 @@ public sealed class RuleScriptEngine
             hostReturnTypes,
             _knownVariables,
             importedConstantTypes);
-        var functionSymbols = typedSymbols.Functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
+        var functionSymbols = typedSymbols.Functions.ToList();
+        var importedFunctionSymbols = typedSymbols.Functions
+            .GroupBy(function => function.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         CollectImportedFunctionSignatures(
             statements,
             ResolveWorkingDirectory(),
-            functionSymbols,
+            importedFunctionSymbols,
             new Stack<string>(),
             new Dictionary<string, IReadOnlyList<RuleScriptFunctionSymbol>>(StringComparer.OrdinalIgnoreCase));
+        foreach (var importedFunction in importedFunctionSymbols.Values)
+        {
+            if (!functionSymbols.Any(function =>
+                    RuleScriptFunctionSignatureComparer.GetSignatureKey(function)
+                    == RuleScriptFunctionSignatureComparer.GetSignatureKey(importedFunction)))
+            {
+                functionSymbols.Add(importedFunction);
+            }
+        }
         IEnumerable<RuleScriptVariableSymbol>? visibleVariables = typedSymbols.VisibleVariables;
 
         if (fallbackVisibleToAll && cursorLine.HasValue && cursorColumn.HasValue)
@@ -696,7 +708,7 @@ public sealed class RuleScriptEngine
 
         var functionResolver = CreateFunctionResolver(
             userFunctionNames,
-            functionSymbols.Values,
+            functionSymbols,
             RegisteredFunctionNames,
             registeredHostFunctions,
             _builtinFunctions.Names,
@@ -716,7 +728,7 @@ public sealed class RuleScriptEngine
             _builtinFunctions.Names,
             importAliases,
             typedSymbols.Variables,
-            functionSymbols.Values,
+            functionSymbols,
             visibleVariables,
             registeredHostFunctions,
             semanticDiagnostics,
@@ -763,11 +775,11 @@ public sealed class RuleScriptEngine
 
     private static void AddFunctions(
         IDictionary<string, RuleScriptFunctionSymbol> functions,
-        IEnumerable<RuleScriptFunctionSymbol> symbols)
+            IEnumerable<RuleScriptFunctionSymbol> symbols)
     {
         foreach (var symbol in symbols)
         {
-            functions[symbol.Name] = symbol;
+            functions[RuleScriptFunctionSignatureComparer.GetSignatureKey(symbol)] = symbol;
         }
     }
 
@@ -778,16 +790,20 @@ public sealed class RuleScriptEngine
     {
         foreach (var name in names)
         {
-            functions.TryAdd(
-                name,
-                new RuleScriptFunctionSymbol(
+            if (functions.Values.Any(function => function.Name == name))
+            {
+                continue;
+            }
+
+            var fallback = new RuleScriptFunctionSymbol(
                     name,
                     [],
                     RuleScriptValueType.Unknown,
                     isReturnTypeNullable: false,
                     isExported: false,
                     documentation: null,
-                    kind: kind));
+                    kind: kind);
+            functions.TryAdd(RuleScriptFunctionSignatureComparer.GetSignatureKey(fallback), fallback);
         }
     }
 
@@ -1554,7 +1570,10 @@ public sealed class RuleScriptEngine
 
             foreach (var function in importedModule.PublicFunctions)
             {
-                module.Functions[function.Key] = function.Value;
+                foreach (var overload in function.Value)
+                {
+                    module.AddFunction(overload);
+                }
             }
 
             foreach (var constant in importedModule.PublicConstants)
@@ -1566,10 +1585,10 @@ public sealed class RuleScriptEngine
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
             var userFunction = new UserFunction(function, module);
-            module.Functions[function.Name] = userFunction;
+            module.AddFunction(userFunction);
             if (function.IsExported)
             {
-                module.PublicFunctions[function.Name] = userFunction;
+                module.AddPublicFunction(userFunction);
             }
         }
 

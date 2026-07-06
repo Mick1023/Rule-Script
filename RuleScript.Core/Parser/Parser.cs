@@ -498,12 +498,32 @@ public sealed class Parser
         }
 
         Consume(TokenType.RightParen, "Expected ')' after function parameters.");
+        string? returnTypeName = null;
+
+        if (Match(TokenType.Arrow))
+        {
+            var typeToken = Consume(TokenType.Identifier, "Expected return type after '->'.");
+
+            if (!RuleScriptTypeFacts.TryParse(typeToken.Lexeme, out _))
+            {
+                throw Error(typeToken, $"Unknown return type '{typeToken.Lexeme}'.");
+            }
+
+            returnTypeName = typeToken.Lexeme;
+        }
+
         Consume(TokenType.Colon, "Expected ':' after function declaration.");
 
         var body = ParseBlock(TokenType.EndFunction, TokenType.End);
 
         ConsumeBlockEnd(TokenType.EndFunction, "endfunction", "function declaration");
-        var declaration = new FunctionDeclarationStatement(name.Lexeme, parameters, body, functionToken.Line, functionToken.Column)
+        var declaration = new FunctionDeclarationStatement(
+            name.Lexeme,
+            parameters,
+            body,
+            returnTypeName,
+            functionToken.Line,
+            functionToken.Column)
         {
             NameLine = name.Line,
             NameColumn = name.Column,

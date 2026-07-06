@@ -14,7 +14,8 @@ public enum RuleScriptValueType
     String,
     Boolean,
     Array,
-    Object
+    Object,
+    Void
 }
 
 internal static class RuleScriptTypeFacts
@@ -30,6 +31,7 @@ internal static class RuleScriptTypeFacts
             "bool" or "boolean" => RuleScriptValueType.Boolean,
             "array" => RuleScriptValueType.Array,
             "object" => RuleScriptValueType.Object,
+            "void" => RuleScriptValueType.Void,
             _ => RuleScriptValueType.Unknown
         };
 

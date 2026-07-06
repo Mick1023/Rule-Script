@@ -4,6 +4,7 @@ public sealed record FunctionDeclarationStatement(
     string Name,
     IReadOnlyList<string> Parameters,
     IReadOnlyList<Statement> Body,
+    string? ReturnTypeName = null,
     int? Line = null,
     int? Column = null) : Statement
 {

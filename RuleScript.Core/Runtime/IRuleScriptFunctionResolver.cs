@@ -6,4 +6,6 @@ namespace RuleScript.Core.Runtime;
 public interface IRuleScriptFunctionResolver
 {
     RuleScriptFunctionSymbol? ResolveFunction(string name);
+
+    IReadOnlyList<RuleScriptFunctionSymbol> ResolveFunctions(string name);
 }

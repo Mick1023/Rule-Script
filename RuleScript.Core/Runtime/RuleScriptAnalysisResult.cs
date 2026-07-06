@@ -150,13 +150,13 @@ public sealed class RuleScriptAnalysisResult
         IEnumerable<RuleScriptFunctionSymbol>? symbols,
         IEnumerable<string> fallbackNames)
     {
-        var byName = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
+        var bySignature = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
 
         if (symbols is not null)
         {
             foreach (var symbol in symbols)
             {
-                byName[symbol.Name] = new RuleScriptFunctionSymbol(
+                bySignature[RuleScriptFunctionSignatureComparer.GetSignatureKey(symbol)] = new RuleScriptFunctionSymbol(
                     symbol.Name,
                     symbol.Parameters,
                     symbol.ReturnType,
@@ -168,16 +168,25 @@ public sealed class RuleScriptAnalysisResult
                     symbol.Range,
                     symbol.HostMetadata,
                     symbol.BuiltinMetadata,
-                    symbol.ImportMetadata);
+                    symbol.ImportMetadata,
+                    symbol.DeclaredReturnType,
+                    symbol.IsReturnTypeDeclared);
             }
         }
 
         foreach (var name in fallbackNames)
         {
-            byName.TryAdd(name, new RuleScriptFunctionSymbol(name, []));
+            if (!bySignature.Values.Any(function => function.Name == name))
+            {
+                var fallback = new RuleScriptFunctionSymbol(name, []);
+                bySignature.TryAdd(RuleScriptFunctionSignatureComparer.GetSignatureKey(fallback), fallback);
+            }
         }
 
-        return byName.Values.OrderBy(symbol => symbol.Name, StringComparer.Ordinal).ToArray();
+        return bySignature.Values
+            .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
+            .ThenBy(symbol => symbol.Signature, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static IReadOnlyList<RuleScriptHostFunctionSymbol> SnapshotHostFunctions(
@@ -209,16 +218,19 @@ public sealed class RuleScriptAnalysisResult
         IEnumerable<RuleScriptFunctionSymbol> builtinFunctions,
         IEnumerable<string> builtinFunctionNames)
     {
-        var byName = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
+        var bySignature = new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal);
 
-        AddFunctions(byName, userFunctions);
-        AddFallbacks(byName, userFunctionNames, RuleScriptFunctionKind.User);
-        AddFunctions(byName, hostFunctions);
-        AddFallbacks(byName, hostFunctionNames, RuleScriptFunctionKind.Host);
-        AddFunctions(byName, builtinFunctions);
-        AddFallbacks(byName, builtinFunctionNames, RuleScriptFunctionKind.Builtin);
+        AddFunctions(bySignature, userFunctions);
+        AddFallbacks(bySignature, userFunctionNames, RuleScriptFunctionKind.User);
+        AddFunctions(bySignature, hostFunctions);
+        AddFallbacks(bySignature, hostFunctionNames, RuleScriptFunctionKind.Host);
+        AddFunctions(bySignature, builtinFunctions);
+        AddFallbacks(bySignature, builtinFunctionNames, RuleScriptFunctionKind.Builtin);
 
-        return byName.Values.OrderBy(symbol => symbol.Name, StringComparer.Ordinal).ToArray();
+        return bySignature.Values
+            .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
+            .ThenBy(symbol => symbol.Signature, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static void AddFunctions(
@@ -227,7 +239,7 @@ public sealed class RuleScriptAnalysisResult
     {
         foreach (var function in functions)
         {
-            symbols[function.Name] = function;
+            symbols[RuleScriptFunctionSignatureComparer.GetSignatureKey(function)] = function;
         }
     }
 
@@ -238,14 +250,20 @@ public sealed class RuleScriptAnalysisResult
     {
         foreach (var name in names)
         {
-            symbols.TryAdd(name, new RuleScriptFunctionSymbol(
+            if (symbols.Values.Any(function => function.Name == name))
+            {
+                continue;
+            }
+
+            var fallback = new RuleScriptFunctionSymbol(
                 name,
                 [],
                 RuleScriptValueType.Unknown,
                 isReturnTypeNullable: false,
                 isExported: false,
                 documentation: null,
-                kind: kind));
+                kind: kind);
+            symbols.TryAdd(RuleScriptFunctionSignatureComparer.GetSignatureKey(fallback), fallback);
         }
     }
 }

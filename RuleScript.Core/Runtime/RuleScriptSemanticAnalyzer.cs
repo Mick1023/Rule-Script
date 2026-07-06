@@ -6,6 +6,16 @@ namespace RuleScript.Core.Runtime;
 internal static class RuleScriptSemanticAnalyzer
 {
     private static readonly AsyncLocal<bool> AnalyzingParallelTask = new();
+
+    private readonly record struct FunctionReturnContext(
+        string FunctionName,
+        RuleScriptValueType DeclaredReturnType);
+
+    private readonly record struct FunctionReturnShape(
+        bool HasValueReturn,
+        bool AlwaysReturns,
+        RuleScriptValueType SuggestedReturnType);
+
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
@@ -26,20 +36,43 @@ internal static class RuleScriptSemanticAnalyzer
             }
         }
 
-        var functionDeclarations = new HashSet<string>(StringComparer.Ordinal);
+        var functionSignatures = new Dictionary<string, FunctionDeclarationStatement>(StringComparer.Ordinal);
+        var functionReturnTypes = new Dictionary<string, RuleScriptValueType>(StringComparer.Ordinal);
 
         foreach (var function in statements.OfType<FunctionDeclarationStatement>())
         {
-            if (!functionDeclarations.Add(function.Name))
+            var parameters = CreateParameterSymbols(function);
+            var signature = RuleScriptFunctionSymbol.CreateSignature(function.Name, parameters);
+            var signatureKey = RuleScriptFunctionSymbol.CreateSignatureKey(function.Name, parameters);
+
+            if (!functionSignatures.TryAdd(signatureKey, function))
             {
                 diagnostics.Add(Create(
                     RuleScriptDiagnosticCodes.DuplicateDeclaration,
                     RuleScriptDiagnosticSeverity.Error,
-                    $"Function '{function.Name}' is declared more than once.",
+                    $"Duplicate function signature '{signature}'.",
                     function.Line,
                     function.Column,
                     function.Name,
                     function.SourceSpan));
+            }
+
+            if (TryGetDeclaredReturnType(function, out var declaredReturnType)
+                && functionReturnTypes.TryGetValue(function.Name, out var existingReturnType)
+                && existingReturnType != declaredReturnType)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Function overloads for '{function.Name}' must use the same return type.",
+                    function.Line,
+                    function.Column,
+                    function.Name,
+                    function.SourceSpan));
+            }
+            else if (declaredReturnType != RuleScriptValueType.Unknown)
+            {
+                functionReturnTypes.TryAdd(function.Name, declaredReturnType);
             }
         }
 
@@ -82,6 +115,10 @@ internal static class RuleScriptSemanticAnalyzer
                 locals[parameter.Name] = RuleScriptTypeInfo.From(type);
             }
 
+            var returnContext = TryGetDeclaredReturnType(function, out var declaredReturnType)
+                ? new FunctionReturnContext(function.Name, declaredReturnType)
+                : (FunctionReturnContext?)null;
+
             var previousParallelState = AnalyzingParallelTask.Value;
             AnalyzingParallelTask.Value = parallelReachableFunctions.Contains(function.Name);
             try
@@ -94,12 +131,57 @@ internal static class RuleScriptSemanticAnalyzer
                         globals,
                         localDeclarations,
                         diagnostics,
-                        functionResolver);
+                        functionResolver,
+                        returnContext);
                 }
             }
             finally
             {
                 AnalyzingParallelTask.Value = previousParallelState;
+            }
+
+            var returnShape = AnalyzeFunctionReturnShape(function.Body, locals, globals, functionResolver);
+            if (returnContext is { } declaredContext)
+            {
+                var untypedParameters = function.ParameterDefinitions
+                    .Where(parameter => parameter.TypeName is null)
+                    .Select(parameter => parameter.Name)
+                    .ToArray();
+                if (untypedParameters.Length > 0)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.TypeMismatch,
+                        RuleScriptDiagnosticSeverity.Warning,
+                        CreateMissingParameterTypesMessage(function.Name, untypedParameters),
+                        function.Line,
+                        function.Column,
+                        function.Name,
+                        function.SourceSpan));
+                }
+
+                if (declaredContext.DeclaredReturnType != RuleScriptValueType.Void
+                    && !returnShape.AlwaysReturns)
+                {
+                    diagnostics.Add(Create(
+                        RuleScriptDiagnosticCodes.TypeMismatch,
+                        RuleScriptDiagnosticSeverity.Warning,
+                        "Not all code paths return a value.",
+                        function.Line,
+                        function.Column,
+                        function.Name,
+                        function.SourceSpan));
+                }
+            }
+            else if (returnShape.HasValueReturn)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Warning,
+                    CreateMissingReturnTypeMessage(function.Name, returnShape.SuggestedReturnType),
+                    function.Line,
+                    function.Column,
+                    function.Name,
+                    function.SourceSpan));
             }
         }
 
@@ -113,6 +195,23 @@ internal static class RuleScriptSemanticAnalyzer
         ReportReadonlyAssignments(statements, readonlyNames, diagnostics);
 
         return diagnostics;
+    }
+
+    private static string CreateMissingParameterTypesMessage(string functionName, IReadOnlyList<string> parameterNames)
+    {
+        var quotedNames = string.Join(", ", parameterNames.Select(parameter => $"'{parameter}'"));
+        return parameterNames.Count == 1
+            ? $"Function '{functionName}' declares a return type but parameter {quotedNames} has no declared type. Consider adding a parameter type annotation."
+            : $"Function '{functionName}' declares a return type but parameters {quotedNames} have no declared type. Consider adding parameter type annotations.";
+    }
+
+    private static string CreateMissingReturnTypeMessage(string functionName, RuleScriptValueType suggestedReturnType)
+    {
+        var displayType = suggestedReturnType is RuleScriptValueType.Unknown or RuleScriptValueType.Any or RuleScriptValueType.Void
+            ? RuleScriptTypeFacts.ToDisplayName(RuleScriptValueType.Number)
+            : RuleScriptTypeFacts.ToDisplayName(suggestedReturnType);
+
+        return $"Function '{functionName}' returns a value but has no declared return type. Consider adding '-> {displayType}'.";
     }
 
     private static IReadOnlySet<string> FindParallelReachableFunctions(IReadOnlyList<Statement> statements)
@@ -319,7 +418,8 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IRuleScriptFunctionResolver functionResolver)
+        IRuleScriptFunctionResolver functionResolver,
+        FunctionReturnContext? returnContext = null)
     {
         switch (statement)
         {
@@ -396,7 +496,11 @@ internal static class RuleScriptSemanticAnalyzer
                 break;
 
             case ReturnStatement returnStatement:
-                AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, functionResolver);
+                var returnType = AnalyzeExpression(returnStatement.Value, scope, globals, diagnostics, functionResolver);
+                if (returnContext is { } context)
+                {
+                    ValidateReturnType(context, returnStatement, returnType, diagnostics);
+                }
                 break;
 
             case IfStatement conditional:
@@ -409,8 +513,8 @@ internal static class RuleScriptSemanticAnalyzer
                     "if",
                     conditional.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, functionResolver);
-                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(conditional.ThenBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
+                AnalyzeChildren(conditional.ElseBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 break;
 
             case SwitchStatement switchStatement:
@@ -465,12 +569,12 @@ internal static class RuleScriptSemanticAnalyzer
                         }
                     }
 
-                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, functionResolver);
+                    AnalyzeChildren(switchCase.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 }
 
                 if (switchStatement.DefaultBranch is not null)
                 {
-                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, functionResolver);
+                    AnalyzeChildren(switchStatement.DefaultBranch, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 }
                 else
                 {
@@ -496,7 +600,7 @@ internal static class RuleScriptSemanticAnalyzer
                     "while",
                     loop.SourceSpan,
                     diagnostics);
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
                 break;
 
             case ForeachStatement loop:
@@ -516,7 +620,7 @@ internal static class RuleScriptSemanticAnalyzer
 
                 var hadPrevious = scope.TryGetValue(loop.VariableName, out var previousType);
                 scope[loop.VariableName] = iterableType.ElementType ?? RuleScriptTypeInfo.Unknown;
-                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver);
+                AnalyzeChildren(loop.Body, scope, globals, declarations, diagnostics, functionResolver, returnContext);
 
                 if (hadPrevious)
                 {
@@ -858,12 +962,176 @@ internal static class RuleScriptSemanticAnalyzer
         IDictionary<string, RuleScriptTypeInfo> globals,
         ISet<string> declarations,
         ICollection<RuleScriptDiagnostic> diagnostics,
-        IRuleScriptFunctionResolver functionResolver)
+        IRuleScriptFunctionResolver functionResolver,
+        FunctionReturnContext? returnContext = null)
     {
         foreach (var statement in statements)
         {
-            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, functionResolver);
+            AnalyzeStatement(statement, scope, globals, declarations, diagnostics, functionResolver, returnContext);
         }
+    }
+
+    private static void ValidateReturnType(
+        FunctionReturnContext context,
+        ReturnStatement statement,
+        RuleScriptTypeInfo actual,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        if (context.DeclaredReturnType == RuleScriptValueType.Void)
+        {
+            if (statement.Value is not null)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Error,
+                    $"Function '{context.FunctionName}' declares return type void and cannot return a value.",
+                    statement.Line,
+                    statement.Column,
+                    "return",
+                    statement.SourceSpan));
+            }
+
+            return;
+        }
+
+        if (!IsKnown(actual) || actual.Kind == RuleScriptValueType.Any)
+        {
+            return;
+        }
+
+        if (actual.Kind != context.DeclaredReturnType)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.TypeMismatch,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Function '{context.FunctionName}' declares return type {RuleScriptTypeFacts.ToDisplayName(context.DeclaredReturnType)}, but returns {RuleScriptTypeFacts.ToDisplayName(actual.Kind)}.",
+                statement.Line,
+                statement.Column,
+                "return",
+                statement.SourceSpan));
+        }
+    }
+
+    private static FunctionReturnShape AnalyzeFunctionReturnShape(
+        IReadOnlyList<Statement> statements,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IRuleScriptFunctionResolver functionResolver)
+    {
+        var hasValueReturn = false;
+        var alwaysReturns = false;
+        var suggestedReturnType = RuleScriptValueType.Unknown;
+
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case ReturnStatement returned:
+                    if (returned.Value is not null)
+                    {
+                        hasValueReturn = true;
+                        suggestedReturnType = MergeSuggestedReturnType(
+                            suggestedReturnType,
+                            AnalyzeExpression(
+                                returned.Value,
+                                scope,
+                                globals,
+                                new List<RuleScriptDiagnostic>(),
+                                functionResolver).Kind);
+                    }
+
+                    alwaysReturns = true;
+                    break;
+                case IfStatement conditional:
+                    var thenShape = AnalyzeFunctionReturnShape(conditional.ThenBranch, scope, globals, functionResolver);
+                    var elseShape = AnalyzeFunctionReturnShape(conditional.ElseBranch, scope, globals, functionResolver);
+                    hasValueReturn |= thenShape.HasValueReturn || elseShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, thenShape.SuggestedReturnType);
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, elseShape.SuggestedReturnType);
+                    alwaysReturns = conditional.ElseBranch.Count > 0
+                        && thenShape.AlwaysReturns
+                        && elseShape.AlwaysReturns;
+                    break;
+                case SwitchStatement switchStatement:
+                    var switchAlwaysReturns = switchStatement.DefaultBranch is not null;
+                    foreach (var switchCase in switchStatement.Cases)
+                    {
+                        var caseShape = AnalyzeFunctionReturnShape(switchCase.Body, scope, globals, functionResolver);
+                        hasValueReturn |= caseShape.HasValueReturn;
+                        suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, caseShape.SuggestedReturnType);
+                        switchAlwaysReturns &= caseShape.AlwaysReturns;
+                    }
+
+                    if (switchStatement.DefaultBranch is not null)
+                    {
+                        var defaultShape = AnalyzeFunctionReturnShape(switchStatement.DefaultBranch, scope, globals, functionResolver);
+                        hasValueReturn |= defaultShape.HasValueReturn;
+                        suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, defaultShape.SuggestedReturnType);
+                        switchAlwaysReturns &= defaultShape.AlwaysReturns;
+                    }
+
+                    alwaysReturns = switchAlwaysReturns;
+                    break;
+                case WhileStatement loop:
+                    var whileShape = AnalyzeFunctionReturnShape(loop.Body, scope, globals, functionResolver);
+                    hasValueReturn |= whileShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, whileShape.SuggestedReturnType);
+                    break;
+                case ForeachStatement loop:
+                    var foreachShape = AnalyzeFunctionReturnShape(loop.Body, scope, globals, functionResolver);
+                    hasValueReturn |= foreachShape.HasValueReturn;
+                    suggestedReturnType = MergeSuggestedReturnType(suggestedReturnType, foreachShape.SuggestedReturnType);
+                    break;
+            }
+
+            if (alwaysReturns)
+            {
+                break;
+            }
+        }
+
+        return new FunctionReturnShape(hasValueReturn, alwaysReturns, suggestedReturnType);
+    }
+
+    private static RuleScriptValueType MergeSuggestedReturnType(
+        RuleScriptValueType current,
+        RuleScriptValueType candidate)
+    {
+        if (candidate is RuleScriptValueType.Unknown or RuleScriptValueType.Any)
+        {
+            return current;
+        }
+
+        if (current is RuleScriptValueType.Unknown or RuleScriptValueType.Any)
+        {
+            return candidate;
+        }
+
+        return current == candidate ? current : RuleScriptValueType.Unknown;
+    }
+
+    private static bool TryGetDeclaredReturnType(
+        FunctionDeclarationStatement function,
+        out RuleScriptValueType returnType)
+    {
+        if (function.ReturnTypeName is not null && RuleScriptTypeFacts.TryParse(function.ReturnTypeName, out returnType))
+        {
+            return true;
+        }
+
+        returnType = RuleScriptValueType.Unknown;
+        return false;
+    }
+
+    private static IReadOnlyList<RuleScriptParameterSymbol> CreateParameterSymbols(FunctionDeclarationStatement function)
+    {
+        return function.ParameterDefinitions.Select(parameter =>
+        {
+            var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
+                ? parsed
+                : RuleScriptValueType.Unknown;
+            return new RuleScriptParameterSymbol(parameter.Name, type);
+        }).ToArray();
     }
 
     private static RuleScriptTypeInfo AnalyzeExpression(
@@ -1143,9 +1411,9 @@ internal static class RuleScriptSemanticAnalyzer
             .Select(argument => AnalyzeExpression(argument, scope, globals, diagnostics, functionResolver))
             .ToArray();
 
-        var function = functionResolver.ResolveFunction(name);
+        var candidates = functionResolver.ResolveFunctions(name);
 
-        if (function is null)
+        if (candidates.Count == 0)
         {
             diagnostics.Add(Create(
                 RuleScriptDiagnosticCodes.UndefinedFunction,
@@ -1154,6 +1422,12 @@ internal static class RuleScriptSemanticAnalyzer
                 line,
                 column,
                 name));
+            return RuleScriptTypeInfo.Unknown;
+        }
+
+        var function = ResolveOverload(name, candidates, argumentTypes, line, column, diagnostics);
+        if (function is null)
+        {
             return RuleScriptTypeInfo.Unknown;
         }
 
@@ -1166,7 +1440,7 @@ internal static class RuleScriptSemanticAnalyzer
 
         if (function.Kind is RuleScriptFunctionKind.Host or RuleScriptFunctionKind.Builtin)
         {
-            if (function.HostMetadata?.IsVariadic != true)
+            if (function.HostMetadata?.IsVariadic != true && function.HostMetadata is not null)
             {
                 ValidateArguments(name, argumentTypes, function.Parameters, line, column, diagnostics);
             }
@@ -1223,6 +1497,107 @@ internal static class RuleScriptSemanticAnalyzer
                     name));
             }
         }
+    }
+
+    private static RuleScriptFunctionSymbol? ResolveOverload(
+        string name,
+        IReadOnlyList<RuleScriptFunctionSymbol> candidates,
+        IReadOnlyList<RuleScriptTypeInfo> arguments,
+        int? line,
+        int? column,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
+        var matches = candidates
+            .Select(candidate => new
+            {
+                Function = candidate,
+                Score = GetOverloadScore(candidate, arguments)
+            })
+            .Where(candidate => candidate.Score >= 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            foreach (var candidate in candidates.Where(candidate => candidate.Parameters.Count == arguments.Count))
+            {
+                ValidateArguments(name, arguments, candidate.Parameters, line, column, diagnostics);
+            }
+
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.UndefinedFunction,
+                RuleScriptDiagnosticSeverity.Error,
+                $"No matching overload for function '{name}'.",
+                line,
+                column,
+                name));
+            return null;
+        }
+
+        var bestScore = matches[0].Score;
+        var bestMatches = matches.Where(match => match.Score == bestScore).ToArray();
+        if (bestMatches.Length > 1)
+        {
+            diagnostics.Add(Create(
+                RuleScriptDiagnosticCodes.TypeMismatch,
+                RuleScriptDiagnosticSeverity.Error,
+                $"Ambiguous overload for function '{name}'.",
+                line,
+                column,
+                name));
+            return null;
+        }
+
+        return bestMatches[0].Function;
+    }
+
+    private static int GetOverloadScore(
+        RuleScriptFunctionSymbol function,
+        IReadOnlyList<RuleScriptTypeInfo> arguments)
+    {
+        if (function.HostMetadata?.IsVariadic == true)
+        {
+            return 0;
+        }
+
+        if (function.HostMetadata is null
+            && function.Kind == RuleScriptFunctionKind.Host
+            && function.Parameters.Count == 0)
+        {
+            return 0;
+        }
+
+        if (function.Parameters.Count != arguments.Count)
+        {
+            return -1;
+        }
+
+        var score = 0;
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var expected = function.Parameters[index].Type;
+            var actual = arguments[index];
+
+            if (expected is RuleScriptValueType.Any or RuleScriptValueType.Unknown)
+            {
+                continue;
+            }
+
+            if (!IsKnown(actual) || actual.Kind == RuleScriptValueType.Any)
+            {
+                score++;
+                continue;
+            }
+
+            if (expected != actual.Kind)
+            {
+                return -1;
+            }
+
+            score += 2;
+        }
+
+        return score;
     }
 
     private static void RequireType(

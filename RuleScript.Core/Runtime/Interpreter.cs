@@ -40,6 +40,14 @@ public sealed class Interpreter
     private ParallelExecutionState _executionState = new();
     private bool _isParallelTask;
 
+    private sealed record RuntimeOverloadCandidate(
+        RuleScriptFunctionSymbol Symbol,
+        RuleScriptFunctionSymbol? InvocationSignature,
+        UserFunction? UserFunction,
+        bool IsSyncHost,
+        bool IsAsyncHost,
+        bool IsBuiltin);
+
     public Interpreter(BuiltinFunctions builtinFunctions)
         : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal), 100000)
     {
@@ -133,8 +141,8 @@ public sealed class Interpreter
             if (statement is FunctionDeclarationStatement functionDeclaration)
             {
                 var function = new UserFunction(functionDeclaration, module);
-                module.Functions[functionDeclaration.Name] = function;
-                module.PublicFunctions[functionDeclaration.Name] = function;
+                module.AddFunction(function);
+                module.AddPublicFunction(function);
             }
             else if (statement is ConstStatement constantStatement)
             {
@@ -184,7 +192,7 @@ public sealed class Interpreter
         {
             if (statement is FunctionDeclarationStatement functionDeclaration)
             {
-                module.Functions[functionDeclaration.Name] = new UserFunction(functionDeclaration, module);
+                module.AddFunction(new UserFunction(functionDeclaration, module));
             }
         }
 
@@ -1570,26 +1578,33 @@ public sealed class Interpreter
             .Select(argument => Evaluate(argument, context))
             .ToArray();
 
-        if (CurrentModule.Functions.TryGetValue(expression.Name, out var userFunction))
+        var candidate = ResolveRuntimeOverload(
+            expression.Name,
+            arguments,
+            GetRuntimeCandidates(expression.Name, includeAsyncHosts: true),
+            expression.Line,
+            expression.Column);
+
+        if (candidate.UserFunction is not null)
         {
-            return InvokeUserFunction(userFunction, arguments, context, expression.Line, expression.Column);
+            return InvokeUserFunction(candidate.UserFunction, arguments, context, expression.Line, expression.Column);
         }
 
-        if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
+        if (candidate.IsSyncHost)
         {
-            _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
-            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
+            var hostFunction = _hostFunctions[expression.Name];
+            EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
+            return InvokeHostFunction(expression.Name, hostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
         }
 
-        if (_asyncHostFunctions.ContainsKey(expression.Name))
+        if (candidate.IsAsyncHost)
         {
             throw new RuntimeException($"Async host function '{expression.Name}' requires ExecuteAsync.", expression.Line, expression.Column, expression.Name);
         }
 
         try
         {
-            if (_builtinFunctions.TryInvoke(expression.Name, arguments, out var builtinValue))
+            if (candidate.IsBuiltin && _builtinFunctions.TryInvoke(expression.Name, arguments, out var builtinValue))
             {
                 if (expression.Name == "Print")
                 {
@@ -1616,28 +1631,35 @@ public sealed class Interpreter
             arguments[i] = await EvaluateAsync(expression.Arguments[i], context, cancellationToken).ConfigureAwait(false);
         }
 
-        if (CurrentModule.Functions.TryGetValue(expression.Name, out var userFunction))
+        var candidate = ResolveRuntimeOverload(
+            expression.Name,
+            arguments,
+            GetRuntimeCandidates(expression.Name, includeAsyncHosts: true),
+            expression.Line,
+            expression.Column);
+
+        if (candidate.UserFunction is not null)
         {
-            return await InvokeUserFunctionAsync(userFunction, arguments, context, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+            return await InvokeUserFunctionAsync(candidate.UserFunction, arguments, context, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
         }
 
-        if (_asyncHostFunctions.TryGetValue(expression.Name, out var asyncHostFunction))
+        if (candidate.IsAsyncHost)
         {
-            _asyncHostFunctionSignatures.TryGetValue(expression.Name, out var signature);
-            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
-            return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, signature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+            var asyncHostFunction = _asyncHostFunctions[expression.Name];
+            EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
+            return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
         }
 
-        if (_hostFunctions.TryGetValue(expression.Name, out var hostFunction))
+        if (candidate.IsSyncHost)
         {
-            _hostFunctionSignatures.TryGetValue(expression.Name, out var signature);
-            EnsureHostFunctionThreadSafe(expression.Name, signature, expression.Line, expression.Column);
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, signature, expression.Line, expression.Column);
+            var hostFunction = _hostFunctions[expression.Name];
+            EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
+            return InvokeHostFunction(expression.Name, hostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
         }
 
         try
         {
-            if (_builtinFunctions.TryInvoke(expression.Name, arguments, out var builtinValue))
+            if (candidate.IsBuiltin && _builtinFunctions.TryInvoke(expression.Name, arguments, out var builtinValue))
             {
                 if (expression.Name == "Print")
                 {
@@ -1663,7 +1685,7 @@ public sealed class Interpreter
 
         var module = ResolveAlias(expression.ModuleName, expression.Line, expression.Column);
 
-        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunction))
+        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunctions))
         {
             throw new RuntimeException(
                 $"Module alias '{expression.ModuleName}' function not found: '{expression.FunctionName}'.",
@@ -1672,7 +1694,14 @@ public sealed class Interpreter
                 expression.FunctionName);
         }
 
-        return InvokeUserFunction(userFunction, arguments, context, expression.Line, expression.Column);
+        var candidate = ResolveRuntimeOverload(
+            expression.FunctionName,
+            arguments,
+            userFunctions.Select(CreateUserFunctionCandidate).ToArray(),
+            expression.Line,
+            expression.Column);
+
+        return InvokeUserFunction(candidate.UserFunction!, arguments, context, expression.Line, expression.Column);
     }
 
     private async Task<RuntimeValue> EvaluateModuleFunctionCallAsync(ModuleFunctionCallExpression expression, RuntimeContext context, CancellationToken cancellationToken)
@@ -1686,7 +1715,7 @@ public sealed class Interpreter
 
         var module = ResolveAlias(expression.ModuleName, expression.Line, expression.Column);
 
-        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunction))
+        if (!module.PublicFunctions.TryGetValue(expression.FunctionName, out var userFunctions))
         {
             throw new RuntimeException(
                 $"Module alias '{expression.ModuleName}' function not found: '{expression.FunctionName}'.",
@@ -1695,7 +1724,249 @@ public sealed class Interpreter
                 expression.FunctionName);
         }
 
-        return await InvokeUserFunctionAsync(userFunction, arguments, context, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+        var candidate = ResolveRuntimeOverload(
+            expression.FunctionName,
+            arguments,
+            userFunctions.Select(CreateUserFunctionCandidate).ToArray(),
+            expression.Line,
+            expression.Column);
+
+        return await InvokeUserFunctionAsync(candidate.UserFunction!, arguments, context, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IReadOnlyList<RuntimeOverloadCandidate> GetRuntimeCandidates(string name, bool includeAsyncHosts)
+    {
+        var candidates = new List<RuntimeOverloadCandidate>();
+
+        if (CurrentModule.Functions.TryGetValue(name, out var userFunctions))
+        {
+            candidates.AddRange(userFunctions.Select(CreateUserFunctionCandidate));
+        }
+
+        if (_hostFunctions.ContainsKey(name))
+        {
+            _hostFunctionSignatures.TryGetValue(name, out var signature);
+            candidates.Add(new RuntimeOverloadCandidate(
+                signature ?? CreateFallbackFunctionSymbol(name, RuleScriptFunctionKind.Host),
+                signature,
+                UserFunction: null,
+                IsSyncHost: true,
+                IsAsyncHost: false,
+                IsBuiltin: false));
+        }
+
+        if (includeAsyncHosts && _asyncHostFunctions.ContainsKey(name))
+        {
+            _asyncHostFunctionSignatures.TryGetValue(name, out var signature);
+            candidates.Add(new RuntimeOverloadCandidate(
+                signature ?? CreateFallbackFunctionSymbol(name, RuleScriptFunctionKind.Host),
+                signature,
+                UserFunction: null,
+                IsSyncHost: false,
+                IsAsyncHost: true,
+                IsBuiltin: false));
+        }
+
+        candidates.AddRange(_builtinFunctions.Signatures
+            .Where(signature => signature.Name == name)
+            .Select(signature => new RuntimeOverloadCandidate(
+                signature,
+                signature,
+                UserFunction: null,
+                IsSyncHost: false,
+                IsAsyncHost: false,
+                IsBuiltin: true)));
+
+        return candidates;
+    }
+
+    private static RuntimeOverloadCandidate CreateUserFunctionCandidate(UserFunction userFunction)
+    {
+        var signature = CreateUserFunctionSymbol(userFunction);
+        return new RuntimeOverloadCandidate(
+            signature,
+            signature,
+            userFunction,
+            IsSyncHost: false,
+            IsAsyncHost: false,
+            IsBuiltin: false);
+    }
+
+    private static RuleScriptFunctionSymbol CreateUserFunctionSymbol(UserFunction userFunction)
+    {
+        var function = userFunction.Declaration;
+        var parameters = function.ParameterDefinitions.Select(parameter =>
+        {
+            var type = parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var parsed)
+                ? parsed
+                : RuleScriptValueType.Unknown;
+            return new RuleScriptParameterSymbol(parameter.Name, type);
+        }).ToArray();
+
+        return new RuleScriptFunctionSymbol(
+            function.Name,
+            parameters,
+            RuleScriptValueType.Unknown,
+            isReturnTypeNullable: false,
+            function.IsExported,
+            function.Documentation,
+            RuleScriptFunctionKind.User);
+    }
+
+    private static RuleScriptFunctionSymbol CreateFallbackFunctionSymbol(string name, RuleScriptFunctionKind kind)
+    {
+        return new RuleScriptFunctionSymbol(
+            name,
+            [],
+            RuleScriptValueType.Unknown,
+            isReturnTypeNullable: false,
+            isExported: false,
+            documentation: null,
+            kind: kind);
+    }
+
+    private static RuntimeOverloadCandidate ResolveRuntimeOverload(
+        string name,
+        IReadOnlyList<RuntimeValue> arguments,
+        IReadOnlyList<RuntimeOverloadCandidate> candidates,
+        int? line,
+        int? column)
+    {
+        if (candidates.Count == 0)
+        {
+            throw new RuntimeException($"Function '{name}' is not registered.", line, column, name);
+        }
+
+        var matches = candidates
+            .Select(candidate => new
+            {
+                Candidate = candidate,
+                Score = GetRuntimeOverloadScore(candidate.Symbol, arguments),
+                Priority = GetRuntimeCandidatePriority(candidate)
+            })
+            .Where(candidate => candidate.Score >= 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.Priority)
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            ThrowRuntimeCandidateMismatch(name, arguments, candidates, line, column);
+            throw new RuntimeException($"No matching overload for function '{name}'.", line, column, name);
+        }
+
+        var bestScore = matches[0].Score;
+        var bestPriority = matches[0].Priority;
+        var bestMatches = matches
+            .Where(match => match.Score == bestScore && match.Priority == bestPriority)
+            .ToArray();
+        if (bestMatches.Length > 1)
+        {
+            throw new RuntimeException($"Ambiguous overload for function '{name}'.", line, column, name);
+        }
+
+        return bestMatches[0].Candidate;
+    }
+
+    private static int GetRuntimeCandidatePriority(RuntimeOverloadCandidate candidate)
+    {
+        if (candidate.UserFunction is not null)
+        {
+            return 3;
+        }
+
+        if (candidate.IsSyncHost || candidate.IsAsyncHost)
+        {
+            return 2;
+        }
+
+        return candidate.IsBuiltin ? 1 : 0;
+    }
+
+    private static int GetRuntimeOverloadScore(
+        RuleScriptFunctionSymbol function,
+        IReadOnlyList<RuntimeValue> arguments)
+    {
+        if (function.HostMetadata?.IsVariadic == true)
+        {
+            return 0;
+        }
+
+        if (function.Parameters.Count == 0
+            && function.Kind == RuleScriptFunctionKind.Host
+            && function.HostMetadata is null)
+        {
+            return 0;
+        }
+
+        if (function.Parameters.Count != arguments.Count)
+        {
+            return -1;
+        }
+
+        var score = 0;
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var expected = function.Parameters[index].Type;
+            if (expected is RuleScriptValueType.Any or RuleScriptValueType.Unknown)
+            {
+                continue;
+            }
+
+            var actual = RuleScriptTypeFacts.FromValue(arguments[index].Value);
+            if (expected != actual)
+            {
+                return -1;
+            }
+
+            score += 2;
+        }
+
+        return score;
+    }
+
+    private static void ThrowRuntimeCandidateMismatch(
+        string name,
+        IReadOnlyList<RuntimeValue> arguments,
+        IReadOnlyList<RuntimeOverloadCandidate> candidates,
+        int? line,
+        int? column)
+    {
+        var candidate = candidates
+            .OrderByDescending(GetRuntimeCandidatePriority)
+            .FirstOrDefault();
+
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (candidate.UserFunction is not null)
+        {
+            var function = candidate.UserFunction.Declaration;
+            if (arguments.Count != function.Parameters.Count)
+            {
+                throw new RuntimeException($"Function '{function.Name}' expects {function.Parameters.Count} argument(s), but received {arguments.Count}.", line, column, function.Name);
+            }
+
+            ValidateFunctionArgumentTypes(function, arguments, line, column);
+            return;
+        }
+
+        if (candidate.IsSyncHost || candidate.IsAsyncHost)
+        {
+            ValidateHostFunctionArguments(name, arguments, candidate.InvocationSignature, line, column);
+            return;
+        }
+
+        if (candidate.IsBuiltin && arguments.Count != candidate.Symbol.Parameters.Count)
+        {
+            throw new RuntimeException(
+                $"Function '{name}' expects {candidate.Symbol.Parameters.Count} argument(s), but received {arguments.Count}.",
+                line,
+                column,
+                name);
+        }
     }
 
     private RuntimeValue InvokeUserFunction(

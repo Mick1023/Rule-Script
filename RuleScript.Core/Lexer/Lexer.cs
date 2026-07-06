@@ -114,7 +114,7 @@ public sealed class Lexer
                 AddToken(TokenType.Plus);
                 break;
             case '-':
-                AddToken(TokenType.Minus);
+                AddToken(Match('>') ? TokenType.Arrow : TokenType.Minus);
                 break;
             case '*':
                 AddToken(TokenType.Star);

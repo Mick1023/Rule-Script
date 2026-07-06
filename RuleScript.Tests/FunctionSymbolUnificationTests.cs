@@ -155,7 +155,7 @@ public sealed class FunctionSymbolUnificationTests
 
         Assert.Same(replacement, resolved);
         Assert.Null(resolver.ResolveFunction("Missing"));
-        Assert.Equal(["Read"], resolver.Functions.Select(function => function.Name));
+        Assert.Equal(["Read()", "Read(number)"], resolver.Functions.Select(function => function.Signature));
     }
 
     [Fact]

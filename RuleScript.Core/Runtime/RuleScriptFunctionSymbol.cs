@@ -16,7 +16,9 @@ public sealed class RuleScriptFunctionSymbol
         RuleScriptValueType returnType,
         bool isReturnTypeNullable = false,
         bool isExported = false,
-        string? documentation = null)
+        string? documentation = null,
+        RuleScriptValueType? declaredReturnType = null,
+        bool isReturnTypeDeclared = false)
         : this(
             name,
             parameters,
@@ -24,7 +26,9 @@ public sealed class RuleScriptFunctionSymbol
             isReturnTypeNullable,
             isExported,
             documentation,
-            RuleScriptFunctionKind.User)
+            RuleScriptFunctionKind.User,
+            declaredReturnType: declaredReturnType,
+            isReturnTypeDeclared: isReturnTypeDeclared)
     {
     }
 
@@ -40,7 +44,9 @@ public sealed class RuleScriptFunctionSymbol
         RuleScriptSourceRange? range = null,
         RuleScriptHostFunctionMetadata? hostMetadata = null,
         RuleScriptBuiltinFunctionMetadata? builtinMetadata = null,
-        RuleScriptImportFunctionMetadata? importMetadata = null)
+        RuleScriptImportFunctionMetadata? importMetadata = null,
+        RuleScriptValueType? declaredReturnType = null,
+        bool isReturnTypeDeclared = false)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -55,6 +61,8 @@ public sealed class RuleScriptFunctionSymbol
         Name = name;
         Parameters = parameters?.ToArray() ?? throw new ArgumentNullException(nameof(parameters));
         ReturnType = returnType;
+        DeclaredReturnType = declaredReturnType ?? returnType;
+        IsReturnTypeDeclared = isReturnTypeDeclared;
         IsReturnTypeNullable = isReturnTypeNullable;
         IsExported = isExported;
         Documentation = documentation;
@@ -71,7 +79,13 @@ public sealed class RuleScriptFunctionSymbol
 
     public IReadOnlyList<RuleScriptParameterSymbol> Parameters { get; }
 
+    public string Signature => CreateSignature(Name, Parameters);
+
     public RuleScriptValueType ReturnType { get; }
+
+    public RuleScriptValueType DeclaredReturnType { get; }
+
+    public bool IsReturnTypeDeclared { get; }
 
     public bool IsReturnTypeNullable { get; }
 
@@ -92,4 +106,19 @@ public sealed class RuleScriptFunctionSymbol
     public RuleScriptImportFunctionMetadata? ImportMetadata { get; }
 
     public object? Metadata { get; }
+
+    public static string CreateSignature(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
+    {
+        return $"{name}({string.Join(", ", parameters.Select(parameter => RuleScriptTypeFacts.ToDisplayName(NormalizeSignatureType(parameter.Type))))})";
+    }
+
+    internal static string CreateSignatureKey(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
+    {
+        return $"{name}({string.Join(",", parameters.Select(parameter => NormalizeSignatureType(parameter.Type).ToString()))})";
+    }
+
+    private static RuleScriptValueType NormalizeSignatureType(RuleScriptValueType type)
+    {
+        return type == RuleScriptValueType.Unknown ? RuleScriptValueType.Any : type;
+    }
 }
