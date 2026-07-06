@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.9.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.9.0)
+[![Prerelease Version](https://img.shields.io/badge/prerelease-v1.9.0--rc1.0-orange)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.9.0-rc1.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -11,10 +11,10 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 
 ## Installation
 
-Install the stable package from NuGet:
+Install the release candidate package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.9.0
+dotnet add package RuleScript.Core --version 1.9.0-rc1.0
 ```
 
 ## Quick Start
