@@ -71,6 +71,7 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
 - [v1.9.0 release notes](docs/releases/v1.9.0.md)
+- [v1.8.0 API reference](docs/api/v1.8.0.md)
 - [v1.8.0 maintenance notes](docs/releases/v1.8.0.md)
 - [v1.7.0 release notes](docs/releases/v1.7.0.md)
 
