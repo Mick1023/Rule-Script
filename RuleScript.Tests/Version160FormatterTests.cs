@@ -99,6 +99,44 @@ public sealed class Version160FormatterTests
     }
 
     [Fact]
+    public void Format_HostTriggerAttribute_StaysAttachedAndSplitsBeforeFunction()
+    {
+        const string source = """
+            @HostTrigger("TriggerTest") function Test():
+            Print("Something triggered");
+            end
+            """;
+
+        var formatted = RuleScriptFormatterCore.Format(source);
+
+        Assert.Equal(NormalizeExpected("""
+            @HostTrigger("TriggerTest")
+            function Test():
+                Print("Something triggered");
+            end
+            """), formatted);
+    }
+
+    [Fact]
+    public void Format_HostTriggerAttribute_SplitsBeforeExportFunction()
+    {
+        const string source = """
+            @ HostTrigger("TriggerTest") export function Test():
+            Print("Something triggered");
+            endfunction
+            """;
+
+        var formatted = RuleScriptFormatterCore.Format(source);
+
+        Assert.Equal(NormalizeExpected("""
+            @HostTrigger("TriggerTest")
+            export function Test():
+                Print("Something triggered");
+            endfunction
+            """), formatted);
+    }
+
+    [Fact]
     public void Format_PreservesLineBlockDocumentationAndRegionComments()
     {
         const string source = """
