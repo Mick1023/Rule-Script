@@ -658,6 +658,11 @@ internal static class RuleScriptSemanticAnalyzer
                 var returns = task.Body.OfType<ReturnStatement>().ToArray();
                 foreach (var statement in task.Body)
                 {
+                    if (task.Kind == TaskBlockKind.Trigger && IsDispatchStatement(statement))
+                    {
+                        continue;
+                    }
+
                     AnalyzeStatement(statement, taskScope, globals, declarations, diagnostics, functionResolver);
                 }
 
@@ -691,6 +696,11 @@ internal static class RuleScriptSemanticAnalyzer
         }
 
         return returnTypes;
+    }
+
+    private static bool IsDispatchStatement(Statement statement)
+    {
+        return statement is ExpressionStatement { Expression: IdentifierExpression { Name: "dispatch" } };
     }
 
     private static void AnalyzeDestructuringStatement(

@@ -86,6 +86,22 @@ public sealed class HostTriggerTests
     }
 
     [Fact]
+    public void Analyze_DoesNotReportDispatchAsUndefinedVariableInTriggerTask()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            parallel:
+                trigger task:
+                    dispatch;
+                endtask
+            endparallel
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic =>
+            diagnostic.Code == RuleScriptDiagnosticCodes.UndefinedVariable
+            && diagnostic.TokenText == "dispatch");
+    }
+
+    [Fact]
     public void Runtime_HostTriggers_ReturnsMarkedFunctionSymbols()
     {
         var runtime = new RuleScriptEngine().CreateRuntime("""
