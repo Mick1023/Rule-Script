@@ -15,6 +15,7 @@ public enum TokenType
     DocumentationComment,
     RegionStart,
     RegionEnd,
+    At,
 
     Var,
     Const,
@@ -44,6 +45,7 @@ public enum TokenType
     EndSwitch,
     Parallel,
     Task,
+    Trigger,
     EndTask,
     EndParallel,
 

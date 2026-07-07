@@ -13,6 +13,11 @@ public sealed class Parser
     private int _blockDepth;
     private int _parallelDepth;
 
+    private sealed record FunctionAttributeInfo(
+        string? HostTriggerName,
+        int? HostTriggerLine,
+        int? HostTriggerColumn);
+
     public Parser(IReadOnlyList<Token> tokens)
     {
         ArgumentNullException.ThrowIfNull(tokens);
@@ -72,9 +77,11 @@ public sealed class Parser
     private Statement ParseStatement()
     {
         var documentation = ParseDocumentationComments();
+        var attributes = ParseFunctionAttributes();
 
         if (Match(TokenType.Import))
         {
+            RejectFunctionAttributes(attributes, "import statement");
             if (_blockDepth > 0)
             {
                 throw Error(Previous(), "Import statements are only allowed at top level.");
@@ -90,68 +97,92 @@ public sealed class Parser
                 throw Error(Previous(), "Function declarations are only allowed at top level.");
             }
 
-            return ParseFunctionDeclarationStatement(documentation);
+            return ParseFunctionDeclarationStatement(documentation, attributes);
         }
 
         if (Match(TokenType.Var))
         {
+            RejectFunctionAttributes(attributes, "variable declaration");
             return ParseVarStatement(documentation);
         }
 
         if (Match(TokenType.Const))
         {
+            RejectFunctionAttributes(attributes, "constant declaration");
             return ParseConstStatement(documentation);
         }
 
         if (Match(TokenType.Export))
         {
-            return ParseExportStatement(documentation);
+            return ParseExportStatement(documentation, attributes);
         }
 
         if (Match(TokenType.If))
         {
+            RejectFunctionAttributes(attributes, "if statement");
             return ParseIfStatement();
         }
 
         if (Match(TokenType.While))
         {
+            RejectFunctionAttributes(attributes, "while statement");
             return ParseWhileStatement();
         }
 
         if (Match(TokenType.Foreach))
         {
+            RejectFunctionAttributes(attributes, "foreach statement");
             return ParseForeachStatement();
         }
 
         if (Match(TokenType.Switch))
         {
+            RejectFunctionAttributes(attributes, "switch statement");
             return ParseSwitchStatement();
         }
 
         if (Match(TokenType.Parallel))
         {
+            RejectFunctionAttributes(attributes, "parallel block");
             return ParseParallelStatement();
+        }
+
+        if (Match(TokenType.Trigger))
+        {
+            RejectFunctionAttributes(attributes, "trigger task");
+            if (Match(TokenType.Task))
+            {
+                throw Error(Previous(), "trigger task blocks are only allowed directly inside parallel blocks.");
+            }
+
+            throw Error(Previous(), "Expected 'task' after 'trigger'.");
         }
 
         if (Match(TokenType.Task))
         {
+            RejectFunctionAttributes(attributes, "task block");
             throw Error(Previous(), "task blocks are only allowed directly inside parallel blocks.");
         }
 
         if (Match(TokenType.Break))
         {
+            RejectFunctionAttributes(attributes, "break statement");
             return ParseBreakStatement();
         }
 
         if (Match(TokenType.Continue))
         {
+            RejectFunctionAttributes(attributes, "continue statement");
             return ParseContinueStatement();
         }
 
         if (Match(TokenType.Return))
         {
+            RejectFunctionAttributes(attributes, "return statement");
             return ParseReturnStatement();
         }
+
+        RejectFunctionAttributes(attributes, "statement");
 
         if (CheckGlobalAssignment())
         {
@@ -164,6 +195,46 @@ public sealed class Parser
         }
 
         return ParseExpressionStatement();
+    }
+
+    private FunctionAttributeInfo ParseFunctionAttributes()
+    {
+        string? hostTriggerName = null;
+        int? hostTriggerLine = null;
+        int? hostTriggerColumn = null;
+
+        while (Match(TokenType.At))
+        {
+            var at = Previous();
+            var name = Consume(TokenType.Identifier, "Expected attribute name after '@'.");
+            if (name.Lexeme != "HostTrigger")
+            {
+                throw Error(name, $"Unsupported function attribute '{name.Lexeme}'.");
+            }
+
+            if (hostTriggerName is not null)
+            {
+                throw Error(name, "Duplicate HostTrigger attribute.");
+            }
+
+            Consume(TokenType.LeftParen, "Expected '(' after HostTrigger.");
+            var triggerName = Consume(TokenType.String, "Expected string trigger name for HostTrigger.");
+            Consume(TokenType.RightParen, "Expected ')' after HostTrigger name.");
+
+            hostTriggerName = triggerName.Literal?.ToString() ?? triggerName.Lexeme;
+            hostTriggerLine = at.Line;
+            hostTriggerColumn = at.Column;
+        }
+
+        return new FunctionAttributeInfo(hostTriggerName, hostTriggerLine, hostTriggerColumn);
+    }
+
+    private void RejectFunctionAttributes(FunctionAttributeInfo attributes, string target)
+    {
+        if (attributes.HostTriggerName is not null)
+        {
+            throw Error(Peek(), $"HostTrigger attribute can only be applied to function declarations, not {target}.");
+        }
     }
 
     private Statement ParseVarStatement(string? documentation)
@@ -207,12 +278,14 @@ public sealed class Parser
         return Complete(new ConstStatement(name.Lexeme, initializer, name.Line, name.Column, documentation), start);
     }
 
-    private Statement ParseExportStatement(string? documentation)
+    private Statement ParseExportStatement(string? documentation, FunctionAttributeInfo attributes)
     {
         if (Match(TokenType.Function))
         {
-            return ParseFunctionDeclarationStatement(documentation) with { IsExported = true };
+            return ParseFunctionDeclarationStatement(documentation, attributes) with { IsExported = true };
         }
+
+        RejectFunctionAttributes(attributes, "exported constant");
 
         if (Match(TokenType.Const))
         {
@@ -453,7 +526,9 @@ public sealed class Parser
         return Complete(new SwitchStatement(value, cases, defaultBranch, switchToken.Line, switchToken.Column), switchToken);
     }
 
-    private FunctionDeclarationStatement ParseFunctionDeclarationStatement(string? documentation)
+    private FunctionDeclarationStatement ParseFunctionDeclarationStatement(
+        string? documentation,
+        FunctionAttributeInfo attributes)
     {
         var functionToken = Previous();
         var name = Consume(TokenType.Identifier, "Expected function name after 'function'.");
@@ -528,7 +603,10 @@ public sealed class Parser
             NameLine = name.Line,
             NameColumn = name.Column,
             ParameterDefinitions = parameterDefinitions,
-            Documentation = documentation
+            Documentation = documentation,
+            HostTriggerName = attributes.HostTriggerName,
+            HostTriggerLine = attributes.HostTriggerLine,
+            HostTriggerColumn = attributes.HostTriggerColumn
         };
         return Complete(declaration, functionToken);
     }
@@ -603,11 +681,25 @@ public sealed class Parser
         {
             while (!IsAtEnd() && !Check(TokenType.EndParallel) && !Check(TokenType.End))
             {
-                var task = Consume(TokenType.Task, "Expected 'task' inside parallel block.");
+                Token? trigger = null;
+                if (Match(TokenType.Trigger))
+                {
+                    trigger = Previous();
+                }
+
+                var task = Consume(TokenType.Task, trigger is null
+                    ? "Expected 'task' inside parallel block."
+                    : "Expected 'task' after 'trigger'.");
                 Consume(TokenType.Colon, "Expected ':' after 'task'.");
                 var body = ParseBlock(TokenType.EndTask, TokenType.End);
                 ConsumeBlockEnd(TokenType.EndTask, "endtask", "task block");
-                tasks.Add(new TaskBlockSyntax(body, task.Line, task.Column));
+                tasks.Add(new TaskBlockSyntax(
+                    body,
+                    trigger?.Line ?? task.Line,
+                    trigger?.Column ?? task.Column)
+                {
+                    Kind = trigger is null ? TaskBlockKind.Normal : TaskBlockKind.Trigger
+                });
             }
         }
         finally

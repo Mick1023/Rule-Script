@@ -46,7 +46,8 @@ public sealed class RuleScriptFunctionSymbol
         RuleScriptBuiltinFunctionMetadata? builtinMetadata = null,
         RuleScriptImportFunctionMetadata? importMetadata = null,
         RuleScriptValueType? declaredReturnType = null,
-        bool isReturnTypeDeclared = false)
+        bool isReturnTypeDeclared = false,
+        RuleScriptHostTriggerMetadata? hostTriggerMetadata = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -72,7 +73,14 @@ public sealed class RuleScriptFunctionSymbol
         HostMetadata = hostMetadata;
         BuiltinMetadata = builtinMetadata;
         ImportMetadata = importMetadata;
-        Metadata = hostMetadata ?? (object?)builtinMetadata ?? importMetadata;
+        HostTriggerMetadata = hostTriggerMetadata;
+        Metadata = hostMetadata is not null
+            ? hostMetadata
+            : builtinMetadata is not null
+                ? builtinMetadata
+                : importMetadata is not null
+                    ? importMetadata
+                    : hostTriggerMetadata;
     }
 
     public string Name { get; }
@@ -105,6 +113,8 @@ public sealed class RuleScriptFunctionSymbol
 
     public RuleScriptImportFunctionMetadata? ImportMetadata { get; }
 
+    public RuleScriptHostTriggerMetadata? HostTriggerMetadata { get; }
+
     public object? Metadata { get; }
 
     public static string CreateSignature(string name, IEnumerable<RuleScriptParameterSymbol> parameters)
@@ -122,3 +132,5 @@ public sealed class RuleScriptFunctionSymbol
         return type == RuleScriptValueType.Unknown ? RuleScriptValueType.Any : type;
     }
 }
+
+public sealed record RuleScriptHostTriggerMetadata(string Name);

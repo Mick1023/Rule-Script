@@ -41,6 +41,11 @@ public sealed class RuleScriptAnalysisResult
             HostFunctionNames,
             BuiltinFunctions.Select(function => function.ToFunctionSymbol()),
             BuiltinFunctionNames);
+        HostTriggers = UserFunctions
+            .Where(function => function.HostTriggerMetadata is not null)
+            .OrderBy(function => function.HostTriggerMetadata!.Name, StringComparer.Ordinal)
+            .ThenBy(function => function.Name, StringComparer.Ordinal)
+            .ToArray();
         Diagnostics = diagnostics?.ToArray() ?? [];
     }
 
@@ -99,6 +104,11 @@ public sealed class RuleScriptAnalysisResult
     /// Gets all function signatures available to editor tooling. Function origin is represented by <see cref="RuleScriptFunctionSymbol.Kind"/>.
     /// </summary>
     public IReadOnlyList<RuleScriptFunctionSymbol> Functions { get; }
+
+    /// <summary>
+    /// Gets user-defined function signatures marked with HostTrigger metadata.
+    /// </summary>
+    public IReadOnlyList<RuleScriptFunctionSymbol> HostTriggers { get; }
 
     /// <summary>
     /// Gets all callable function names available from the current script and engine.
@@ -170,7 +180,8 @@ public sealed class RuleScriptAnalysisResult
                     symbol.BuiltinMetadata,
                     symbol.ImportMetadata,
                     symbol.DeclaredReturnType,
-                    symbol.IsReturnTypeDeclared);
+                    symbol.IsReturnTypeDeclared,
+                    symbol.HostTriggerMetadata);
             }
         }
 

@@ -16,6 +16,12 @@ public sealed record FunctionDeclarationStatement(
 
     public int? NameColumn { get; init; }
 
+    public string? HostTriggerName { get; init; }
+
+    public int? HostTriggerLine { get; init; }
+
+    public int? HostTriggerColumn { get; init; }
+
     public IReadOnlyList<FunctionParameterDefinition> ParameterDefinitions { get; init; } =
         Parameters.Select(parameter => new FunctionParameterDefinition(parameter)).ToArray();
 }

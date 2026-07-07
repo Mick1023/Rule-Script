@@ -993,7 +993,10 @@ public sealed class RuleScriptEngine
                 null,
                 declaration.NameLine ?? declaration.Line,
                 declaration.NameColumn ?? declaration.Column),
-            range: RuleScriptSourceMapper.CreateRange(null, declaration.SourceSpan));
+            range: RuleScriptSourceMapper.CreateRange(null, declaration.SourceSpan),
+            hostTriggerMetadata: string.IsNullOrWhiteSpace(declaration.HostTriggerName)
+                ? null
+                : new RuleScriptHostTriggerMetadata(declaration.HostTriggerName));
     }
 
     /// <summary>
@@ -1126,6 +1129,24 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Creates a long-running runtime that can receive host trigger requests through trigger task dispatchers.
+    /// </summary>
+    public RuleScriptRuntime CreateRuntime(string script, RuntimeContext? context = null)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
+        var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
+        var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
+        var dispatcher = new RuleScriptHostTriggerDispatcher();
+        return new RuleScriptRuntime(
+            module,
+            context ?? new RuntimeContext(),
+            cancellationToken => CreateInterpreter(module, cancellationToken, dispatcher),
+            dispatcher);
+    }
+
+    /// <summary>
     /// Executes a script asynchronously using a new runtime context.
     /// </summary>
     public async Task<RuntimeContext> ExecuteAsync(string script, CancellationToken cancellationToken = default)
@@ -1254,7 +1275,10 @@ public sealed class RuleScriptEngine
         }
     }
 
-    private Interpreter CreateInterpreter(ScriptModule module, CancellationToken cancellationToken)
+    private Interpreter CreateInterpreter(
+        ScriptModule module,
+        CancellationToken cancellationToken,
+        RuleScriptHostTriggerDispatcher? hostTriggerDispatcher = null)
     {
         return new Interpreter(
             _builtinFunctions,
@@ -1275,7 +1299,8 @@ public sealed class RuleScriptEngine
             NotifyRuntimeEventAsync,
             GetBreakpoints,
             () => StepExecution,
-            cancellationToken);
+            cancellationToken,
+            hostTriggerDispatcher);
     }
 
     private static RuleScriptFunctionSymbol CreateHostFunctionSignature(

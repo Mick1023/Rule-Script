@@ -20,13 +20,13 @@ public sealed class DiagnosticsTests
     [Fact]
     public void Lexer_UnsupportedCharacter_IncludesLineAndColumn()
     {
-        var exception = Assert.Throws<SyntaxException>(() => new Lexer("var a = @;").Tokenize());
+        var exception = Assert.Throws<SyntaxException>(() => new Lexer("var a = $;").Tokenize());
 
         Assert.Equal(1, exception.Line);
         Assert.Equal(9, exception.Column);
-        Assert.Equal("@", exception.TokenText);
+        Assert.Equal("$", exception.TokenText);
         Assert.Contains("Line 1, Column 9", exception.Message);
-        Assert.Contains("@", exception.Message);
+        Assert.Contains("$", exception.Message);
     }
 
     [Fact]
