@@ -2337,7 +2337,7 @@ public sealed class Interpreter
             handlers.Select(CreateHostTriggerCandidate).ToArray(),
             location.Line,
             location.Column);
-        await InvokeUserFunctionAsync(
+        await InvokeHostTriggerFunctionAsync(
                 candidate.UserFunction!,
                 request.Arguments,
                 context,
@@ -2345,6 +2345,28 @@ public sealed class Interpreter
                 location.Column,
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private async Task<RuntimeValue> InvokeHostTriggerFunctionAsync(
+        UserFunction userFunction,
+        IReadOnlyList<RuntimeValue> arguments,
+        RuntimeContext context,
+        int? line,
+        int? column,
+        CancellationToken cancellationToken)
+    {
+        var wasParallelTask = _isParallelTask;
+        _isParallelTask = false;
+
+        try
+        {
+            return await InvokeUserFunctionAsync(userFunction, arguments, context, line, column, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _isParallelTask = wasParallelTask;
+        }
     }
 
     private static RuntimeOverloadCandidate CreateHostTriggerCandidate(UserFunction userFunction)

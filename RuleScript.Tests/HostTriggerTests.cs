@@ -199,6 +199,57 @@ public sealed class HostTriggerTests
     }
 
     [Fact]
+    public async Task Runtime_RemainsRunningAfterDispatchingSingleHostTrigger()
+    {
+        var observed = new List<string>();
+        var engine = new RuleScriptEngine { ExecutionTimeoutEnabled = false };
+        engine.RegisterFunction(
+            "Print",
+            [new RuleScriptParameterSymbol("message", RuleScriptValueType.String)],
+            RuleScriptValueType.Null,
+            args =>
+            {
+                lock (observed)
+                {
+                    observed.Add((string)args[0]!);
+                }
+
+                return null;
+            },
+            threadSafe: false);
+        var runtime = engine.CreateRuntime("""
+            parallel:
+                trigger task:
+                    dispatch;
+                end
+            end
+
+            @HostTrigger("HostPrint")
+            function HostPrint(msg: string):
+                Print(msg);
+            end
+            """);
+
+        var execution = runtime.StartAsync();
+        await runtime.TriggerAsync("HostPrint", ["hello"]);
+
+        await WaitForAsync(() =>
+        {
+            lock (observed)
+            {
+                return observed.Count == 1;
+            }
+        });
+        await Task.Delay(100);
+
+        Assert.Equal(RuleScriptRuntimeState.Running, runtime.State);
+        Assert.False(execution.IsCompleted);
+
+        await runtime.StopAsync();
+        await execution;
+    }
+
+    [Fact]
     public async Task Runtime_HostCannotTriggerUnmarkedFunction()
     {
         var engine = new RuleScriptEngine { ExecutionTimeoutEnabled = false };
