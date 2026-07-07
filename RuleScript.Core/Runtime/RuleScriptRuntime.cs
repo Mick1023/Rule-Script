@@ -16,6 +16,8 @@ public sealed record RuleScriptTriggerReceipt(long SequenceId, string Name);
 public sealed class RuleScriptRuntime
 {
     private readonly Func<CancellationToken, Interpreter> _interpreterFactory;
+    private readonly Action? _onStarting;
+    private readonly Action? _onCompleted;
     private readonly CancellationTokenSource _stopCancellation = new();
     private readonly object _sync = new();
     private Task? _executionTask;
@@ -25,12 +27,16 @@ public sealed class RuleScriptRuntime
         ScriptModule module,
         RuntimeContext context,
         Func<CancellationToken, Interpreter> interpreterFactory,
-        RuleScriptHostTriggerDispatcher dispatcher)
+        RuleScriptHostTriggerDispatcher dispatcher,
+        Action? onStarting = null,
+        Action? onCompleted = null)
     {
         Module = module ?? throw new ArgumentNullException(nameof(module));
         Context = context ?? throw new ArgumentNullException(nameof(context));
         _interpreterFactory = interpreterFactory ?? throw new ArgumentNullException(nameof(interpreterFactory));
         Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _onStarting = onStarting;
+        _onCompleted = onCompleted;
         HostTriggers = Module.HostTriggers
             .SelectMany(trigger => trigger.Value.Select(function => CreateHostTriggerSymbol(trigger.Key, function)))
             .OrderBy(function => function.HostTriggerMetadata!.Name, StringComparer.Ordinal)
@@ -134,6 +140,7 @@ public sealed class RuleScriptRuntime
 
         try
         {
+            _onStarting?.Invoke();
             await _interpreterFactory(linked.Token)
                 .ExecuteAsync(Module, Context, linked.Token)
                 .ConfigureAwait(false);
@@ -151,6 +158,7 @@ public sealed class RuleScriptRuntime
         finally
         {
             Dispatcher.Complete();
+            _onCompleted?.Invoke();
         }
     }
 

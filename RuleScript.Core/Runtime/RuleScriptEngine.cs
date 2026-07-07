@@ -1133,17 +1133,61 @@ public sealed class RuleScriptEngine
     /// </summary>
     public RuleScriptRuntime CreateRuntime(string script, RuntimeContext? context = null)
     {
+        return CreateRuntime(script, context, onStarting: null, onCompleted: null);
+    }
+
+    internal RuleScriptRuntime CreateRuntime(
+        string script,
+        RuntimeContext? context,
+        Action? onStarting,
+        Action? onCompleted)
+    {
         ArgumentNullException.ThrowIfNull(script);
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
         var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
         var module = BuildModule("<script>", statements, ResolveWorkingDirectory(), [], new(StringComparer.OrdinalIgnoreCase), isImported: false);
+        return CreateRuntime(module, context, onStarting, onCompleted);
+    }
+
+    /// <summary>
+    /// Creates a long-running runtime from a script file using the engine working directory, file extension, and import resolver.
+    /// </summary>
+    public RuleScriptRuntime CreateRuntimeFromFile(string path, RuntimeContext? context = null)
+    {
+        return CreateRuntimeFromFile(path, context, onStarting: null, onCompleted: null);
+    }
+
+    internal RuleScriptRuntime CreateRuntimeFromFile(
+        string path,
+        RuntimeContext? context,
+        Action? onStarting,
+        Action? onCompleted)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Script path cannot be empty.", nameof(path));
+        }
+
+        var fullPath = ResolveExecuteFilePath(path);
+        var module = LoadModule(fullPath, [], new(StringComparer.OrdinalIgnoreCase), originalPath: path, importingFile: null, isImported: false);
+        return CreateRuntime(module, context, onStarting, onCompleted);
+    }
+
+    private RuleScriptRuntime CreateRuntime(
+        ScriptModule module,
+        RuntimeContext? context,
+        Action? onStarting,
+        Action? onCompleted)
+    {
         var dispatcher = new RuleScriptHostTriggerDispatcher();
         return new RuleScriptRuntime(
             module,
             context ?? new RuntimeContext(),
             cancellationToken => CreateInterpreter(module, cancellationToken, dispatcher),
-            dispatcher);
+            dispatcher,
+            onStarting,
+            onCompleted);
     }
 
     /// <summary>

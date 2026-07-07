@@ -24,6 +24,51 @@ public sealed class DebugSessionTests
     }
 
     [Fact]
+    public async Task CreateRuntime_PausesAtBreakpointAndContinueCompletesExecution()
+    {
+        var engine = new RuleScriptEngine();
+        engine.AddBreakpoint(2);
+        var session = new RuleScriptDebugSession(engine);
+        var runtime = session.CreateRuntime("""
+            var value = 1;
+            value = 2;
+            result = value;
+            """);
+
+        var running = runtime.StartAsync();
+        var pause = await session.WaitForPauseAsync();
+
+        Assert.True(session.IsPaused);
+        Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
+
+        session.Continue();
+        await running;
+
+        Assert.Equal(2d, runtime.Context.Get<double>("result"));
+        Assert.False(session.IsPaused);
+    }
+
+    [Fact]
+    public async Task CreateRuntimeFromFile_UsesSelectedFolderWorkingDirectoryForMainRules()
+    {
+        using var project = new RuleScriptProject();
+        project.Write("main.rules", """
+            var value = 40;
+            result = value + 2;
+            """);
+        var engine = new RuleScriptEngine
+        {
+            WorkingDirectory = project.DirectoryPath
+        };
+        var session = new RuleScriptDebugSession(engine);
+
+        var runtime = session.CreateRuntimeFromFile("main.rules");
+        await runtime.StartAsync();
+
+        Assert.Equal(42d, runtime.Context.Get<double>("result"));
+    }
+
+    [Fact]
     public async Task Breakpoint_PausesBeforeStatementAndContinueCompletesExecution()
     {
         using var project = new RuleScriptProject();

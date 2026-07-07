@@ -102,6 +102,37 @@ public sealed class HostTriggerTests
     }
 
     [Fact]
+    public void Runtime_CanBeCreatedFromFileUsingEngineWorkingDirectory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-hosttrigger-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "main.rules"), """
+                @HostTrigger("OnScan")
+                function Handle(id: string):
+                    return id;
+                endfunction
+                """);
+            var engine = new RuleScriptEngine
+            {
+                WorkingDirectory = directory
+            };
+
+            var runtime = engine.CreateRuntimeFromFile("main");
+
+            var trigger = Assert.Single(runtime.HostTriggers);
+            Assert.Equal("Handle", trigger.Name);
+            Assert.Equal("OnScan", trigger.HostTriggerMetadata?.Name);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_HostTriggerQueueProcessesEventsInFifoOrder()
     {
         var observed = new List<double>();

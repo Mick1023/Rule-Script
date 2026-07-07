@@ -11,6 +11,7 @@ public sealed class RuleScriptDebugSession
     private TaskCompletionSource<RuleScriptExecutionDirective>? _resumeCompletion;
     private TaskCompletionSource<RuleScriptRuntimeEvent> _nextPause = CreatePauseCompletionSource();
     private bool _stopRequested;
+    private RuleScriptRuntime? _activeRuntime;
 
     /// <summary>
     /// Creates a debug session for an engine.
@@ -19,6 +20,83 @@ public sealed class RuleScriptDebugSession
     public RuleScriptDebugSession(RuleScriptEngine engine)
     {
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+    }
+
+    /// <summary>
+    /// Creates a long-running runtime that reports runtime events through this debug session.
+    /// </summary>
+    /// <param name="script">The script text to execute.</param>
+    /// <param name="context">The runtime context to use, or <see langword="null"/> to create one.</param>
+    /// <returns>A runtime configured with this session's debug event handling.</returns>
+    public RuleScriptRuntime CreateRuntime(string script, RuntimeContext? context = null)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        context ??= new RuntimeContext();
+        Context = context;
+        PrepareForRun();
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler = null;
+        Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>>? previousAsyncHandler = null;
+        RuleScriptRuntime? runtime = null;
+
+        runtime = _engine.CreateRuntime(
+            script,
+            context,
+            onStarting: () =>
+            {
+                previousHandler = _engine.RuntimeEventHandler;
+                previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
+            },
+            onCompleted: () =>
+            {
+                _engine.RuntimeEventHandler = previousHandler;
+                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+                ClearActiveRuntime(runtime);
+            });
+        SetActiveRuntime(runtime);
+        return runtime;
+    }
+
+    /// <summary>
+    /// Creates a long-running runtime from a script file using the engine working directory and import resolver.
+    /// </summary>
+    /// <param name="path">The script file path to execute.</param>
+    /// <param name="context">The runtime context to use, or <see langword="null"/> to create one.</param>
+    /// <returns>A runtime configured with this session's debug event handling.</returns>
+    public RuleScriptRuntime CreateRuntimeFromFile(string path, RuntimeContext? context = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Script path cannot be empty.", nameof(path));
+        }
+
+        context ??= new RuntimeContext();
+        Context = context;
+        PrepareForRun();
+        Func<RuleScriptRuntimeEvent, RuleScriptExecutionDirective>? previousHandler = null;
+        Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>>? previousAsyncHandler = null;
+        RuleScriptRuntime? runtime = null;
+
+        runtime = _engine.CreateRuntimeFromFile(
+            path,
+            context,
+            onStarting: () =>
+            {
+                previousHandler = _engine.RuntimeEventHandler;
+                previousAsyncHandler = _engine.RuntimeEventHandlerAsync;
+                _engine.RuntimeEventHandler = runtimeEvent => HandleRuntimeEvent(runtimeEvent, previousHandler);
+                _engine.RuntimeEventHandlerAsync = (runtimeEvent, token) => HandleRuntimeEventAsync(runtimeEvent, previousHandler, previousAsyncHandler, token);
+            },
+            onCompleted: () =>
+            {
+                _engine.RuntimeEventHandler = previousHandler;
+                _engine.RuntimeEventHandlerAsync = previousAsyncHandler;
+                ClearActiveRuntime(runtime);
+            });
+        SetActiveRuntime(runtime);
+        return runtime;
     }
 
     /// <summary>
@@ -179,6 +257,7 @@ public sealed class RuleScriptDebugSession
         TaskCompletionSource<RuleScriptExecutionDirective>? resumeCompletion;
         CancellationTokenSource? stopCancellation;
         TaskCompletionSource<RuleScriptRuntimeEvent>? pauseCompletion;
+        RuleScriptRuntime? activeRuntime;
 
         lock (_sync)
         {
@@ -188,6 +267,7 @@ public sealed class RuleScriptDebugSession
             resumeCompletion = _resumeCompletion;
             _resumeCompletion = null;
             stopCancellation = _stopCancellation;
+            activeRuntime = _activeRuntime;
             pauseCompletion = _nextPause;
             _nextPause = CreatePauseCompletionSource();
         }
@@ -197,11 +277,31 @@ public sealed class RuleScriptDebugSession
 
         try
         {
+            _ = activeRuntime?.StopAsync();
             stopCancellation?.Cancel();
             _engine.Stop();
         }
         catch (ObjectDisposedException)
         {
+        }
+    }
+
+    private void SetActiveRuntime(RuleScriptRuntime runtime)
+    {
+        lock (_sync)
+        {
+            _activeRuntime = runtime;
+        }
+    }
+
+    private void ClearActiveRuntime(RuleScriptRuntime? runtime)
+    {
+        lock (_sync)
+        {
+            if (ReferenceEquals(_activeRuntime, runtime))
+            {
+                _activeRuntime = null;
+            }
         }
     }
 
