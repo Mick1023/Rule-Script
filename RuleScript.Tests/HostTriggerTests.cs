@@ -203,20 +203,18 @@ public sealed class HostTriggerTests
     {
         var observed = new List<string>();
         var engine = new RuleScriptEngine { ExecutionTimeoutEnabled = false };
-        engine.RegisterFunction(
-            "Print",
-            [new RuleScriptParameterSymbol("message", RuleScriptValueType.String)],
-            RuleScriptValueType.Null,
-            args =>
+        engine.RuntimeEventHandlerAsync = (runtimeEvent, _) =>
+        {
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.Print)
             {
                 lock (observed)
                 {
-                    observed.Add((string)args[0]!);
+                    observed.Add((string)runtimeEvent.Value!);
                 }
+            }
 
-                return null;
-            },
-            threadSafe: false);
+            return Task.FromResult(RuleScriptExecutionDirective.Continue);
+        };
         var runtime = engine.CreateRuntime("""
             parallel:
                 trigger task:
