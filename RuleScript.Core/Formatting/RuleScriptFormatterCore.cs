@@ -93,6 +93,9 @@ internal static class RuleScriptFormatterCore
         private TokenType? _previous;
         private BlockKind? _pendingBlock;
         private TokenType? _lineHead;
+        private bool _attributeLineActive;
+        private bool _attributeAwaitingDeclaration;
+        private bool _attributeExportSeen;
 
         public void Write(Token token, TokenType? nextSignificantTokenType)
         {
@@ -122,13 +125,42 @@ internal static class RuleScriptFormatterCore
                 _lineHead = token.Type;
             }
 
+            if (_attributeAwaitingDeclaration
+                && token.Type is TokenType.Function or TokenType.Export
+                && IsAtStructuralDepth())
+            {
+                NewLine();
+                _attributeAwaitingDeclaration = false;
+                _attributeExportSeen = token.Type == TokenType.Export;
+            }
+            else if (_attributeExportSeen
+                && token.Type == TokenType.Function
+                && IsAtStructuralDepth())
+            {
+                _attributeExportSeen = false;
+            }
+
             if (TryGetBlockKind(token.Type, out var blockKind) && IsAtStructuralDepth())
             {
                 _pendingBlock = blockKind;
             }
 
+            if (token.Type == TokenType.At && IsAtStructuralDepth())
+            {
+                _attributeLineActive = true;
+            }
+
             WriteToken(token);
             UpdateDepth(token.Type);
+
+            if (_attributeLineActive
+                && token.Type == TokenType.RightParen
+                && IsAtStructuralDepth())
+            {
+                _previous = null;
+                _attributeLineActive = false;
+                _attributeAwaitingDeclaration = true;
+            }
 
             if (token.Type == TokenType.Semicolon)
             {
@@ -152,6 +184,9 @@ internal static class RuleScriptFormatterCore
             _atLineStart = true;
             _previous = null;
             _lineHead = null;
+            _attributeLineActive = false;
+            _attributeAwaitingDeclaration = false;
+            _attributeExportSeen = false;
         }
 
         public string GetText()
@@ -423,7 +458,8 @@ internal static class RuleScriptFormatterCore
                 or TokenType.LeftBracket
                 or TokenType.Dot
                 or TokenType.QuestionDot
-                or TokenType.Bang)
+                or TokenType.Bang
+                or TokenType.At)
             {
                 return false;
             }

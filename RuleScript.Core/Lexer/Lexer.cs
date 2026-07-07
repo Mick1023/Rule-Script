@@ -43,6 +43,7 @@ public sealed class Lexer
         ["endswitch"] = TokenType.EndSwitch,
         ["parallel"] = TokenType.Parallel,
         ["task"] = TokenType.Task,
+        ["trigger"] = TokenType.Trigger,
         ["endtask"] = TokenType.EndTask,
         ["endparallel"] = TokenType.EndParallel,
         ["and"] = TokenType.And,
@@ -109,6 +110,9 @@ public sealed class Lexer
                 break;
             case ':':
                 AddToken(TokenType.Colon);
+                break;
+            case '@':
+                AddToken(TokenType.At);
                 break;
             case '+':
                 AddToken(TokenType.Plus);

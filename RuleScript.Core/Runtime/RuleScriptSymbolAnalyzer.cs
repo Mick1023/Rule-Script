@@ -136,7 +136,8 @@ internal static class RuleScriptSymbolAnalyzer
                     function.NameColumn ?? function.Column),
                 RuleScriptSourceMapper.CreateRange(null, function.SourceSpan),
                 declaredReturnType: hasDeclaredReturnType ? declaredReturnType : null,
-                isReturnTypeDeclared: hasDeclaredReturnType);
+                isReturnTypeDeclared: hasDeclaredReturnType,
+                hostTriggerMetadata: CreateHostTriggerMetadata(function));
         }).ToList();
         var diagnostics = new List<RuleScriptDiagnostic>();
 
@@ -214,6 +215,13 @@ internal static class RuleScriptSymbolAnalyzer
                     : variable)
             .ToArray();
         return new RuleScriptTypedSymbols(variables, functions, visible, diagnostics);
+    }
+
+    private static RuleScriptHostTriggerMetadata? CreateHostTriggerMetadata(FunctionDeclarationStatement function)
+    {
+        return string.IsNullOrWhiteSpace(function.HostTriggerName)
+            ? null
+            : new RuleScriptHostTriggerMetadata(function.HostTriggerName);
     }
 
     private static RuleScriptFunctionReturnAnalysis InferFunctionReturnType(

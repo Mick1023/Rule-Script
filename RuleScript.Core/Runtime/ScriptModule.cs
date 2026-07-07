@@ -12,6 +12,8 @@ internal sealed class ScriptModule(string name, IReadOnlyList<Statement> stateme
 
     public Dictionary<string, List<UserFunction>> PublicFunctions { get; } = new(StringComparer.Ordinal);
 
+    public Dictionary<string, List<UserFunction>> HostTriggers { get; } = new(StringComparer.Ordinal);
+
     public Dictionary<string, ModuleConstant> Constants { get; } = new(StringComparer.Ordinal);
 
     public Dictionary<string, ModuleConstant> PublicConstants { get; } = new(StringComparer.Ordinal);
@@ -21,6 +23,10 @@ internal sealed class ScriptModule(string name, IReadOnlyList<Statement> stateme
     public void AddFunction(UserFunction function)
     {
         AddFunction(Functions, function);
+        if (!string.IsNullOrWhiteSpace(function.Declaration.HostTriggerName))
+        {
+            AddFunction(HostTriggers, function, function.Declaration.HostTriggerName);
+        }
     }
 
     public void AddPublicFunction(UserFunction function)
@@ -28,19 +34,23 @@ internal sealed class ScriptModule(string name, IReadOnlyList<Statement> stateme
         AddFunction(PublicFunctions, function);
     }
 
-    private static void AddFunction(IDictionary<string, List<UserFunction>> functions, UserFunction function)
+    private static void AddFunction(
+        IDictionary<string, List<UserFunction>> functions,
+        UserFunction function,
+        string? name = null)
     {
-        if (!functions.TryGetValue(function.Declaration.Name, out var overloads))
+        name ??= function.Declaration.Name;
+        if (!functions.TryGetValue(name, out var overloads))
         {
             overloads = [];
-            functions[function.Declaration.Name] = overloads;
+            functions[name] = overloads;
         }
 
         var signatureKey = RuleScriptFunctionSymbol.CreateSignatureKey(
-            function.Declaration.Name,
+            name,
             CreateParameterSymbols(function.Declaration));
         var existingIndex = overloads.FindIndex(candidate =>
-            RuleScriptFunctionSymbol.CreateSignatureKey(candidate.Declaration.Name, CreateParameterSymbols(candidate.Declaration)) == signatureKey);
+            RuleScriptFunctionSymbol.CreateSignatureKey(name, CreateParameterSymbols(candidate.Declaration)) == signatureKey);
 
         if (existingIndex >= 0)
         {

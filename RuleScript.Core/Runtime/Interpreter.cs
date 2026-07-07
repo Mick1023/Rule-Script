@@ -28,6 +28,7 @@ public sealed class Interpreter
     private readonly Func<RuleScriptSourceLocation, IReadOnlyList<RuleScriptBreakpoint>> _getBreakpoints;
     private readonly Func<bool> _isStepExecution;
     private readonly CancellationToken _cancellationToken;
+    private readonly RuleScriptHostTriggerDispatcher? _hostTriggerDispatcher;
     private readonly Stack<ScriptModule> _moduleStack = new();
     private readonly Stack<Dictionary<string, RuntimeValue>> _localScopes = new();
     private readonly Stack<int> _functionLoopBoundaries = new();
@@ -98,7 +99,8 @@ public sealed class Interpreter
         Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> notifyRuntimeEventAsync,
         Func<RuleScriptSourceLocation, IReadOnlyList<RuleScriptBreakpoint>> getBreakpoints,
         Func<bool> isStepExecution,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RuleScriptHostTriggerDispatcher? hostTriggerDispatcher = null)
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
@@ -111,6 +113,7 @@ public sealed class Interpreter
         _getBreakpoints = getBreakpoints ?? throw new ArgumentNullException(nameof(getBreakpoints));
         _isStepExecution = isStepExecution ?? throw new ArgumentNullException(nameof(isStepExecution));
         _cancellationToken = cancellationToken;
+        _hostTriggerDispatcher = hostTriggerDispatcher;
         _maxLoopIterations = maxLoopIterations > 0
             ? maxLoopIterations
             : throw new ArgumentOutOfRangeException(nameof(maxLoopIterations), "Max loop iterations must be greater than zero.");
@@ -1810,7 +1813,15 @@ public sealed class Interpreter
             isReturnTypeNullable: false,
             function.IsExported,
             function.Documentation,
-            RuleScriptFunctionKind.User);
+            RuleScriptFunctionKind.User,
+            hostTriggerMetadata: CreateHostTriggerMetadata(function));
+    }
+
+    private static RuleScriptHostTriggerMetadata? CreateHostTriggerMetadata(FunctionDeclarationStatement function)
+    {
+        return string.IsNullOrWhiteSpace(function.HostTriggerName)
+            ? null
+            : new RuleScriptHostTriggerMetadata(function.HostTriggerName);
     }
 
     private static RuleScriptFunctionSymbol CreateFallbackFunctionSymbol(string name, RuleScriptFunctionKind kind)
@@ -2169,6 +2180,11 @@ public sealed class Interpreter
 
     private RuntimeValue ExecuteTaskBlock(TaskBlockSyntax block, RuntimeContext context, bool collectResult)
     {
+        if (block.Kind == TaskBlockKind.Trigger)
+        {
+            throw new RuntimeException("trigger task blocks require asynchronous execution.", block.Line, block.Column, "TriggerTaskRequiresAsync");
+        }
+
         _moduleStack.Push(_mainModule);
         _localScopes.Push(new Dictionary<string, RuntimeValue>(StringComparer.Ordinal));
 
@@ -2198,6 +2214,12 @@ public sealed class Interpreter
         bool collectResult,
         CancellationToken cancellationToken)
     {
+        if (block.Kind == TaskBlockKind.Trigger)
+        {
+            await ExecuteTriggerTaskBlockAsync(block, context, cancellationToken).ConfigureAwait(false);
+            return RuntimeValue.Null;
+        }
+
         _moduleStack.Push(_mainModule);
         _localScopes.Push(new Dictionary<string, RuntimeValue>(StringComparer.Ordinal));
 
@@ -2242,12 +2264,113 @@ public sealed class Interpreter
             _notifyRuntimeEventAsync,
             _getBreakpoints,
             _isStepExecution,
-            cancellationToken)
+            cancellationToken,
+            _hostTriggerDispatcher)
         {
             _executionState = _executionState,
             _isParallelTask = true
         };
         return interpreter;
+    }
+
+    private async Task ExecuteTriggerTaskBlockAsync(
+        TaskBlockSyntax block,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        if (_hostTriggerDispatcher is null)
+        {
+            throw new RuntimeException("No host trigger queue is available for trigger task dispatch.", block.Line, block.Column, "MissingHostTriggerQueue");
+        }
+
+        _moduleStack.Push(_mainModule);
+        _localScopes.Push(new Dictionary<string, RuntimeValue>(StringComparer.Ordinal));
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                foreach (var statement in block.Body)
+                {
+                    if (IsDispatchStatement(statement))
+                    {
+                        await DispatchHostTriggerAsync(statement, context, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await ExecuteStatementAsync(statement, context, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _localScopes.Pop();
+            _moduleStack.Pop();
+        }
+    }
+
+    private static bool IsDispatchStatement(Statement statement)
+    {
+        return statement is ExpressionStatement { Expression: IdentifierExpression { Name: "dispatch" } };
+    }
+
+    private async Task DispatchHostTriggerAsync(
+        Statement dispatchStatement,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var location = GetStatementLocation(dispatchStatement);
+        var request = await _hostTriggerDispatcher!.DequeueAsync(cancellationToken).ConfigureAwait(false);
+        if (!CurrentModule.HostTriggers.TryGetValue(request.Name, out var handlers))
+        {
+            throw new RuntimeException(
+                $"Host trigger '{request.Name}' is not registered.",
+                location.Line,
+                location.Column,
+                request.Name);
+        }
+
+        var candidate = ResolveRuntimeOverload(
+            request.Name,
+            request.Arguments,
+            handlers.Select(CreateHostTriggerCandidate).ToArray(),
+            location.Line,
+            location.Column);
+        await InvokeUserFunctionAsync(
+                candidate.UserFunction!,
+                request.Arguments,
+                context,
+                location.Line,
+                location.Column,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static RuntimeOverloadCandidate CreateHostTriggerCandidate(UserFunction userFunction)
+    {
+        var triggerName = userFunction.Declaration.HostTriggerName ?? userFunction.Declaration.Name;
+        var signature = CreateUserFunctionSymbol(userFunction);
+        var triggerSignature = new RuleScriptFunctionSymbol(
+            triggerName,
+            signature.Parameters,
+            signature.ReturnType,
+            signature.IsReturnTypeNullable,
+            signature.IsExported,
+            signature.Documentation,
+            signature.Kind,
+            signature.Location,
+            signature.Range,
+            declaredReturnType: signature.DeclaredReturnType,
+            isReturnTypeDeclared: signature.IsReturnTypeDeclared,
+            hostTriggerMetadata: signature.HostTriggerMetadata);
+        return new RuntimeOverloadCandidate(
+            triggerSignature,
+            triggerSignature,
+            userFunction,
+            IsSyncHost: false,
+            IsAsyncHost: false,
+            IsBuiltin: false);
     }
 
     private static RuntimeException CreateParallelTaskException(int index, TaskBlockSyntax block, Exception exception)
