@@ -494,7 +494,16 @@ public sealed class RuleScriptEngine
     /// </summary>
     public RuleScriptAnalysisResult Analyze(string script)
     {
-        return AnalyzeCore(script, cursorLine: null, cursorColumn: null);
+        return AnalyzeCore(script, ResolveWorkingDirectory(), cursorLine: null, cursorColumn: null);
+    }
+
+    /// <summary>
+    /// Strictly analyzes script text using the specified source file to resolve relative imports.
+    /// Syntax errors are reported by throwing <see cref="SyntaxException"/>.
+    /// </summary>
+    public RuleScriptAnalysisResult Analyze(string script, string sourceFile)
+    {
+        return AnalyzeCore(script, ResolveAnalysisBaseDirectory(sourceFile), cursorLine: null, cursorColumn: null);
     }
 
     /// <summary>
@@ -503,24 +512,35 @@ public sealed class RuleScriptEngine
     public RuleScriptAnalysisResult Analyze(string script, int line, int column)
     {
         ValidateCursor(line, column);
-        return AnalyzeCore(script, line, column);
+        return AnalyzeCore(script, ResolveWorkingDirectory(), line, column);
     }
 
-    private RuleScriptAnalysisResult AnalyzeCore(string script, int? cursorLine, int? cursorColumn)
+    /// <summary>
+    /// Analyzes script text using the specified source file and returns variables visible at the specified cursor position.
+    /// </summary>
+    public RuleScriptAnalysisResult Analyze(string script, string sourceFile, int line, int column)
+    {
+        ValidateCursor(line, column);
+        return AnalyzeCore(script, ResolveAnalysisBaseDirectory(sourceFile), line, column);
+    }
+
+    private RuleScriptAnalysisResult AnalyzeCore(string script, string baseDirectory, int? cursorLine, int? cursorColumn)
     {
         ArgumentNullException.ThrowIfNull(script);
 
         var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
         var statements = new RuleScript.Core.Parser.Parser(tokens).Parse();
-        return AnalyzeParsedDocument(statements, cursorLine, cursorColumn);
+        return AnalyzeParsedDocument(statements, baseDirectory, cursorLine, cursorColumn);
     }
 
     internal RuleScriptAnalysisResult AnalyzeParsedDocument(
         IReadOnlyList<Statement> statements,
+        string? baseDirectory = null,
         int? cursorLine = null,
         int? cursorColumn = null)
     {
         ArgumentNullException.ThrowIfNull(statements);
+        baseDirectory ??= ResolveWorkingDirectory();
 
         var variables = new HashSet<string>(StringComparer.Ordinal);
         var userFunctions = new HashSet<string>(StringComparer.Ordinal);
@@ -529,7 +549,7 @@ public sealed class RuleScriptEngine
         CollectSymbols(statements, variables, userFunctions, importAliases);
         CollectImportedFunctionSymbols(
             statements,
-            ResolveWorkingDirectory(),
+            baseDirectory,
             userFunctions,
             new Stack<string>(),
             new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
@@ -539,6 +559,7 @@ public sealed class RuleScriptEngine
             variables,
             userFunctions,
             importAliases,
+            baseDirectory,
             cursorLine,
             cursorColumn);
     }
@@ -548,7 +569,15 @@ public sealed class RuleScriptEngine
     /// </summary>
     public RuleScriptAnalysisAttempt TryAnalyze(string script)
     {
-        return TryAnalyzeCore(script, cursorLine: null, cursorColumn: null);
+        return TryAnalyzeCore(script, ResolveWorkingDirectory(), cursorLine: null, cursorColumn: null);
+    }
+
+    /// <summary>
+    /// Best-effort analyzes script text using the specified source file to resolve relative imports.
+    /// </summary>
+    public RuleScriptAnalysisAttempt TryAnalyze(string script, string sourceFile)
+    {
+        return TryAnalyzeCore(script, ResolveAnalysisBaseDirectory(sourceFile), cursorLine: null, cursorColumn: null);
     }
 
     /// <summary>
@@ -557,10 +586,19 @@ public sealed class RuleScriptEngine
     public RuleScriptAnalysisAttempt TryAnalyze(string script, int line, int column)
     {
         ValidateCursor(line, column);
-        return TryAnalyzeCore(script, line, column);
+        return TryAnalyzeCore(script, ResolveWorkingDirectory(), line, column);
     }
 
-    private RuleScriptAnalysisAttempt TryAnalyzeCore(string script, int? cursorLine, int? cursorColumn)
+    /// <summary>
+    /// Best-effort analyzes script text using the specified source file and returns variables visible at the specified cursor position.
+    /// </summary>
+    public RuleScriptAnalysisAttempt TryAnalyze(string script, string sourceFile, int line, int column)
+    {
+        ValidateCursor(line, column);
+        return TryAnalyzeCore(script, ResolveAnalysisBaseDirectory(sourceFile), line, column);
+    }
+
+    private RuleScriptAnalysisAttempt TryAnalyzeCore(string script, string baseDirectory, int? cursorLine, int? cursorColumn)
     {
         ArgumentNullException.ThrowIfNull(script);
 
@@ -574,13 +612,14 @@ public sealed class RuleScriptEngine
 
             CollectSymbols(parseResult.Statements, variables, userFunctions, importAliases);
             CollectSymbolsFromTokens(tokens, variables, userFunctions, importAliases);
-            CollectImportedFunctionSymbolsFromTokens(tokens, userFunctions);
+            CollectImportedFunctionSymbolsFromTokens(tokens, baseDirectory, userFunctions);
 
             var symbols = CreateAnalysisResult(
                 parseResult.Statements,
                 variables,
                 userFunctions,
                 importAliases,
+                baseDirectory,
                 cursorLine,
                 cursorColumn,
                 fallbackVisibleToAll: !parseResult.Success);
@@ -595,7 +634,7 @@ public sealed class RuleScriptEngine
         }
         catch (SyntaxException exception)
         {
-            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script), [CreateDiagnostic(exception)], success: false);
+            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script, baseDirectory), [CreateDiagnostic(exception)], success: false);
         }
     }
 
@@ -655,13 +694,14 @@ public sealed class RuleScriptEngine
         IEnumerable<string> variableNames,
         IEnumerable<string> userFunctionNames,
         IEnumerable<string> importAliases,
+        string baseDirectory,
         int? cursorLine,
         int? cursorColumn,
         bool fallbackVisibleToAll = false)
     {
         var registeredHostFunctions = RegisteredFunctionSymbols;
         var builtinFunctions = _builtinFunctions.Signatures;
-        var importedConstantTypes = CollectImportedConstantTypes(statements, ResolveWorkingDirectory());
+        var importedConstantTypes = CollectImportedConstantTypes(statements, baseDirectory);
         var hostReturnTypes = registeredHostFunctions
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(
@@ -685,7 +725,7 @@ public sealed class RuleScriptEngine
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         CollectImportedFunctionSignatures(
             statements,
-            ResolveWorkingDirectory(),
+            baseDirectory,
             importedFunctionSymbols,
             new Stack<string>(),
             new Dictionary<string, IReadOnlyList<RuleScriptFunctionSymbol>>(StringComparer.OrdinalIgnoreCase));
@@ -1833,7 +1873,7 @@ public sealed class RuleScriptEngine
         }
     }
 
-    private RuleScriptAnalysisResult AnalyzeBestEffort(string script)
+    private RuleScriptAnalysisResult AnalyzeBestEffort(string script, string baseDirectory)
     {
         var variables = new HashSet<string>(StringComparer.Ordinal);
         var userFunctions = new HashSet<string>(StringComparer.Ordinal);
@@ -1843,12 +1883,12 @@ public sealed class RuleScriptEngine
         {
             var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
             CollectSymbolsFromTokens(tokens, variables, userFunctions, importAliases);
-            CollectImportedFunctionSymbolsFromTokens(tokens, userFunctions);
+            CollectImportedFunctionSymbolsFromTokens(tokens, baseDirectory, userFunctions);
         }
         catch (SyntaxException)
         {
             CollectSymbolsFromText(script, variables, userFunctions, importAliases);
-            CollectImportedFunctionSymbolsFromText(script, userFunctions);
+            CollectImportedFunctionSymbolsFromText(script, baseDirectory, userFunctions);
         }
 
         return new RuleScriptAnalysisResult(
@@ -1860,7 +1900,10 @@ public sealed class RuleScriptEngine
             builtinFunctions: _builtinFunctions.Signatures);
     }
 
-    private void CollectImportedFunctionSymbolsFromTokens(IReadOnlyList<Token> tokens, ISet<string> userFunctions)
+    private void CollectImportedFunctionSymbolsFromTokens(
+        IReadOnlyList<Token> tokens,
+        string baseDirectory,
+        ISet<string> userFunctions)
     {
         var importStack = new Stack<string>();
         var moduleCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
@@ -1885,11 +1928,17 @@ public sealed class RuleScriptEngine
                 }
             }
 
-            TryCollectImportedFunctionSymbols(pathToken.Literal?.ToString() ?? pathToken.Lexeme, alias, userFunctions, importStack, moduleCache);
+            TryCollectImportedFunctionSymbols(
+                pathToken.Literal?.ToString() ?? pathToken.Lexeme,
+                alias,
+                baseDirectory,
+                userFunctions,
+                importStack,
+                moduleCache);
         }
     }
 
-    private void CollectImportedFunctionSymbolsFromText(string script, ISet<string> userFunctions)
+    private void CollectImportedFunctionSymbolsFromText(string script, string baseDirectory, ISet<string> userFunctions)
     {
         var importStack = new Stack<string>();
         var moduleCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
@@ -1916,20 +1965,21 @@ public sealed class RuleScriptEngine
             var path = line[(quoteStart + 1)..quoteEnd];
             var suffix = line[(quoteEnd + 1)..].TrimStart();
             var alias = TryReadIdentifierAfterKeyword(suffix, "as", out var name) ? name : null;
-            TryCollectImportedFunctionSymbols(path, alias, userFunctions, importStack, moduleCache);
+            TryCollectImportedFunctionSymbols(path, alias, baseDirectory, userFunctions, importStack, moduleCache);
         }
     }
 
     private void TryCollectImportedFunctionSymbols(
         string path,
         string? alias,
+        string baseDirectory,
         ISet<string> userFunctions,
         Stack<string> importStack,
         IDictionary<string, IReadOnlyList<string>> moduleCache)
     {
         try
         {
-            CollectImportedFunctionSymbols(path, alias, ResolveWorkingDirectory(), userFunctions, importStack, moduleCache);
+            CollectImportedFunctionSymbols(path, alias, baseDirectory, userFunctions, importStack, moduleCache);
         }
         catch (RuleScriptException)
         {
@@ -2206,6 +2256,16 @@ public sealed class RuleScriptEngine
         return string.IsNullOrWhiteSpace(WorkingDirectory)
             ? Environment.CurrentDirectory
             : ImportResolver.GetFullPath(WorkingDirectory);
+    }
+
+    private string ResolveAnalysisBaseDirectory(string sourceFile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceFile);
+
+        var resolvedFile = ImportResolver.GetFullPath(Path.IsPathRooted(sourceFile)
+            ? sourceFile
+            : Path.Combine(ResolveWorkingDirectory(), sourceFile));
+        return Path.GetDirectoryName(resolvedFile) ?? ResolveWorkingDirectory();
     }
 
     private RuleScriptExecutionDirective NotifyRuntimeEvent(RuleScriptRuntimeEvent runtimeEvent)

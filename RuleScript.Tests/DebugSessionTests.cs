@@ -103,11 +103,17 @@ public sealed class DebugSessionTests
     public async Task Breakpoint_PausesWhenEngineHasAsyncRuntimeEventHandler()
     {
         var asyncHandlerEvents = new List<RuleScriptRuntimeEventKind>();
+        var breakpointObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var engine = new RuleScriptEngine();
         engine.RuntimeEventHandlerAsync = async (runtimeEvent, _) =>
         {
             await Task.Yield();
             asyncHandlerEvents.Add(runtimeEvent.Kind);
+            if (runtimeEvent.Kind == RuleScriptRuntimeEventKind.BreakpointHit)
+            {
+                breakpointObserved.TrySetResult();
+            }
+
             return RuleScriptExecutionDirective.Continue;
         };
         engine.AddBreakpoint(5);
@@ -125,6 +131,7 @@ public sealed class DebugSessionTests
 
         Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
         Assert.Equal(5, pause.Location.Line);
+        await breakpointObserved.Task.WaitAsync(TestTimeout());
         Assert.Contains(RuleScriptRuntimeEventKind.Print, asyncHandlerEvents);
         Assert.Contains(RuleScriptRuntimeEventKind.BreakpointHit, asyncHandlerEvents);
         Assert.False(session.Context?.Contains("result"));
