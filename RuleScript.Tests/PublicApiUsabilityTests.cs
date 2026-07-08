@@ -273,6 +273,31 @@ public sealed class PublicApiUsabilityTests
     }
 
     [Fact]
+    public void Analyze_WithSourceFile_ResolvesImportsRelativeToSourceFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
+        var eqpDirectory = Path.Combine(directory, "eqp");
+        Directory.CreateDirectory(eqpDirectory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(eqpDirectory, "port.rules"), "export function Open(): return true; endfunction");
+            var craneScript = """
+                import "port" as port;
+                """;
+
+            var engine = new RuleScriptEngine { WorkingDirectory = directory };
+            var result = engine.Analyze(craneScript, Path.Combine("eqp", "crane.rules"));
+
+            Assert.Contains("port.Open", result.FunctionNames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TryAnalyze_IncompleteScript_IncludesImportedFunctions()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
@@ -290,6 +315,33 @@ public sealed class PublicApiUsabilityTests
 
             Assert.False(result.Success);
             Assert.Contains("Shared", result.Symbols.FunctionNames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryAnalyze_WithSourceFile_ResolvesImportsRelativeToSourceFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"rulescript-analysis-{Guid.NewGuid():N}");
+        var eqpDirectory = Path.Combine(directory, "eqp");
+        Directory.CreateDirectory(eqpDirectory);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(eqpDirectory, "port.rules"), "export function Open(): return true; endfunction");
+            var craneScript = """
+                import "port" as port;
+                var unfinished =
+                """;
+
+            var engine = new RuleScriptEngine { WorkingDirectory = directory };
+            var result = engine.TryAnalyze(craneScript, Path.Combine("eqp", "crane.rules"));
+
+            Assert.False(result.Success);
+            Assert.Contains("port.Open", result.Symbols.FunctionNames);
         }
         finally
         {

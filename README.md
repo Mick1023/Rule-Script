@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.10.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.10.0)
+[![Stable Version](https://img.shields.io/badge/stable-v1.10.1-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.10.1)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the stable package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.10.0
+dotnet add package RuleScript.Core --version 1.10.1
 ```
 
 ## Quick Start
@@ -99,15 +99,16 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
+- [v1.10.1 release notes](docs/releases/v1.10.1.md)
+- [v1.10.1 API reference](docs/api/v1.10.1.md)
 - [v1.10.0 release notes](docs/releases/v1.10.0.md)
-- [v1.10.0 API reference](docs/api/v1.10.0.md)
 - [v1.9.0 release notes](docs/releases/v1.9.0.md)
 - [v1.8.0 maintenance notes](docs/releases/v1.8.0.md)
 - [v1.7.0 release notes](docs/releases/v1.7.0.md)
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.10.0 release notes](docs/releases/v1.10.0.md) for HostTrigger runtimes and long-running dispatch. See the [v1.9.0 release notes](docs/releases/v1.9.0.md) for strongly typed functions and overload resolution.
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.10.1 release notes](docs/releases/v1.10.1.md) for source-file-aware analysis imports. See the [v1.10.0 release notes](docs/releases/v1.10.0.md) for HostTrigger runtimes and long-running dispatch.
 
 ```bash
 dotnet build RuleScript.sln
