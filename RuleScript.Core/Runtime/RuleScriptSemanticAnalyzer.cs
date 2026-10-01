@@ -141,24 +141,24 @@ internal static class RuleScriptSemanticAnalyzer
             }
 
             var returnShape = AnalyzeFunctionReturnShape(function.Body, locals, globals, functionResolver);
+            var untypedParameters = function.ParameterDefinitions
+                .Where(parameter => parameter.TypeName is null)
+                .Select(parameter => parameter.Name)
+                .ToArray();
+            if (untypedParameters.Length > 0)
+            {
+                diagnostics.Add(Create(
+                    RuleScriptDiagnosticCodes.TypeMismatch,
+                    RuleScriptDiagnosticSeverity.Warning,
+                    CreateMissingParameterTypesMessage(function.Name, untypedParameters, returnContext is not null),
+                    function.Line,
+                    function.Column,
+                    function.Name,
+                    function.SourceSpan));
+            }
+
             if (returnContext is { } declaredContext)
             {
-                var untypedParameters = function.ParameterDefinitions
-                    .Where(parameter => parameter.TypeName is null)
-                    .Select(parameter => parameter.Name)
-                    .ToArray();
-                if (untypedParameters.Length > 0)
-                {
-                    diagnostics.Add(Create(
-                        RuleScriptDiagnosticCodes.TypeMismatch,
-                        RuleScriptDiagnosticSeverity.Warning,
-                        CreateMissingParameterTypesMessage(function.Name, untypedParameters),
-                        function.Line,
-                        function.Column,
-                        function.Name,
-                        function.SourceSpan));
-                }
-
                 if (declaredContext.DeclaredReturnType != RuleScriptValueType.Void
                     && !returnShape.AlwaysReturns)
                 {
@@ -197,9 +197,20 @@ internal static class RuleScriptSemanticAnalyzer
         return diagnostics;
     }
 
-    private static string CreateMissingParameterTypesMessage(string functionName, IReadOnlyList<string> parameterNames)
+    private static string CreateMissingParameterTypesMessage(
+        string functionName,
+        IReadOnlyList<string> parameterNames,
+        bool hasDeclaredReturnType)
     {
         var quotedNames = string.Join(", ", parameterNames.Select(parameter => $"'{parameter}'"));
+
+        if (!hasDeclaredReturnType)
+        {
+            return parameterNames.Count == 1
+                ? $"Function '{functionName}' parameter {quotedNames} has no declared type. Consider adding a parameter type annotation."
+                : $"Function '{functionName}' parameters {quotedNames} have no declared type. Consider adding parameter type annotations.";
+        }
+
         return parameterNames.Count == 1
             ? $"Function '{functionName}' declares a return type but parameter {quotedNames} has no declared type. Consider adding a parameter type annotation."
             : $"Function '{functionName}' declares a return type but parameters {quotedNames} have no declared type. Consider adding parameter type annotations.";

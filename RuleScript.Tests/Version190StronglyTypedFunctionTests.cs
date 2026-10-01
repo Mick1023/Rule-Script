@@ -165,6 +165,36 @@ public sealed class Version190StronglyTypedFunctionTests
     }
 
     [Fact]
+    public void Analyze_UntypedParameterWarnsWithoutReturnType()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            function Test(a):
+            endfunction
+            """);
+
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Warning
+            && value.Message == "Function 'Test' parameter 'a' has no declared type. Consider adding a parameter type annotation.");
+    }
+
+    [Fact]
+    public void Analyze_TypedParameterIsCheckedWithoutReturnStatement()
+    {
+        var result = new RuleScriptEngine().TryAnalyze("""
+            function Test(a: number):
+            endfunction
+
+            var value = Test("wrong");
+            """);
+
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == RuleScriptDiagnosticCodes.TypeMismatch
+            && value.Severity == RuleScriptDiagnosticSeverity.Error
+            && value.Message == "Function 'Test' argument 'a' expects number, but found string.");
+    }
+
+    [Fact]
     public void Analyze_FunctionOverloadsResolveByArgumentType()
     {
         var result = new RuleScriptEngine().TryAnalyze("""
