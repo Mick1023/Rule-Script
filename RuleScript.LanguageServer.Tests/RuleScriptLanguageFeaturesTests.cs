@@ -101,6 +101,53 @@ public sealed class RuleScriptLanguageFeaturesTests
     }
 
     [Fact]
+    public void GetCompletions_MapsKindsTextEditsAndSnippetFormat()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(Source + "\nvar next = to");
+
+        var items = RuleScriptLanguageFeatures.GetCompletions(document, new Position(6, 13), snippetSupport: true).Items.ToArray();
+
+        var total = Assert.Single(items, item => item.Label == "total");
+        Assert.Equal(CompletionItemKind.Variable, total.Kind);
+        Assert.Equal(new Position(6, 11), total.TextEdit!.TextEdit!.Range.Start);
+        Assert.Equal(new Position(6, 13), total.TextEdit.TextEdit.Range.End);
+
+        var addOne = Assert.Single(items, item => item.Label == "AddOne");
+        Assert.Equal(CompletionItemKind.Function, addOne.Kind);
+        Assert.Equal("Adds one.", addOne.Documentation!.MarkupContent!.Value);
+        Assert.True(string.CompareOrdinal(total.SortText, addOne.SortText) < 0);
+
+        var snippet = Assert.Single(items, item => item.Label == "foreach" && item.Kind == CompletionItemKind.Snippet);
+        Assert.Equal(InsertTextFormat.Snippet, snippet.InsertTextFormat);
+    }
+
+    [Fact]
+    public void GetCompletions_OmitsSnippetsWhenClientCannotExpandThem()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(Source);
+
+        var items = RuleScriptLanguageFeatures.GetCompletions(document, new Position(0, 0), snippetSupport: false).Items;
+
+        Assert.DoesNotContain(items, item => item.InsertTextFormat == InsertTextFormat.Snippet);
+        Assert.Contains(items, item => item.Label == "foreach" && item.Kind == CompletionItemKind.Keyword);
+    }
+
+    [Fact]
+    public void GetSignatureHelp_MapsParameterOffsets()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(Source + "\nvar next = AddOne(");
+
+        var help = RuleScriptLanguageFeatures.GetSignatureHelp(document, new Position(6, 18));
+
+        Assert.NotNull(help);
+        var signature = Assert.Single(help.Signatures);
+        Assert.Equal("AddOne(value: number) -> number", signature.Label);
+        var parameter = Assert.Single(signature.Parameters!);
+        Assert.Equal((7, 20), parameter.Label.Range);
+        Assert.Equal(0, help.ActiveParameter);
+    }
+
+    [Fact]
     public void Format_ReplacesWholeDocumentOnlyWhenChanged()
     {
         var edit = Assert.Single(RuleScriptLanguageFeatures.Format("var   a=1;"));

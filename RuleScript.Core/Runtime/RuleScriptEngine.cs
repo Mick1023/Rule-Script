@@ -618,6 +618,14 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
+    /// Tolerantly analyzes a document and reports the variables visible at a 1-based cursor position.
+    /// </summary>
+    internal RuleScriptAnalysisResult AnalyzeAtCursor(string script, string baseDirectory, int line, int column)
+    {
+        return TryAnalyzeTokensCore(script, baseDirectory, line, column).Attempt.Symbols;
+    }
+
+    /// <summary>
     /// Resolves the directory used for relative imports of a document, preferring its source file location.
     /// </summary>
     internal string ResolveDocumentBaseDirectory(string? sourceFile)

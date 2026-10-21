@@ -152,6 +152,29 @@ public static class RuleScriptLanguageService
     }
 
     /// <summary>
+    /// Gets completion candidates for the requested 1-based cursor position: in-scope variables and parameters,
+    /// functions, import aliases, keywords, and snippets, or import members after <c>alias.</c>.
+    /// </summary>
+    public static RuleScriptCompletionList GetCompletions(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidatePosition(line, column);
+
+        return RuleScriptCompletionAnalyzer.GetCompletions(document, line, column);
+    }
+
+    /// <summary>
+    /// Gets signature help for the function call surrounding the requested 1-based cursor position, or null outside a known call.
+    /// </summary>
+    public static RuleScriptSignatureHelp? GetSignatureHelp(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidatePosition(line, column);
+
+        return RuleScriptSignatureHelpAnalyzer.GetSignatureHelp(document, line, column);
+    }
+
+    /// <summary>
     /// Gets the hierarchical outline of functions, variables, constants, and imports declared in a document.
     /// </summary>
     public static IReadOnlyList<RuleScriptDocumentSymbol> GetDocumentSymbols(RuleScriptDocumentAnalysisResult document)
@@ -181,6 +204,12 @@ public static class RuleScriptLanguageService
         var parser = new Parser.Parser(new Lexer.Lexer(source).Tokenize());
         _ = parser.Parse();
         return parser.Regions;
+    }
+
+    private static void ValidatePosition(int line, int column)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(line, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(column, 1);
     }
 
     /// <summary>

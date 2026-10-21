@@ -176,7 +176,13 @@ internal sealed class RuleScriptNavigationAnalyzer
                     VisitStatements(whileStatement.Body, scope, file);
                     break;
                 case ForeachStatement foreachStatement:
-                    AddVariableDeclaration(foreachStatement.VariableName, foreachStatement.Line, foreachStatement.Column, null, scope, file);
+                    AddVariableDeclaration(
+                        foreachStatement.VariableName,
+                        foreachStatement.VariableLine ?? foreachStatement.Line,
+                        foreachStatement.VariableColumn ?? foreachStatement.Column,
+                        null,
+                        scope,
+                        file);
                     VisitExpression(foreachStatement.Iterable, scope, file);
                     VisitStatements(foreachStatement.Body, scope, file);
                     break;
@@ -294,15 +300,10 @@ internal sealed class RuleScriptNavigationAnalyzer
                 var function = FindFunctionSymbol(declaration);
                 var parameters = declaration.Parameters ?? function?.Parameters ?? [];
                 var returnType = function?.ReturnType ?? declaration.ReturnType;
-                var prefix = function?.Kind switch
-                {
-                    RuleScriptFunctionKind.Host => "host function",
-                    RuleScriptFunctionKind.Builtin => "builtin function",
-                    _ when declaration.Kind == RuleScriptSymbolKind.HostFunction => "host function",
-                    _ => "function"
-                };
-                var signature = $"{prefix} {declaration.Name}({string.Join(", ", parameters.Select(parameter => FormatTyped(parameter.Name, parameter.Type)))})"
-                    + (IsKnownType(returnType) ? $" -> {RuleScriptTypeFacts.ToDisplayName(returnType)}" : string.Empty);
+                var prefix = function is null && declaration.Kind == RuleScriptSymbolKind.HostFunction
+                    ? RuleScriptSignatureFormatter.GetFunctionPrefix(RuleScriptFunctionKind.Host)
+                    : RuleScriptSignatureFormatter.GetFunctionPrefix(function?.Kind);
+                var signature = $"{prefix} {RuleScriptSignatureFormatter.FormatSignature(declaration.Name, parameters, returnType).Label}";
                 return new RuleScriptHoverInfo(
                     declaration.Name,
                     declaration.Kind,
@@ -341,12 +342,7 @@ internal sealed class RuleScriptNavigationAnalyzer
             ?? candidates.FirstOrDefault();
     }
 
-    private static string FormatTyped(string name, RuleScriptValueType type)
-    {
-        return IsKnownType(type) ? $"{name}: {RuleScriptTypeFacts.ToDisplayName(type)}" : name;
-    }
-
-    private static bool IsKnownType(RuleScriptValueType type) => type != RuleScriptValueType.Unknown;
+    private static string FormatTyped(string name, RuleScriptValueType type) => RuleScriptSignatureFormatter.FormatTyped(name, type);
 
     private static RuleScriptValueType ParseTypeName(string? typeName)
     {

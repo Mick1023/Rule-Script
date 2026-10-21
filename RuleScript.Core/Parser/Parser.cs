@@ -438,7 +438,13 @@ public sealed class Parser
         var body = ParseBlock(TokenType.EndForeach, TokenType.End);
 
         ConsumeBlockEnd(TokenType.EndForeach, "endforeach", "foreach statement");
-        return Complete(new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column), foreachToken);
+        return Complete(
+            new ForeachStatement(variable.Lexeme, iterable, body, foreachToken.Line, foreachToken.Column)
+            {
+                VariableLine = variable.Line,
+                VariableColumn = variable.Column
+            },
+            foreachToken);
     }
 
     private SwitchStatement ParseSwitchStatement()

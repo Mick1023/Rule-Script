@@ -43,7 +43,8 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
                 _publishedSignal.Release();
             }));
 
-        await Task.WhenAll(_client.Initialize(timeout.Token), serverTask);
+        // OmniSharp waits forever when server initialization throws, so bound it to surface the failure.
+        await Task.WhenAll(_client.Initialize(timeout.Token), serverTask).WaitAsync(TimeSpan.FromSeconds(30));
         _server = await serverTask;
     }
 
@@ -51,7 +52,15 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
     {
         if (_client is not null)
         {
-            await _client.Shutdown();
+            try
+            {
+                // A failed test must not hang here waiting for a server that stopped responding.
+                await _client.Shutdown().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+            }
+
             _client.Dispose();
         }
 
@@ -70,6 +79,8 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
         Assert.NotNull(capabilities.DocumentSymbolProvider);
         Assert.NotNull(capabilities.FoldingRangeProvider);
         Assert.NotNull(capabilities.DocumentFormattingProvider);
+        Assert.Contains(".", capabilities.CompletionProvider!.TriggerCharacters!);
+        Assert.Contains("(", capabilities.SignatureHelpProvider!.TriggerCharacters!);
         await Task.CompletedTask;
     }
 
@@ -121,6 +132,20 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
 
         var folding = await _client.TextDocument.RequestFoldingRange(new FoldingRangeRequestParam { TextDocument = Uri });
         Assert.Contains(folding!, range => range.StartLine == 1);
+
+        var completion = await _client.TextDocument.RequestCompletion(new CompletionParams
+        {
+            TextDocument = Uri,
+            Position = new Position(5, 0)
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains(completion, item => item.Label == "AddOne");
+
+        var signatureHelp = await _client.TextDocument.RequestSignatureHelp(new SignatureHelpParams
+        {
+            TextDocument = Uri,
+            Position = new Position(5, 19)
+        }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("AddOne(value: number) -> number", Assert.Single(signatureHelp!.Signatures).Label);
     }
 
     [Fact]

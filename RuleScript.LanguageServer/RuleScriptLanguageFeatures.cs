@@ -82,6 +82,58 @@ internal static partial class RuleScriptLanguageFeatures
         };
     }
 
+    public static CompletionList GetCompletions(RuleScriptDocumentAnalysisResult document, Position position, bool snippetSupport)
+    {
+        var (line, column) = PositionMapper.ToRuleScript(position);
+        var completions = RuleScriptLanguageService.GetCompletions(document, line, column);
+        var range = PositionMapper.ToLsp(completions.ReplaceRange);
+
+        var items = completions.Items
+            .Where(item => snippetSupport || !item.IsSnippet)
+            .Select(item => new CompletionItem
+            {
+                Label = item.Label,
+                Kind = ToLspKind(item.Kind),
+                Detail = item.Detail,
+                Documentation = string.IsNullOrWhiteSpace(item.Documentation)
+                    ? null
+                    : new StringOrMarkupContent(new MarkupContent { Kind = MarkupKind.Markdown, Value = item.Documentation }),
+                InsertTextFormat = item.IsSnippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+                TextEdit = new TextEditOrInsertReplaceEdit(new TextEdit { Range = range, NewText = item.InsertText }),
+                SortText = $"{GetSortGroup(item.Kind)}_{item.Label}"
+            });
+
+        return new CompletionList(items);
+    }
+
+    public static SignatureHelp? GetSignatureHelp(RuleScriptDocumentAnalysisResult document, Position position)
+    {
+        var (line, column) = PositionMapper.ToRuleScript(position);
+        var help = RuleScriptLanguageService.GetSignatureHelp(document, line, column);
+
+        if (help is null)
+        {
+            return null;
+        }
+
+        return new SignatureHelp
+        {
+            Signatures = new Container<SignatureInformation>(help.Signatures.Select(signature => new SignatureInformation
+            {
+                Label = signature.Label,
+                Documentation = string.IsNullOrWhiteSpace(signature.Documentation)
+                    ? null
+                    : new StringOrMarkupContent(new MarkupContent { Kind = MarkupKind.Markdown, Value = signature.Documentation }),
+                Parameters = new Container<ParameterInformation>(signature.Parameters.Select(parameter => new ParameterInformation
+                {
+                    Label = new ParameterInformationLabel((parameter.Start, parameter.End))
+                }))
+            })),
+            ActiveSignature = help.ActiveSignature,
+            ActiveParameter = help.ActiveParameter
+        };
+    }
+
     public static IReadOnlyList<DocumentSymbol> GetDocumentSymbols(RuleScriptDocumentAnalysisResult document)
     {
         return RuleScriptLanguageService.GetDocumentSymbols(document).Select(ToLspSymbol).ToArray();
@@ -170,6 +222,37 @@ internal static partial class RuleScriptLanguageFeatures
         var file = diagnostic.SourceFile ?? diagnostic.Range?.File;
         return file is null
             || (filePath is not null && string.Equals(Path.GetFullPath(file), Path.GetFullPath(filePath), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static CompletionItemKind ToLspKind(RuleScriptCompletionItemKind kind)
+    {
+        return kind switch
+        {
+            RuleScriptCompletionItemKind.Snippet => CompletionItemKind.Snippet,
+            RuleScriptCompletionItemKind.Variable or RuleScriptCompletionItemKind.Parameter => CompletionItemKind.Variable,
+            RuleScriptCompletionItemKind.Constant => CompletionItemKind.Constant,
+            RuleScriptCompletionItemKind.Function
+                or RuleScriptCompletionItemKind.HostFunction
+                or RuleScriptCompletionItemKind.BuiltinFunction => CompletionItemKind.Function,
+            RuleScriptCompletionItemKind.Module => CompletionItemKind.Module,
+            _ => CompletionItemKind.Keyword
+        };
+    }
+
+    /// <summary>
+    /// Orders symbols in scope before functions, then modules, keywords, and snippets.
+    /// </summary>
+    private static int GetSortGroup(RuleScriptCompletionItemKind kind)
+    {
+        return kind switch
+        {
+            RuleScriptCompletionItemKind.Parameter or RuleScriptCompletionItemKind.Variable or RuleScriptCompletionItemKind.Constant => 0,
+            RuleScriptCompletionItemKind.Function or RuleScriptCompletionItemKind.Attribute => 1,
+            RuleScriptCompletionItemKind.HostFunction or RuleScriptCompletionItemKind.BuiltinFunction => 2,
+            RuleScriptCompletionItemKind.Module => 3,
+            RuleScriptCompletionItemKind.Keyword => 4,
+            _ => 5
+        };
     }
 
     private static DocumentSymbol ToLspSymbol(RuleScriptDocumentSymbol symbol)
