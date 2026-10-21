@@ -15,6 +15,9 @@ public sealed class Lexer
     private bool _includeComments;
     private List<SyntaxException>? _diagnostics;
 
+    // One entry per open template substitution: the number of unmatched '{' inside it.
+    private readonly Stack<int> _templateBraceDepths = new();
+
     private static readonly Dictionary<string, TokenType> Keywords = new(StringComparer.Ordinal)
     {
         ["var"] = TokenType.Var,
@@ -101,6 +104,11 @@ public sealed class Lexer
             ScanToken();
         }
 
+        if (_templateBraceDepths.Count > 0)
+        {
+            Report(new SyntaxException("Unterminated template string substitution.", _line, _column, "${"));
+        }
+
         _tokens.Add(new Token(TokenType.EndOfFile, string.Empty, null, _line, _column));
         return _tokens;
     }
@@ -124,9 +132,26 @@ public sealed class Lexer
                 AddToken(TokenType.RightBracket);
                 break;
             case '{':
+                if (_templateBraceDepths.Count > 0)
+                {
+                    _templateBraceDepths.Push(_templateBraceDepths.Pop() + 1);
+                }
+
                 AddToken(TokenType.LeftBrace);
                 break;
             case '}':
+                if (_templateBraceDepths.TryPeek(out var depth))
+                {
+                    _templateBraceDepths.Pop();
+                    if (depth == 0)
+                    {
+                        ScanTemplateText(isHead: false);
+                        break;
+                    }
+
+                    _templateBraceDepths.Push(depth - 1);
+                }
+
                 AddToken(TokenType.RightBrace);
                 break;
             case '.':
@@ -145,16 +170,16 @@ public sealed class Lexer
                 AddToken(TokenType.At);
                 break;
             case '+':
-                AddToken(TokenType.Plus);
+                AddToken(Match('=') ? TokenType.PlusAssign : TokenType.Plus);
                 break;
             case '-':
-                AddToken(Match('>') ? TokenType.Arrow : TokenType.Minus);
+                AddToken(Match('>') ? TokenType.Arrow : Match('=') ? TokenType.MinusAssign : TokenType.Minus);
                 break;
             case '*':
-                AddToken(TokenType.Star);
+                AddToken(Match('=') ? TokenType.StarAssign : TokenType.Star);
                 break;
             case '%':
-                AddToken(TokenType.Percent);
+                AddToken(Match('=') ? TokenType.PercentAssign : TokenType.Percent);
                 break;
             case '!':
                 AddToken(Match('=') ? TokenType.BangEqual : TokenType.Bang);
@@ -179,7 +204,7 @@ public sealed class Lexer
                 }
                 else
                 {
-                    Report(new SyntaxException("Expected '?' or '.' after '?'.", _line, _tokenColumn, "?"));
+                    AddToken(TokenType.Question);
                 }
 
                 break;
@@ -204,11 +229,14 @@ public sealed class Lexer
                 }
                 else
                 {
-                    AddToken(TokenType.Slash);
+                    AddToken(Match('=') ? TokenType.SlashAssign : TokenType.Slash);
                 }
                 break;
             case '"':
                 ScanString();
+                break;
+            case '`':
+                ScanTemplateText(isHead: true);
                 break;
             case ' ':
             case '\r':
@@ -281,6 +309,61 @@ public sealed class Lexer
 
         // Recovery keeps the partial literal so the parser can continue with the rest of the line.
         AddToken(TokenType.String, value.ToString());
+    }
+
+    /// <summary>
+    /// Scans template text after an opening backtick or after the '}' that closes a substitution,
+    /// up to the closing backtick or the next <c>${</c>.
+    /// </summary>
+    private void ScanTemplateText(bool isHead)
+    {
+        var value = new System.Text.StringBuilder();
+
+        while (!IsAtEnd() && Peek() != '\n')
+        {
+            var c = Peek();
+
+            if (c == '`')
+            {
+                Advance();
+                AddToken(isHead ? TokenType.String : TokenType.TemplateTail, value.ToString());
+                return;
+            }
+
+            if (c == '$' && PeekNext() == '{')
+            {
+                Advance();
+                Advance();
+                _templateBraceDepths.Push(0);
+                AddToken(isHead ? TokenType.TemplateHead : TokenType.TemplateMiddle, value.ToString());
+                return;
+            }
+
+            Advance();
+
+            if (c != '\\')
+            {
+                value.Append(c);
+                continue;
+            }
+
+            if (IsAtEnd())
+            {
+                break;
+            }
+
+            value.Append(Peek() switch
+            {
+                '`' => Advance(),
+                '$' => Advance(),
+                _ => AdvanceEscapedCharacter()
+            });
+        }
+
+        Report(new SyntaxException("Unterminated template string.", _line, _tokenColumn, "`"));
+
+        // Recovery keeps the partial text so the parser can continue with the rest of the line.
+        AddToken(isHead ? TokenType.String : TokenType.TemplateTail, value.ToString());
     }
 
     private char AdvanceEscapedCharacter()

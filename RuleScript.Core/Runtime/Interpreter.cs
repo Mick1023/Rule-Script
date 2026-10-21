@@ -253,6 +253,9 @@ public sealed class Interpreter
                 case TargetAssignmentStatement assignmentStatement:
                     ExecuteTargetAssignment(assignmentStatement, context);
                     break;
+                case CompoundAssignmentStatement compoundAssignment:
+                    ExecuteCompoundAssignment(compoundAssignment, context);
+                    break;
                 case GlobalAssignmentStatement globalAssignmentStatement:
                     AssignGlobalVariable(globalAssignmentStatement.Name, Evaluate(globalAssignmentStatement.Value, context), context);
                     break;
@@ -326,6 +329,9 @@ public sealed class Interpreter
                     break;
                 case TargetAssignmentStatement assignmentStatement:
                     await ExecuteTargetAssignmentAsync(assignmentStatement, context, cancellationToken).ConfigureAwait(false);
+                    break;
+                case CompoundAssignmentStatement compoundAssignment:
+                    await ExecuteCompoundAssignmentAsync(compoundAssignment, context, cancellationToken).ConfigureAwait(false);
                     break;
                 case GlobalAssignmentStatement globalAssignmentStatement:
                     AssignGlobalVariable(globalAssignmentStatement.Name, await EvaluateAsync(globalAssignmentStatement.Value, context, cancellationToken).ConfigureAwait(false), context);
@@ -854,6 +860,91 @@ public sealed class Interpreter
         assign(await EvaluateAsync(statement.Value, context, cancellationToken).ConfigureAwait(false));
     }
 
+    private void ExecuteCompoundAssignment(CompoundAssignmentStatement statement, RuntimeContext context)
+    {
+        // Target subexpressions are evaluated once, before the right-hand side.
+        var (current, assign) = statement.Target switch
+        {
+            IdentifierExpression identifier => (
+                EvaluateIdentifier(identifier, context).Value,
+                value => AssignVariable(identifier.Name, value, context)),
+            GlobalIdentifierExpression identifier => (
+                EvaluateGlobalIdentifier(identifier, context).Value,
+                value => AssignGlobalVariable(identifier.Name, value, context)),
+            MemberAccessExpression member => ResolveCompoundMember(Evaluate(member.Target, context).Value, member),
+            IndexExpression index => ResolveCompoundIndex(
+                Evaluate(index.Target, context).Value,
+                Evaluate(index.Index, context).Value,
+                index),
+            _ => throw CreateNotAssignableException(statement)
+        };
+
+        assign(ApplyCompoundOperator(statement, current, Evaluate(statement.Value, context).Value));
+    }
+
+    private async Task ExecuteCompoundAssignmentAsync(
+        CompoundAssignmentStatement statement,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        object? current;
+        Action<RuntimeValue> assign;
+
+        switch (statement.Target)
+        {
+            case IdentifierExpression identifier:
+                current = EvaluateIdentifier(identifier, context).Value;
+                assign = value => AssignVariable(identifier.Name, value, context);
+                break;
+            case GlobalIdentifierExpression identifier:
+                current = EvaluateGlobalIdentifier(identifier, context).Value;
+                assign = value => AssignGlobalVariable(identifier.Name, value, context);
+                break;
+            case MemberAccessExpression member:
+                var receiver = await EvaluateAsync(member.Target, context, cancellationToken).ConfigureAwait(false);
+                (current, assign) = ResolveCompoundMember(receiver.Value, member);
+                break;
+            case IndexExpression index:
+                var collection = await EvaluateAsync(index.Target, context, cancellationToken).ConfigureAwait(false);
+                var indexValue = await EvaluateAsync(index.Index, context, cancellationToken).ConfigureAwait(false);
+                (current, assign) = ResolveCompoundIndex(collection.Value, indexValue.Value, index);
+                break;
+            default:
+                throw CreateNotAssignableException(statement);
+        }
+
+        var right = await EvaluateAsync(statement.Value, context, cancellationToken).ConfigureAwait(false);
+        assign(ApplyCompoundOperator(statement, current, right.Value));
+    }
+
+    private static (object? Current, Action<RuntimeValue> Assign) ResolveCompoundMember(object? receiver, MemberAccessExpression member)
+    {
+        var current = ReadMember(receiver, member.MemberName, member.Line, member.Column).Value;
+        return (current, CreateMemberSetter(receiver, member));
+    }
+
+    private static (object? Current, Action<RuntimeValue> Assign) ResolveCompoundIndex(object? collection, object? indexValue, IndexExpression index)
+    {
+        var current = ReadIndex(collection, indexValue, index).Value;
+        return (current, CreateIndexSetter(collection, indexValue, index));
+    }
+
+    private static RuntimeValue ApplyCompoundOperator(CompoundAssignmentStatement statement, object? current, object? right)
+    {
+        return ApplyBinaryOperator(
+            current,
+            right,
+            new BinaryExpression(statement.Target, statement.Operator, statement.Value, statement.Line, statement.Column, statement.TokenText));
+    }
+
+    private static RuntimeException CreateNotAssignableException(CompoundAssignmentStatement statement)
+    {
+        return new RuntimeException(
+            $"Expression '{statement.Target.GetType().Name}' is not assignable.",
+            statement.Line,
+            statement.Column);
+    }
+
     private Action<RuntimeValue> ResolveAssignmentTarget(
         Expression target,
         RuntimeContext context,
@@ -1172,6 +1263,8 @@ public sealed class Interpreter
             UnaryExpression unary => EvaluateUnary(unary, context),
             BinaryExpression binary => EvaluateBinary(binary, context),
             NullCoalescingExpression coalescing => EvaluateNullCoalescing(coalescing, context),
+            ConditionalExpression conditional => EvaluateConditional(conditional, context),
+            TemplateStringExpression template => EvaluateTemplateString(template, context),
             FunctionCallExpression functionCall => EvaluateFunctionCall(functionCall, context),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCall(moduleFunctionCall, context),
             ArrayExpression array => EvaluateArray(array, context),
@@ -1196,6 +1289,8 @@ public sealed class Interpreter
             UnaryExpression unary => EvaluateUnaryAsync(unary, context, cancellationToken),
             BinaryExpression binary => EvaluateBinaryAsync(binary, context, cancellationToken),
             NullCoalescingExpression coalescing => EvaluateNullCoalescingAsync(coalescing, context, cancellationToken),
+            ConditionalExpression conditional => EvaluateConditionalAsync(conditional, context, cancellationToken),
+            TemplateStringExpression template => EvaluateTemplateStringAsync(template, context, cancellationToken),
             FunctionCallExpression functionCall => EvaluateFunctionCallAsync(functionCall, context, cancellationToken),
             ModuleFunctionCallExpression moduleFunctionCall => EvaluateModuleFunctionCallAsync(moduleFunctionCall, context, cancellationToken),
             ArrayExpression array => EvaluateArrayAsync(array, context, cancellationToken),
@@ -1280,22 +1375,7 @@ public sealed class Interpreter
         var target = Evaluate(expression.Target, context).Value;
         var indexValue = Evaluate(expression.Index, context).Value;
 
-        if (!TryGetInteger(indexValue, out var index))
-        {
-            throw new RuntimeException("Array index must be an int value.", expression.Line, expression.Column, "[");
-        }
-
-        if (target is not IList list)
-        {
-            throw new RuntimeException("Index access requires an array value.", expression.Line, expression.Column, "[");
-        }
-
-        if (index < 0 || index >= list.Count)
-        {
-            throw new RuntimeException($"Array index {index} is outside the array bounds.", expression.Line, expression.Column, "[");
-        }
-
-        return RuntimeValue.FromObject(list[index]);
+        return ReadIndex(target, indexValue, expression);
     }
 
     private async Task<RuntimeValue> EvaluateIndexAsync(IndexExpression expression, RuntimeContext context, CancellationToken cancellationToken)
@@ -1303,22 +1383,7 @@ public sealed class Interpreter
         var target = (await EvaluateAsync(expression.Target, context, cancellationToken).ConfigureAwait(false)).Value;
         var indexValue = (await EvaluateAsync(expression.Index, context, cancellationToken).ConfigureAwait(false)).Value;
 
-        if (!TryGetInteger(indexValue, out var index))
-        {
-            throw new RuntimeException("Array index must be an int value.", expression.Line, expression.Column, "[");
-        }
-
-        if (target is not IList list)
-        {
-            throw new RuntimeException("Index access requires an array value.", expression.Line, expression.Column, "[");
-        }
-
-        if (index < 0 || index >= list.Count)
-        {
-            throw new RuntimeException($"Array index {index} is outside the array bounds.", expression.Line, expression.Column, "[");
-        }
-
-        return RuntimeValue.FromObject(list[index]);
+        return ReadIndex(target, indexValue, expression);
     }
 
     private RuntimeValue EvaluateMemberAccess(MemberAccessExpression expression, RuntimeContext context)
@@ -1512,6 +1577,19 @@ public sealed class Interpreter
         var left = Evaluate(expression.Left, context).Value;
         var right = Evaluate(expression.Right, context).Value;
 
+        return ApplyBinaryOperator(left, right, expression);
+    }
+
+    private async Task<RuntimeValue> EvaluateBinaryAsync(BinaryExpression expression, RuntimeContext context, CancellationToken cancellationToken)
+    {
+        var left = (await EvaluateAsync(expression.Left, context, cancellationToken).ConfigureAwait(false)).Value;
+        var right = (await EvaluateAsync(expression.Right, context, cancellationToken).ConfigureAwait(false)).Value;
+
+        return ApplyBinaryOperator(left, right, expression);
+    }
+
+    private static RuntimeValue ApplyBinaryOperator(object? left, object? right, BinaryExpression expression)
+    {
         return expression.Operator switch
         {
             TokenType.Plus => Add(left, right, expression),
@@ -1531,28 +1609,75 @@ public sealed class Interpreter
         };
     }
 
-    private async Task<RuntimeValue> EvaluateBinaryAsync(BinaryExpression expression, RuntimeContext context, CancellationToken cancellationToken)
+    private static RuntimeValue ReadIndex(object? target, object? indexValue, IndexExpression expression)
     {
-        var left = (await EvaluateAsync(expression.Left, context, cancellationToken).ConfigureAwait(false)).Value;
-        var right = (await EvaluateAsync(expression.Right, context, cancellationToken).ConfigureAwait(false)).Value;
-
-        return expression.Operator switch
+        if (!TryGetInteger(indexValue, out var index))
         {
-            TokenType.Plus => Add(left, right, expression),
-            TokenType.Minus => NumberOperation(left, right, "-", expression, (a, b) => a - b),
-            TokenType.Star => NumberOperation(left, right, "*", expression, (a, b) => a * b),
-            TokenType.Slash => NumberOperation(left, right, "/", expression, (a, b) => a / b),
-            TokenType.Percent => NumberOperation(left, right, "%", expression, (a, b) => a % b),
-            TokenType.Greater => NumberComparison(left, right, ">", expression, (a, b) => a > b),
-            TokenType.GreaterOrEqual => NumberComparison(left, right, ">=", expression, (a, b) => a >= b),
-            TokenType.Less => NumberComparison(left, right, "<", expression, (a, b) => a < b),
-            TokenType.LessOrEqual => NumberComparison(left, right, "<=", expression, (a, b) => a <= b),
-            TokenType.EqualEqual => new RuntimeValue(AreEqual(left, right)),
-            TokenType.BangEqual => new RuntimeValue(!AreEqual(left, right)),
-            TokenType.And => BooleanOperation(left, right, "and", expression, (a, b) => a && b),
-            TokenType.Or => BooleanOperation(left, right, "or", expression, (a, b) => a || b),
-            _ => throw new RuntimeException($"Unsupported binary operator '{expression.Operator}'.", expression.Line, expression.Column, expression.TokenText)
-        };
+            throw new RuntimeException("Array index must be an int value.", expression.Line, expression.Column, "[");
+        }
+
+        if (target is not IList list)
+        {
+            throw new RuntimeException("Index access requires an array value.", expression.Line, expression.Column, "[");
+        }
+
+        if (index < 0 || index >= list.Count)
+        {
+            throw new RuntimeException($"Array index {index} is outside the array bounds.", expression.Line, expression.Column, "[");
+        }
+
+        return RuntimeValue.FromObject(list[index]);
+    }
+
+    private RuntimeValue EvaluateConditional(ConditionalExpression expression, RuntimeContext context)
+    {
+        return Evaluate(SelectConditionalBranch(Evaluate(expression.Condition, context).Value, expression), context);
+    }
+
+    private async Task<RuntimeValue> EvaluateConditionalAsync(
+        ConditionalExpression expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var condition = await EvaluateAsync(expression.Condition, context, cancellationToken).ConfigureAwait(false);
+        return await EvaluateAsync(SelectConditionalBranch(condition.Value, expression), context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Expression SelectConditionalBranch(object? condition, ConditionalExpression expression)
+    {
+        return condition is bool value
+            ? value ? expression.WhenTrue : expression.WhenFalse
+            : throw new RuntimeException("Conditional expression condition must evaluate to a bool value.", expression.Line, expression.Column, "?");
+    }
+
+    private RuntimeValue EvaluateTemplateString(TemplateStringExpression expression, RuntimeContext context)
+    {
+        var builder = new System.Text.StringBuilder(expression.Parts[0]);
+
+        for (var i = 0; i < expression.Expressions.Count; i++)
+        {
+            builder.Append(ConvertToString(Evaluate(expression.Expressions[i], context).Value));
+            builder.Append(expression.Parts[i + 1]);
+        }
+
+        return new RuntimeValue(builder.ToString());
+    }
+
+    private async Task<RuntimeValue> EvaluateTemplateStringAsync(
+        TemplateStringExpression expression,
+        RuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var builder = new System.Text.StringBuilder(expression.Parts[0]);
+
+        for (var i = 0; i < expression.Expressions.Count; i++)
+        {
+            var value = await EvaluateAsync(expression.Expressions[i], context, cancellationToken).ConfigureAwait(false);
+            builder.Append(ConvertToString(value.Value));
+            builder.Append(expression.Parts[i + 1]);
+        }
+
+        return new RuntimeValue(builder.ToString());
     }
 
     private RuntimeValue EvaluateIdentifier(IdentifierExpression expression, RuntimeContext context)
@@ -2585,6 +2710,7 @@ public sealed class Interpreter
             VarStatement value => (value.Line, value.Column),
             AssignmentStatement value => (value.Line, value.Column),
             TargetAssignmentStatement value => (value.Line, value.Column),
+            CompoundAssignmentStatement value => (value.Line, value.Column),
             GlobalAssignmentStatement value => (value.Line, value.Column),
             FunctionDeclarationStatement value => (value.Line, value.Column),
             ImportStatement value => (value.Line, value.Column),
@@ -2604,6 +2730,8 @@ public sealed class Interpreter
             ExpressionStatement { Expression: MemberAccessExpression value } => (value.Line, value.Column),
             ExpressionStatement { Expression: ConditionalMemberAccessExpression value } => (value.Line, value.Column),
             ExpressionStatement { Expression: NullCoalescingExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: ConditionalExpression value } => (value.Line, value.Column),
+            ExpressionStatement { Expression: TemplateStringExpression value } => (value.Line, value.Column),
             _ => (null, null)
         };
 

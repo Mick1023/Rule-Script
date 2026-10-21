@@ -306,6 +306,10 @@ internal static class RuleScriptSemanticAnalyzer
                 VisitExpression(assignment.Target, inParallelTask, visitCall);
                 VisitExpression(assignment.Value, inParallelTask, visitCall);
                 break;
+            case CompoundAssignmentStatement assignment:
+                VisitExpression(assignment.Target, inParallelTask, visitCall);
+                VisitExpression(assignment.Value, inParallelTask, visitCall);
+                break;
             case GlobalAssignmentStatement assignment:
                 VisitExpression(assignment.Value, inParallelTask, visitCall);
                 break;
@@ -391,6 +395,17 @@ internal static class RuleScriptSemanticAnalyzer
             case NullCoalescingExpression coalescing:
                 VisitExpression(coalescing.Left, inParallelTask, visitCall);
                 VisitExpression(coalescing.Right, inParallelTask, visitCall);
+                return;
+            case ConditionalExpression conditional:
+                VisitExpression(conditional.Condition, inParallelTask, visitCall);
+                VisitExpression(conditional.WhenTrue, inParallelTask, visitCall);
+                VisitExpression(conditional.WhenFalse, inParallelTask, visitCall);
+                return;
+            case TemplateStringExpression template:
+                foreach (var part in template.Expressions)
+                {
+                    VisitExpression(part, inParallelTask, visitCall);
+                }
                 return;
             case ArrayExpression array:
                 foreach (var element in array.Elements)
@@ -494,6 +509,10 @@ internal static class RuleScriptSemanticAnalyzer
                     diagnostics,
                     functionResolver,
                     assignment.SourceSpan);
+                break;
+
+            case CompoundAssignmentStatement assignment:
+                AnalyzeCompoundAssignment(assignment, scope, globals, diagnostics, functionResolver);
                 break;
 
             case GlobalAssignmentStatement assignment:
@@ -809,6 +828,7 @@ internal static class RuleScriptSemanticAnalyzer
             {
                 AssignmentStatement assignment => assignment.Name,
                 TargetAssignmentStatement { Target: IdentifierExpression identifier } => identifier.Name,
+                CompoundAssignmentStatement { Target: IdentifierExpression identifier } => identifier.Name,
                 _ => null
             };
 
@@ -822,12 +842,14 @@ internal static class RuleScriptSemanticAnalyzer
                     {
                         AssignmentStatement assignment => assignment.Line,
                         TargetAssignmentStatement assignment => assignment.Line,
+                        CompoundAssignmentStatement assignment => assignment.Line,
                         _ => null
                     },
                     statement switch
                     {
                         AssignmentStatement assignment => assignment.Column,
                         TargetAssignmentStatement assignment => assignment.Column,
+                        CompoundAssignmentStatement assignment => assignment.Column,
                         _ => null
                     },
                     assignedName,
@@ -1228,6 +1250,26 @@ internal static class RuleScriptSemanticAnalyzer
                 return AnalyzeBinary(binary, scope, globals, diagnostics, functionResolver);
             case NullCoalescingExpression coalescing:
                 return AnalyzeNullCoalescing(coalescing, scope, globals, diagnostics, functionResolver);
+            case ConditionalExpression conditional:
+                RequireType(
+                    AnalyzeExpression(conditional.Condition, scope, globals, diagnostics, functionResolver),
+                    RuleScriptValueType.Boolean,
+                    "Conditional expression condition",
+                    conditional.Line,
+                    conditional.Column,
+                    "?",
+                    null,
+                    diagnostics);
+                return RuleScriptTypeInfo.Merge(
+                    AnalyzeExpression(conditional.WhenTrue, scope, globals, diagnostics, functionResolver),
+                    AnalyzeExpression(conditional.WhenFalse, scope, globals, diagnostics, functionResolver));
+            case TemplateStringExpression template:
+                foreach (var part in template.Expressions)
+                {
+                    AnalyzeExpression(part, scope, globals, diagnostics, functionResolver);
+                }
+
+                return RuleScriptTypeInfo.From(RuleScriptValueType.String);
             case FunctionCallExpression call:
                 return AnalyzeFunctionCall(call.Name, call.Arguments, call.Line, call.Column, scope, globals, diagnostics, functionResolver);
             case ModuleFunctionCallExpression call:
@@ -1381,7 +1423,50 @@ internal static class RuleScriptSemanticAnalyzer
     {
         var left = AnalyzeExpression(binary.Left, scope, globals, diagnostics, functionResolver);
         var right = AnalyzeExpression(binary.Right, scope, globals, diagnostics, functionResolver);
+        return AnalyzeBinaryOperands(binary, left, right, diagnostics);
+    }
 
+    private static void AnalyzeCompoundAssignment(
+        CompoundAssignmentStatement assignment,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        ICollection<RuleScriptDiagnostic> diagnostics,
+        IRuleScriptFunctionResolver functionResolver)
+    {
+        // The target is read once, so its diagnostics (such as an undefined variable) are reported once.
+        var currentType = AnalyzeExpression(assignment.Target, scope, globals, diagnostics, functionResolver);
+        var valueType = AnalyzeExpression(assignment.Value, scope, globals, diagnostics, functionResolver);
+        var resultType = AnalyzeBinaryOperands(
+            new BinaryExpression(assignment.Target, assignment.Operator, assignment.Value, assignment.Line, assignment.Column, assignment.TokenText),
+            currentType,
+            valueType,
+            diagnostics);
+
+        switch (assignment.Target)
+        {
+            case IdentifierExpression identifier:
+                ReportAssignmentMismatch(identifier.Name, resultType, scope, identifier.Line, identifier.Column, assignment.SourceSpan, diagnostics);
+                scope[identifier.Name] = resultType;
+                break;
+            case GlobalIdentifierExpression identifier:
+                ReportAssignmentMismatch(identifier.Name, resultType, globals, identifier.Line, identifier.Column, assignment.SourceSpan, diagnostics);
+                globals[identifier.Name] = resultType;
+                break;
+            case MemberAccessExpression member:
+                ReportTargetTypeMismatch($"Property '{member.MemberName}'", currentType, resultType, member.Line, member.Column, member.MemberName, diagnostics);
+                break;
+            case IndexExpression index:
+                ReportTargetTypeMismatch("Array element", currentType, resultType, index.Line, index.Column, "[", diagnostics);
+                break;
+        }
+    }
+
+    private static RuleScriptTypeInfo AnalyzeBinaryOperands(
+        BinaryExpression binary,
+        RuleScriptTypeInfo left,
+        RuleScriptTypeInfo right,
+        ICollection<RuleScriptDiagnostic> diagnostics)
+    {
         if (binary.Operator is TokenType.And or TokenType.Or)
         {
             RequireType(left, RuleScriptValueType.Boolean, $"Operator '{binary.TokenText}'", binary.Line, binary.Column, binary.TokenText, null, diagnostics);

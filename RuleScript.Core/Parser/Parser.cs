@@ -377,6 +377,25 @@ public sealed class Parser
                 start.Column), start);
         }
 
+        if (Match(TokenType.PlusAssign, TokenType.MinusAssign, TokenType.StarAssign, TokenType.SlashAssign, TokenType.PercentAssign))
+        {
+            var operatorToken = Previous();
+            if (expression is not (IdentifierExpression or GlobalIdentifierExpression or MemberAccessExpression or IndexExpression))
+            {
+                throw Error(operatorToken, $"Invalid target for '{operatorToken.Lexeme}'. Expected a variable, property, or array element.");
+            }
+
+            var value = ParseExpression();
+            Consume(TokenType.Semicolon, "Expected ';' after assignment.");
+            return Complete(new CompoundAssignmentStatement(
+                expression,
+                GetCompoundOperator(operatorToken.Type),
+                value,
+                start.Line,
+                start.Column,
+                operatorToken.Lexeme), start);
+        }
+
         Consume(TokenType.Semicolon, "Expected ';' after expression.");
         return Complete(new ExpressionStatement(expression), start);
     }
@@ -750,7 +769,39 @@ public sealed class Parser
         return [.. statements];
     }
 
-    private Expression ParseExpression() => ParseNullCoalescing();
+    private Expression ParseExpression() => ParseConditional();
+
+    private Expression ParseConditional()
+    {
+        var start = _current;
+        var condition = ParseNullCoalescing();
+
+        if (!Match(TokenType.Question))
+        {
+            return condition;
+        }
+
+        var questionToken = Previous();
+        var whenTrue = ParseConditional();
+        Consume(TokenType.Colon, "Expected ':' in conditional expression.");
+        var whenFalse = ParseConditional();
+        return CompleteExpression(new ConditionalExpression(
+            condition,
+            whenTrue,
+            whenFalse,
+            questionToken.Line,
+            questionToken.Column), start);
+    }
+
+    private static TokenType GetCompoundOperator(TokenType compoundAssignment) => compoundAssignment switch
+    {
+        TokenType.PlusAssign => TokenType.Plus,
+        TokenType.MinusAssign => TokenType.Minus,
+        TokenType.StarAssign => TokenType.Star,
+        TokenType.SlashAssign => TokenType.Slash,
+        TokenType.PercentAssign => TokenType.Percent,
+        _ => throw new ArgumentOutOfRangeException(nameof(compoundAssignment), compoundAssignment, null)
+    };
 
     private Expression ParseNullCoalescing()
     {
@@ -997,6 +1048,11 @@ public sealed class Parser
             return CompleteExpression(new LiteralExpression(Previous().Literal), start);
         }
 
+        if (Match(TokenType.TemplateHead))
+        {
+            return CompleteExpression(ParseTemplateString(), start);
+        }
+
         if (Match(TokenType.Identifier))
         {
             var token = Previous();
@@ -1021,6 +1077,28 @@ public sealed class Parser
         }
 
         throw Error(Peek(), "Expected expression.");
+    }
+
+    private TemplateStringExpression ParseTemplateString()
+    {
+        var head = Previous();
+        var parts = new List<string> { (string?)head.Literal ?? string.Empty };
+        var expressions = new List<Expression>();
+
+        while (true)
+        {
+            expressions.Add(ParseExpression());
+
+            if (Match(TokenType.TemplateMiddle))
+            {
+                parts.Add((string?)Previous().Literal ?? string.Empty);
+                continue;
+            }
+
+            var tail = Consume(TokenType.TemplateTail, "Expected '}' after template string substitution.");
+            parts.Add((string?)tail.Literal ?? string.Empty);
+            return new TemplateStringExpression(parts, expressions, head.Line, head.Column);
+        }
     }
 
     private ArrayExpression ParseArrayExpression()

@@ -88,7 +88,12 @@ internal static class RuleScriptFormatterCore
         private int _parenthesisDepth;
         private int _bracketDepth;
         private int _braceDepth;
+        private int _templateDepth;
         private bool _atLineStart = true;
+
+        // Nesting depth of each '?' still waiting for its ':', so a conditional expression's ':'
+        // is not mistaken for a block header or object property colon.
+        private readonly Stack<int> _pendingConditionalDepths = new();
         private TokenType? _previous;
         private BlockKind? _pendingBlock;
         private TokenType? _lineHead;
@@ -149,7 +154,19 @@ internal static class RuleScriptFormatterCore
                 _attributeLineActive = true;
             }
 
-            WriteToken(token);
+            var isConditionalColon = token.Type == TokenType.Colon
+                && _pendingConditionalDepths.TryPeek(out var conditionalDepth)
+                && conditionalDepth == GetNestingDepth();
+            if (isConditionalColon)
+            {
+                _pendingConditionalDepths.Pop();
+            }
+            else if (token.Type == TokenType.Question)
+            {
+                _pendingConditionalDepths.Push(GetNestingDepth());
+            }
+
+            WriteToken(token, isConditionalColon);
             UpdateDepth(token.Type);
 
             if (_attributeLineActive
@@ -165,7 +182,7 @@ internal static class RuleScriptFormatterCore
             {
                 NewLine();
             }
-            else if (token.Type == TokenType.Colon && IsAtStructuralDepth())
+            else if (token.Type == TokenType.Colon && !isConditionalColon && IsAtStructuralDepth())
             {
                 CompleteBlockHeader();
             }
@@ -194,11 +211,11 @@ internal static class RuleScriptFormatterCore
             return result.Length == 0 ? string.Empty : result + "\n";
         }
 
-        private void WriteToken(Token token)
+        private void WriteToken(Token token, bool isConditionalColon = false)
         {
             WriteIndentIfNeeded();
 
-            if (_previous.HasValue && NeedsSpace(_previous.Value, token.Type))
+            if (_previous.HasValue && (isConditionalColon || NeedsSpace(_previous.Value, token.Type)))
             {
                 _builder.Append(' ');
             }
@@ -413,7 +430,9 @@ internal static class RuleScriptFormatterCore
             _atLineStart = false;
         }
 
-        private bool IsAtStructuralDepth() => _parenthesisDepth == 0 && _bracketDepth == 0 && _braceDepth == 0;
+        private bool IsAtStructuralDepth() => GetNestingDepth() == 0;
+
+        private int GetNestingDepth() => _parenthesisDepth + _bracketDepth + _braceDepth + _templateDepth;
 
         private void UpdateDepth(TokenType type)
         {
@@ -437,6 +456,12 @@ internal static class RuleScriptFormatterCore
                 case TokenType.RightBrace:
                     _braceDepth--;
                     break;
+                case TokenType.TemplateHead:
+                    _templateDepth++;
+                    break;
+                case TokenType.TemplateTail:
+                    _templateDepth--;
+                    break;
             }
         }
 
@@ -449,6 +474,13 @@ internal static class RuleScriptFormatterCore
                 or TokenType.Colon
                 or TokenType.Dot
                 or TokenType.QuestionDot)
+            {
+                return false;
+            }
+
+            // Template text is written verbatim around its substitutions: `a ${x} b`.
+            if (previous is TokenType.TemplateHead or TokenType.TemplateMiddle
+                || current is TokenType.TemplateMiddle or TokenType.TemplateTail)
             {
                 return false;
             }
