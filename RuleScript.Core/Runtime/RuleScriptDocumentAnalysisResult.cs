@@ -32,6 +32,11 @@ public sealed class RuleScriptDocumentAnalysisResult
     internal RuleScriptEngine Engine { get; }
 
     /// <summary>
+    /// Gets the directory used to resolve relative imports, or null to use the engine working directory.
+    /// </summary>
+    internal string? BaseDirectory { get; init; }
+
+    /// <summary>
     /// Gets the source text that produced this analysis result.
     /// </summary>
     public string Source { get; }

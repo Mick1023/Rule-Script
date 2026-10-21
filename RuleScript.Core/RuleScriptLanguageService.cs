@@ -67,7 +67,8 @@ public static class RuleScriptLanguageService
 
     private static RuleScriptDocumentAnalysisResult TryAnalyzeDocumentCore(RuleScriptEngine engine, string source, string? sourceFile)
     {
-        var (attempt, tokens, parser, statements) = engine.TryAnalyzeDocumentCore(source, sourceFile);
+        var baseDirectory = engine.ResolveDocumentBaseDirectory(sourceFile);
+        var (attempt, tokens, parser, statements) = engine.TryAnalyzeDocumentCore(source, baseDirectory);
         return new RuleScriptDocumentAnalysisResult(
             engine,
             source,
@@ -76,7 +77,10 @@ public static class RuleScriptLanguageService
             parser.Regions,
             attempt.Symbols,
             attempt.Diagnostics,
-            attempt.Success);
+            attempt.Success)
+        {
+            BaseDirectory = baseDirectory
+        };
     }
 
     /// <summary>
@@ -135,6 +139,36 @@ public static class RuleScriptLanguageService
         ArgumentNullException.ThrowIfNull(document);
 
         return RuleScriptNavigationAnalyzer.FindReferences(document, line, column);
+    }
+
+    /// <summary>
+    /// Gets hover metadata for the symbol at the requested 1-based source position, or null when no symbol is there.
+    /// </summary>
+    public static RuleScriptHoverInfo? GetHover(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return RuleScriptNavigationAnalyzer.GetHover(document, line, column);
+    }
+
+    /// <summary>
+    /// Gets the hierarchical outline of functions, variables, constants, and imports declared in a document.
+    /// </summary>
+    public static IReadOnlyList<RuleScriptDocumentSymbol> GetDocumentSymbols(RuleScriptDocumentAnalysisResult document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return RuleScriptOutlineAnalyzer.GetDocumentSymbols(document);
+    }
+
+    /// <summary>
+    /// Gets foldable ranges for regions, multi-line statements and blocks, and comments.
+    /// </summary>
+    public static IReadOnlyList<RuleScriptFoldingRange> GetFoldingRanges(RuleScriptDocumentAnalysisResult document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return RuleScriptOutlineAnalyzer.GetFoldingRanges(document);
     }
 
     /// <summary>

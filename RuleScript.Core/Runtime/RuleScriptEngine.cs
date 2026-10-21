@@ -610,12 +610,19 @@ public sealed class RuleScriptEngine
     /// </summary>
     internal (RuleScriptAnalysisAttempt Attempt, IReadOnlyList<Token> Tokens, RuleScript.Core.Parser.Parser Parser, IReadOnlyList<Statement> Statements) TryAnalyzeDocumentCore(
         string script,
-        string? sourceFile)
+        string baseDirectory)
     {
         ArgumentNullException.ThrowIfNull(script);
 
-        var baseDirectory = sourceFile is null ? ResolveWorkingDirectory() : ResolveAnalysisBaseDirectory(sourceFile);
         return TryAnalyzeTokensCore(script, baseDirectory, cursorLine: null, cursorColumn: null);
+    }
+
+    /// <summary>
+    /// Resolves the directory used for relative imports of a document, preferring its source file location.
+    /// </summary>
+    internal string ResolveDocumentBaseDirectory(string? sourceFile)
+    {
+        return sourceFile is null ? ResolveWorkingDirectory() : ResolveAnalysisBaseDirectory(sourceFile);
     }
 
     private (RuleScriptAnalysisAttempt Attempt, IReadOnlyList<Token> Tokens, RuleScript.Core.Parser.Parser Parser, IReadOnlyList<Statement> Statements) TryAnalyzeTokensCore(
