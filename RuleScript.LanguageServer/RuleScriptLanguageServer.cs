@@ -35,6 +35,8 @@ internal static class RuleScriptLanguageServer
             .WithHandler<DocumentSymbolHandler>()
             .WithHandler<FoldingRangeHandler>()
             .WithHandler<DocumentFormattingHandler>()
+            .WithHandler<CompletionHandler>()
+            .WithHandler<SignatureHelpHandler>()
             .OnInitialize((_, request, _) =>
             {
                 var root = request.WorkspaceFolders?.FirstOrDefault()?.Uri ?? request.RootUri;

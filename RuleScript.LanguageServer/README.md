@@ -10,6 +10,8 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | `textDocument/definition` | Functions, variables, parameters, and exported functions in imported files. |
 | `textDocument/references` | All usages of the symbol under the cursor. |
 | `textDocument/hover` | Signature with parameter and return types, plus `///` documentation. |
+| `textDocument/completion` | In-scope variables and parameters, functions, import aliases, keywords, and block snippets; import members after `alias.`; `@HostTrigger` after `@`. Nothing is offered inside strings, comments, or where a new name is being declared. |
+| `textDocument/signatureHelp` | Parameter hints for the call around the cursor, triggered by `(` and `,`, including nested calls and `alias.Function(...)`. |
 | `textDocument/documentSymbol` | Outline of imports, functions (with locals), variables, and constants. |
 | `textDocument/foldingRange` | `#region` blocks, multi-line statements and blocks, and comments. |
 | `textDocument/formatting` | `RuleScriptFormatter`. Documents with syntax errors are left unchanged. |
@@ -50,5 +52,5 @@ Any LSP client can launch `rulescript-lsp` over stdio for files with the `.rules
 
 ## Limitations
 
-- Host Functions registered by your application are unknown to the server, so calls to them may be reported as undefined.
-- Completion and signature help are not implemented yet.
+- Host Functions registered by your application are unknown to the server, so calls to them may be reported as undefined and are missing from completion.
+- Snippets are offered only to clients that declare snippet support.

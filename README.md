@@ -1,7 +1,7 @@
 # RuleScript
 
 [![Build](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml/badge.svg)](https://github.com/Mick1023/Rule-Script/actions/workflows/build.yml)
-[![Stable Version](https://img.shields.io/badge/stable-v1.12.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.12.0)
+[![Stable Version](https://img.shields.io/badge/stable-v1.13.0-blue)](https://github.com/Mick1023/Rule-Script/releases/tag/v1.13.0)
 [![NuGet Version](https://img.shields.io/nuget/v/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/RuleScript.Core.svg)](https://www.nuget.org/packages/RuleScript.Core/)
 
@@ -14,7 +14,7 @@ It provides a lexer, parser, AST, interpreter, built-in functions, user function
 Install the stable package from NuGet:
 
 ```bash
-dotnet add package RuleScript.Core --version 1.12.0
+dotnet add package RuleScript.Core --version 1.13.0
 ```
 
 ## Quick Start
@@ -99,6 +99,7 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
+- [v1.13.0 release notes](docs/releases/v1.13.0.md)
 - [v1.12.0 release notes](docs/releases/v1.12.0.md)
 - [v1.11.0 release notes](docs/releases/v1.11.0.md)
 - [v1.10.2 release notes](docs/releases/v1.10.2.md)
@@ -111,14 +112,14 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 
 ## Development
 
-The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.12.0 release notes](docs/releases/v1.12.0.md) for hover, outline, and folding APIs and the language server. See the [v1.11.0 release notes](docs/releases/v1.11.0.md) for tolerant editor analysis and source ranges. See the [v1.10.2 release notes](docs/releases/v1.10.2.md) for consistent parameter type annotation warnings. See the [v1.10.1 release notes](docs/releases/v1.10.1.md) for source-file-aware analysis imports. See the [v1.10.0 release notes](docs/releases/v1.10.0.md) for HostTrigger runtimes and long-running dispatch.
+The latest stable source is available on [`main`](https://github.com/Mick1023/Rule-Script/tree/main). See the [v1.13.0 release notes](docs/releases/v1.13.0.md) for completion and signature help APIs. See the [v1.12.0 release notes](docs/releases/v1.12.0.md) for hover, outline, and folding APIs and the language server. See the [v1.11.0 release notes](docs/releases/v1.11.0.md) for tolerant editor analysis and source ranges. See the [v1.10.2 release notes](docs/releases/v1.10.2.md) for consistent parameter type annotation warnings. See the [v1.10.1 release notes](docs/releases/v1.10.1.md) for source-file-aware analysis imports. See the [v1.10.0 release notes](docs/releases/v1.10.0.md) for HostTrigger runtimes and long-running dispatch.
 
 ```bash
 dotnet build RuleScript.sln
 dotnet test RuleScript.sln
 ```
 
-The [RuleScript Language Server](RuleScript.LanguageServer/README.md) provides diagnostics, navigation, hover, outline, folding, and formatting for `.rules` files in any LSP-capable editor.
+The [RuleScript Language Server](RuleScript.LanguageServer/README.md) provides diagnostics, navigation, hover, completion, signature help, outline, folding, and formatting for `.rules` files in any LSP-capable editor.
 
 ## License
 
