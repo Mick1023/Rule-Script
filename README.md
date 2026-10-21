@@ -91,13 +91,15 @@ await running;
 
 ## Documentation
 
-Detailed syntax, Host integration, debugging, analysis, and version-specific behavior are maintained in the [RuleScript Wiki](https://github.com/Mick1023/Rule-Script/wiki).
+Detailed syntax, Host integration, debugging, analysis, and editor tooling are maintained in the [RuleScript Wiki](https://github.com/Mick1023/Rule-Script/wiki). The Wiki is the authoritative API reference and always documents the latest release. Release notes describe what changed in each version. The API snapshots in [`docs/api/`](docs/api/) cover v1.10.1 and earlier, are no longer maintained, and are kept for reference only.
 
 - [Getting Started](https://github.com/Mick1023/Rule-Script/wiki/Getting-Started)
 - [Language Guide](https://github.com/Mick1023/Rule-Script/wiki/Language-Guide)
 - [Built-in Function Reference](https://github.com/Mick1023/Rule-Script/wiki/Built-in-Functions)
 - [Host Integration](https://github.com/Mick1023/Rule-Script/wiki/Host-Integration)
 - [Debugging and Analysis](https://github.com/Mick1023/Rule-Script/wiki/Debugging-and-Analysis)
+- [Editor Integration](https://github.com/Mick1023/Rule-Script/wiki/Editor-Integration)
+- [Language Server](https://github.com/Mick1023/Rule-Script/wiki/Language-Server)
 - [API Reference by Class](https://github.com/Mick1023/Rule-Script/wiki/API-Reference-by-Class)
 - [v1.14.0 release notes](docs/releases/v1.14.0.md)
 - [v1.13.0 release notes](docs/releases/v1.13.0.md)
@@ -105,7 +107,6 @@ Detailed syntax, Host integration, debugging, analysis, and version-specific beh
 - [v1.11.0 release notes](docs/releases/v1.11.0.md)
 - [v1.10.2 release notes](docs/releases/v1.10.2.md)
 - [v1.10.1 release notes](docs/releases/v1.10.1.md)
-- [v1.10.1 API reference](docs/api/v1.10.1.md)
 - [v1.10.0 release notes](docs/releases/v1.10.0.md)
 - [v1.9.0 release notes](docs/releases/v1.9.0.md)
 - [v1.8.0 maintenance notes](docs/releases/v1.8.0.md)
