@@ -51,3 +51,12 @@ git push origin v1.13.0
 ```
 
 The language server workflow fails if the tag does not match the project version. Language server releases are not marked as the latest GitHub release, so the latest release always points at `RuleScript.Core`.
+
+Publishing uses nuget.org [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing), so no API key is stored in the repository. The `NuGet/login` step exchanges the job's GitHub OIDC token for a short-lived API key. Each workflow needs its own Trusted Publishing policy on nuget.org for owner `Mick1023` and repository `Mick1023/Rule-Script`:
+
+| Workflow file | Package |
+|---|---|
+| `package.yml` | `RuleScript.Core` |
+| `package-language-server.yml` | `RuleScript.LanguageServer` |
+
+Renaming either workflow file requires updating its policy, or publishing fails.
