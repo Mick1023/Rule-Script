@@ -146,7 +146,8 @@ public sealed class RuleScriptWorkspaceTests : IDisposable
 
         Assert.Equal([2], UndefinedVariableLines(workspace, plantDocument));
         Assert.Equal([1], UndefinedVariableLines(workspace, lineDocument));
-        Assert.Equal(Path.GetFullPath(line), workspace.GetEngine(lineDocument).WorkingDirectory);
+        // File URIs lowercase the Windows drive letter, and paths compare case-insensitively there.
+        Assert.Equal(Path.GetFullPath(line), workspace.GetEngine(lineDocument).WorkingDirectory, ignoreCase: !OperatingSystem.IsLinux());
     }
 
     [Fact]
