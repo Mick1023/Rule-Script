@@ -40,8 +40,7 @@ internal static class RuleScriptFormatterCore
 
     private static int GetBlankLineCount(Token previous, Token current)
     {
-        var currentStartLine = current.Line - current.Lexeme.Count(character => character == '\n');
-        return Math.Max(0, currentStartLine - previous.Line - 1);
+        return Math.Max(0, current.Line - previous.EndLine - 1);
     }
 
     private static TokenType? FindNextSignificantTokenType(IReadOnlyList<Token> tokens, int startIndex)

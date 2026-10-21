@@ -748,17 +748,18 @@ public sealed class Parser
 
     private Expression ParseNullCoalescing()
     {
+        var start = _current;
         var expression = ParseOr();
 
         if (Match(TokenType.QuestionQuestion))
         {
             var operatorToken = Previous();
             var right = ParseNullCoalescing();
-            expression = new NullCoalescingExpression(
+            expression = CompleteExpression(new NullCoalescingExpression(
                 expression,
                 right,
                 operatorToken.Line,
-                operatorToken.Column);
+                operatorToken.Column), start);
         }
 
         return expression;
@@ -766,13 +767,14 @@ public sealed class Parser
 
     private Expression ParseOr()
     {
+        var start = _current;
         var expression = ParseAnd();
 
         while (Match(TokenType.Or))
         {
             var operatorToken = Previous();
             var right = ParseAnd();
-            expression = new BinaryExpression(expression, TokenType.Or, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, TokenType.Or, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -780,13 +782,14 @@ public sealed class Parser
 
     private Expression ParseAnd()
     {
+        var start = _current;
         var expression = ParseEquality();
 
         while (Match(TokenType.And))
         {
             var operatorToken = Previous();
             var right = ParseEquality();
-            expression = new BinaryExpression(expression, TokenType.And, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, TokenType.And, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -794,6 +797,7 @@ public sealed class Parser
 
     private Expression ParseEquality()
     {
+        var start = _current;
         var expression = ParseComparison();
 
         while (Match(TokenType.EqualEqual, TokenType.BangEqual))
@@ -801,7 +805,7 @@ public sealed class Parser
             var operatorType = Previous().Type;
             var operatorToken = Previous();
             var right = ParseComparison();
-            expression = new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -809,6 +813,7 @@ public sealed class Parser
 
     private Expression ParseComparison()
     {
+        var start = _current;
         var expression = ParseTerm();
 
         while (Match(TokenType.Greater, TokenType.GreaterOrEqual, TokenType.Less, TokenType.LessOrEqual))
@@ -816,7 +821,7 @@ public sealed class Parser
             var operatorType = Previous().Type;
             var operatorToken = Previous();
             var right = ParseTerm();
-            expression = new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -824,6 +829,7 @@ public sealed class Parser
 
     private Expression ParseTerm()
     {
+        var start = _current;
         var expression = ParseFactor();
 
         while (Match(TokenType.Plus, TokenType.Minus))
@@ -831,7 +837,7 @@ public sealed class Parser
             var operatorType = Previous().Type;
             var operatorToken = Previous();
             var right = ParseFactor();
-            expression = new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -839,6 +845,7 @@ public sealed class Parser
 
     private Expression ParseFactor()
     {
+        var start = _current;
         var expression = ParseUnary();
 
         while (Match(TokenType.Star, TokenType.Slash, TokenType.Percent))
@@ -846,7 +853,7 @@ public sealed class Parser
             var operatorType = Previous().Type;
             var operatorToken = Previous();
             var right = ParseUnary();
-            expression = new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            expression = CompleteExpression(new BinaryExpression(expression, operatorType, right, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return expression;
@@ -854,12 +861,14 @@ public sealed class Parser
 
     private Expression ParseUnary()
     {
+        var start = _current;
+
         if (Match(TokenType.Bang, TokenType.Minus))
         {
             var operatorType = Previous().Type;
             var operatorToken = Previous();
             var operand = ParseUnary();
-            return new UnaryExpression(operatorType, operand, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme);
+            return CompleteExpression(new UnaryExpression(operatorType, operand, operatorToken.Line, operatorToken.Column, operatorToken.Lexeme), start);
         }
 
         return ParseCall();
@@ -867,6 +876,7 @@ public sealed class Parser
 
     private Expression ParseCall()
     {
+        var start = _current;
         var expression = ParsePrimary();
 
         while (true)
@@ -876,12 +886,12 @@ public sealed class Parser
                 if (expression is MemberAccessExpression { Target: IdentifierExpression moduleIdentifier } memberAccess)
                 {
                     var moduleArguments = ParseArguments();
-                    expression = new ModuleFunctionCallExpression(
+                    expression = CompleteExpression(new ModuleFunctionCallExpression(
                         moduleIdentifier.Name,
                         memberAccess.MemberName,
                         moduleArguments,
                         memberAccess.Line,
-                        memberAccess.Column);
+                        memberAccess.Column), start);
                     continue;
                 }
 
@@ -891,7 +901,7 @@ public sealed class Parser
                 }
 
                 var arguments = ParseArguments();
-                expression = new FunctionCallExpression(identifier.Name, arguments, identifier.Line, identifier.Column);
+                expression = CompleteExpression(new FunctionCallExpression(identifier.Name, arguments, identifier.Line, identifier.Column), start);
                 continue;
             }
 
@@ -900,7 +910,7 @@ public sealed class Parser
                 var bracket = Previous();
                 var index = ParseExpression();
                 Consume(TokenType.RightBracket, "Expected ']' after index expression.");
-                expression = new IndexExpression(expression, index, bracket.Line, bracket.Column);
+                expression = CompleteExpression(new IndexExpression(expression, index, bracket.Line, bracket.Column), start);
                 continue;
             }
 
@@ -909,9 +919,11 @@ public sealed class Parser
                 var dot = Previous();
                 var member = Consume(TokenType.Identifier, "Expected property name after '.'.");
 
-                expression = expression is IdentifierExpression { Name: "global" }
-                    ? new GlobalIdentifierExpression(member.Lexeme, dot.Line, dot.Column)
-                    : new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column);
+                expression = CompleteExpression<Expression>(
+                    expression is IdentifierExpression { Name: "global" }
+                        ? new GlobalIdentifierExpression(member.Lexeme, dot.Line, dot.Column)
+                        : new MemberAccessExpression(expression, member.Lexeme, dot.Line, dot.Column),
+                    start);
                 continue;
             }
 
@@ -919,11 +931,11 @@ public sealed class Parser
             {
                 var questionDot = Previous();
                 var member = Consume(TokenType.Identifier, "Expected property name after '?.'.");
-                expression = new ConditionalMemberAccessExpression(
+                expression = CompleteExpression(new ConditionalMemberAccessExpression(
                     expression,
                     member.Lexeme,
                     questionDot.Line,
-                    questionDot.Column);
+                    questionDot.Column), start);
                 continue;
             }
 
@@ -952,35 +964,37 @@ public sealed class Parser
 
     private Expression ParsePrimary()
     {
+        var start = _current;
+
         if (Match(TokenType.Parallel))
         {
-            return ParseParallelExpression();
+            return CompleteExpression(ParseParallelExpression(), start);
         }
 
         if (Match(TokenType.False))
         {
-            return new LiteralExpression(false);
+            return CompleteExpression(new LiteralExpression(false), start);
         }
 
         if (Match(TokenType.True))
         {
-            return new LiteralExpression(true);
+            return CompleteExpression(new LiteralExpression(true), start);
         }
 
         if (Match(TokenType.Null))
         {
-            return new LiteralExpression(null);
+            return CompleteExpression(new LiteralExpression(null), start);
         }
 
         if (Match(TokenType.Number, TokenType.String))
         {
-            return new LiteralExpression(Previous().Literal);
+            return CompleteExpression(new LiteralExpression(Previous().Literal), start);
         }
 
         if (Match(TokenType.Identifier))
         {
             var token = Previous();
-            return new IdentifierExpression(token.Lexeme, token.Line, token.Column);
+            return CompleteExpression(new IdentifierExpression(token.Lexeme, token.Line, token.Column), start);
         }
 
         if (Match(TokenType.LeftParen))
@@ -992,12 +1006,12 @@ public sealed class Parser
 
         if (Match(TokenType.LeftBracket))
         {
-            return ParseArrayExpression();
+            return CompleteExpression(ParseArrayExpression(), start);
         }
 
         if (Match(TokenType.LeftBrace))
         {
-            return ParseObjectLiteralExpression();
+            return CompleteExpression(ParseObjectLiteralExpression(), start);
         }
 
         throw Error(Peek(), "Expected expression.");
@@ -1119,6 +1133,14 @@ public sealed class Parser
         var end = Previous();
         statement.SourceSpan = new SourceSpan(start.Line, start.Column, end.EndLine, end.EndColumn);
         return statement;
+    }
+
+    private T CompleteExpression<T>(T expression, int startIndex) where T : Expression
+    {
+        var start = _tokens[startIndex];
+        var end = Previous();
+        expression.SourceSpan = new SourceSpan(start.Line, start.Column, end.EndLine, end.EndColumn);
+        return expression;
     }
 
     private void ParseRecovering(List<Statement> statements, IReadOnlyCollection<TokenType>? terminators = null)

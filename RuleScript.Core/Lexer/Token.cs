@@ -7,7 +7,22 @@ public sealed record Token(
     int Line,
     int Column)
 {
-    public int EndLine => Line;
+    /// <summary>
+    /// Gets the 1-based line containing the last character of the token, accounting for multi-line lexemes.
+    /// </summary>
+    public int EndLine => Line + Lexeme.Count(character => character == '\n');
 
-    public int EndColumn => Column + Lexeme.Length;
+    /// <summary>
+    /// Gets the exclusive 1-based end column on <see cref="EndLine"/>.
+    /// </summary>
+    public int EndColumn
+    {
+        get
+        {
+            var lastNewLine = Lexeme.LastIndexOf('\n');
+            return lastNewLine < 0
+                ? Column + Lexeme.Length
+                : Lexeme.Length - lastNewLine;
+        }
+    }
 }

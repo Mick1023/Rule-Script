@@ -27,13 +27,33 @@ public sealed class RuleScriptAnalysisCache
         ArgumentNullException.ThrowIfNull(source);
 
         if (_documents.TryGetValue(documentId, out var cached)
-            && string.Equals(cached.Source, source, StringComparison.Ordinal))
+            && string.Equals(cached.Source, source, StringComparison.Ordinal)
+            && !cached.Tolerant)
         {
             return cached.Result;
         }
 
         var result = RuleScriptLanguageService.AnalyzeDocument(_engine, source);
-        _documents[documentId] = new CachedDocument(source, result);
+        _documents[documentId] = new CachedDocument(source, result, Tolerant: false);
+        return result;
+    }
+
+    /// <summary>
+    /// Gets an existing analysis result for unchanged source text or best-effort analyzes it without throwing for syntax errors.
+    /// </summary>
+    public RuleScriptDocumentAnalysisResult GetOrTryAnalyze(string documentId, string source)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (_documents.TryGetValue(documentId, out var cached)
+            && string.Equals(cached.Source, source, StringComparison.Ordinal))
+        {
+            return cached.Result;
+        }
+
+        var result = RuleScriptLanguageService.TryAnalyzeDocument(_engine, source);
+        _documents[documentId] = new CachedDocument(source, result, Tolerant: true);
         return result;
     }
 
@@ -71,5 +91,5 @@ public sealed class RuleScriptAnalysisCache
         _documents.Clear();
     }
 
-    private sealed record CachedDocument(string Source, RuleScriptDocumentAnalysisResult Result);
+    private sealed record CachedDocument(string Source, RuleScriptDocumentAnalysisResult Result, bool Tolerant);
 }

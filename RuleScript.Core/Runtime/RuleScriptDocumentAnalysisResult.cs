@@ -15,7 +15,9 @@ public sealed class RuleScriptDocumentAnalysisResult
         IEnumerable<Token> tokens,
         IEnumerable<Statement> statements,
         IEnumerable<RuleScriptRegion> regions,
-        RuleScriptAnalysisResult analysis)
+        RuleScriptAnalysisResult analysis,
+        IEnumerable<RuleScriptDiagnostic>? diagnostics = null,
+        bool? success = null)
     {
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
         Source = source ?? throw new ArgumentNullException(nameof(source));
@@ -23,6 +25,8 @@ public sealed class RuleScriptDocumentAnalysisResult
         Statements = statements?.ToArray() ?? throw new ArgumentNullException(nameof(statements));
         Regions = regions?.ToArray() ?? throw new ArgumentNullException(nameof(regions));
         Analysis = analysis ?? throw new ArgumentNullException(nameof(analysis));
+        Diagnostics = diagnostics?.ToArray() ?? analysis.Diagnostics.ToArray();
+        Success = success ?? Diagnostics.All(diagnostic => diagnostic.Severity != RuleScriptDiagnosticSeverity.Error);
     }
 
     internal RuleScriptEngine Engine { get; }
@@ -51,4 +55,14 @@ public sealed class RuleScriptDocumentAnalysisResult
     /// Gets semantic analysis, diagnostics, and editor-facing symbols for this document.
     /// </summary>
     public RuleScriptAnalysisResult Analysis { get; }
+
+    /// <summary>
+    /// Gets every diagnostic for this document, including recoverable syntax errors from tolerant analysis.
+    /// </summary>
+    public IReadOnlyList<RuleScriptDiagnostic> Diagnostics { get; }
+
+    /// <summary>
+    /// Gets whether the document was parsed and analyzed without error diagnostics.
+    /// </summary>
+    public bool Success { get; }
 }

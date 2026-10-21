@@ -10,8 +10,10 @@ public sealed class Lexer
     private int _current;
     private int _line = 1;
     private int _column = 1;
+    private int _tokenLine = 1;
     private int _tokenColumn = 1;
     private bool _includeComments;
+    private List<SyntaxException>? _diagnostics;
 
     private static readonly Dictionary<string, TokenType> Keywords = new(StringComparer.Ordinal)
     {
@@ -60,6 +62,17 @@ public sealed class Lexer
 
     public IReadOnlyList<Token> Tokenize() => Tokenize(includeComments: false);
 
+    /// <summary>
+    /// Tokenizes as much of the source as possible and collects recoverable lexical errors instead of throwing.
+    /// </summary>
+    internal IReadOnlyList<Token> TokenizeWithDiagnostics(List<SyntaxException> diagnostics, bool includeComments = false)
+    {
+        ArgumentNullException.ThrowIfNull(diagnostics);
+
+        _diagnostics = diagnostics;
+        return Tokenize(includeComments);
+    }
+
     internal IReadOnlyList<Token> Tokenize(bool includeComments)
     {
         _includeComments = includeComments;
@@ -67,6 +80,7 @@ public sealed class Lexer
         while (!IsAtEnd())
         {
             _start = _current;
+            _tokenLine = _line;
             _tokenColumn = _column;
             ScanToken();
         }
@@ -149,7 +163,7 @@ public sealed class Lexer
                 }
                 else
                 {
-                    throw new SyntaxException("Expected '?' or '.' after '?'.", _line, _tokenColumn, "?");
+                    Report(new SyntaxException("Expected '?' or '.' after '?'.", _line, _tokenColumn, "?"));
                 }
 
                 break;
@@ -198,7 +212,7 @@ public sealed class Lexer
                 }
                 else
                 {
-                    throw new SyntaxException($"Unsupported character '{c}'.", _line, _tokenColumn, c.ToString());
+                    Report(new SyntaxException($"Unsupported character '{c}'.", _line, _tokenColumn, c.ToString()));
                 }
 
                 break;
@@ -213,7 +227,8 @@ public sealed class Lexer
         {
             if (Peek() == '\n')
             {
-                throw new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\"");
+                ReportUnterminatedString(value);
+                return;
             }
 
             if (Peek() == '\\')
@@ -222,7 +237,8 @@ public sealed class Lexer
 
                 if (IsAtEnd())
                 {
-                    throw new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\"");
+                    ReportUnterminatedString(value);
+                    return;
                 }
 
                 value.Append(AdvanceEscapedCharacter());
@@ -234,7 +250,8 @@ public sealed class Lexer
 
         if (IsAtEnd())
         {
-            throw new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\"");
+            ReportUnterminatedString(value);
+            return;
         }
 
         Advance();
@@ -242,19 +259,34 @@ public sealed class Lexer
         AddToken(TokenType.String, value.ToString());
     }
 
+    private void ReportUnterminatedString(System.Text.StringBuilder value)
+    {
+        Report(new SyntaxException("Unterminated string literal.", _line, _tokenColumn, "\""));
+
+        // Recovery keeps the partial literal so the parser can continue with the rest of the line.
+        AddToken(TokenType.String, value.ToString());
+    }
+
     private char AdvanceEscapedCharacter()
     {
         var escaped = Advance();
 
-        return escaped switch
+        switch (escaped)
         {
-            '"' => '"',
-            '\\' => '\\',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            _ => throw new SyntaxException($"Unsupported string escape '\\{escaped}'.", _line, _column - 1, escaped.ToString())
-        };
+            case '"':
+                return '"';
+            case '\\':
+                return '\\';
+            case 'n':
+                return '\n';
+            case 'r':
+                return '\r';
+            case 't':
+                return '\t';
+            default:
+                Report(new SyntaxException($"Unsupported string escape '\\{escaped}'.", _line, _column - 1, escaped.ToString()));
+                return escaped;
+        }
     }
 
     private void ScanNumber()
@@ -338,7 +370,7 @@ public sealed class Lexer
             return;
         }
 
-        throw new SyntaxException($"Unsupported directive '{directive}'.", _line, _tokenColumn, directive);
+        Report(new SyntaxException($"Unsupported directive '{directive}'.", _line, _tokenColumn, directive));
     }
 
     private static bool TryGetDirectiveValue(string directive, string keyword, out string value)
@@ -356,8 +388,6 @@ public sealed class Lexer
 
     private void ScanBlockComment()
     {
-        var commentLine = _line;
-
         while (!IsAtEnd())
         {
             if (Peek() == '*' && PeekNext() == '/')
@@ -383,7 +413,12 @@ public sealed class Lexer
             }
         }
 
-        throw new SyntaxException("Unterminated multi-line comment.", commentLine, _tokenColumn, "/*");
+        Report(new SyntaxException("Unterminated multi-line comment.", _tokenLine, _tokenColumn, "/*"));
+
+        if (_includeComments)
+        {
+            AddToken(TokenType.MultiLineComment);
+        }
     }
 
     private bool Match(char expected)
@@ -413,7 +448,20 @@ public sealed class Lexer
     private void AddToken(TokenType type, object? literal = null)
     {
         var text = _source[_start.._current];
-        _tokens.Add(new Token(type, text, literal, _line, _tokenColumn));
+        _tokens.Add(new Token(type, text, literal, _tokenLine, _tokenColumn));
+    }
+
+    /// <summary>
+    /// Throws in strict mode, or records the error and lets the caller skip the offending input in recovery mode.
+    /// </summary>
+    private void Report(SyntaxException exception)
+    {
+        if (_diagnostics is null)
+        {
+            throw exception;
+        }
+
+        _diagnostics.Add(exception);
     }
 
     private void NewLine()
