@@ -3,7 +3,6 @@ using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
-using OmniSharp.Extensions.LanguageServer.Protocol.Server;
 using OmniSharp.Extensions.LanguageServer.Protocol.Server.Capabilities;
 
 namespace RuleScript.LanguageServer.Handlers;
@@ -14,12 +13,12 @@ namespace RuleScript.LanguageServer.Handlers;
 internal sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 {
     private readonly RuleScriptWorkspace _workspace;
-    private readonly ILanguageServerFacade _server;
+    private readonly DiagnosticsPublisher _diagnostics;
 
-    public TextDocumentSyncHandler(RuleScriptWorkspace workspace, ILanguageServerFacade server)
+    public TextDocumentSyncHandler(RuleScriptWorkspace workspace, DiagnosticsPublisher diagnostics)
     {
         _workspace = workspace;
-        _server = server;
+        _diagnostics = diagnostics;
     }
 
     public override TextDocumentAttributes GetTextDocumentAttributes(DocumentUri uri)
@@ -30,7 +29,7 @@ internal sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     public override Task<Unit> Handle(DidOpenTextDocumentParams request, CancellationToken cancellationToken)
     {
         _workspace.Update(request.TextDocument.Uri, request.TextDocument.Text, request.TextDocument.Version);
-        PublishDiagnostics(request.TextDocument.Uri);
+        _diagnostics.Publish(request.TextDocument.Uri);
         return Unit.Task;
     }
 
@@ -41,7 +40,7 @@ internal sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         if (change is not null)
         {
             _workspace.Update(request.TextDocument.Uri, change.Text, request.TextDocument.Version);
-            PublishDiagnostics(request.TextDocument.Uri);
+            _diagnostics.Publish(request.TextDocument.Uri);
         }
 
         return Unit.Task;
@@ -49,17 +48,15 @@ internal sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
     public override Task<Unit> Handle(DidSaveTextDocumentParams request, CancellationToken cancellationToken)
     {
+        // Saving is a natural point to refresh documents that import the saved file.
+        _diagnostics.PublishAll();
         return Unit.Task;
     }
 
     public override Task<Unit> Handle(DidCloseTextDocumentParams request, CancellationToken cancellationToken)
     {
         _workspace.Close(request.TextDocument.Uri);
-        _server.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
-        {
-            Uri = request.TextDocument.Uri,
-            Diagnostics = new Container<Diagnostic>()
-        });
+        _diagnostics.Clear(request.TextDocument.Uri);
         return Unit.Task;
     }
 
@@ -73,22 +70,5 @@ internal sealed class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
             Change = TextDocumentSyncKind.Full,
             Save = new SaveOptions { IncludeText = false }
         };
-    }
-
-    private void PublishDiagnostics(DocumentUri uri)
-    {
-        var document = _workspace.GetDocument(uri);
-        if (document is null)
-        {
-            return;
-        }
-
-        _server.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
-        {
-            Uri = uri,
-            Version = _workspace.GetVersion(uri),
-            Diagnostics = new Container<Diagnostic>(
-                RuleScriptLanguageFeatures.GetDiagnostics(document, RuleScriptWorkspace.GetFilePath(uri)))
-        });
     }
 }

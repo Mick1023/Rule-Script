@@ -67,7 +67,22 @@ public static class RuleScriptLanguageService
 
     private static RuleScriptDocumentAnalysisResult TryAnalyzeDocumentCore(RuleScriptEngine engine, string source, string? sourceFile)
     {
-        var baseDirectory = engine.ResolveDocumentBaseDirectory(sourceFile);
+        return TryAnalyzeDocumentInDirectory(engine, source, engine.ResolveDocumentBaseDirectory(sourceFile));
+    }
+
+    /// <summary>
+    /// Re-analyzes edited text with the same engine and import directory as an existing document.
+    /// </summary>
+    internal static RuleScriptDocumentAnalysisResult Reanalyze(RuleScriptDocumentAnalysisResult document, string source)
+    {
+        return TryAnalyzeDocumentInDirectory(
+            document.Engine,
+            source,
+            document.BaseDirectory ?? document.Engine.ResolveDocumentBaseDirectory(null));
+    }
+
+    private static RuleScriptDocumentAnalysisResult TryAnalyzeDocumentInDirectory(RuleScriptEngine engine, string source, string baseDirectory)
+    {
         var (attempt, tokens, parser, statements) = engine.TryAnalyzeDocumentCore(source, baseDirectory);
         return new RuleScriptDocumentAnalysisResult(
             engine,
@@ -172,6 +187,31 @@ public static class RuleScriptLanguageService
         ValidatePosition(line, column);
 
         return RuleScriptSignatureHelpAnalyzer.GetSignatureHelp(document, line, column);
+    }
+
+    /// <summary>
+    /// Checks whether the symbol at the requested 1-based position can be renamed, and returns its current name and range.
+    /// </summary>
+    public static RuleScriptPrepareRenameResult PrepareRename(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidatePosition(line, column);
+
+        return RuleScriptRenameAnalyzer.PrepareRename(document, line, column);
+    }
+
+    /// <summary>
+    /// Computes the edits that rename the symbol at the requested 1-based position to <paramref name="newName"/>.
+    /// Built-in and Host Functions, exported symbols, and symbols declared in imported files are rejected,
+    /// as are invalid names, names already in use, and renames that would change which declarations references resolve to.
+    /// </summary>
+    public static RuleScriptRenameResult Rename(RuleScriptDocumentAnalysisResult document, int line, int column, string newName)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(newName);
+        ValidatePosition(line, column);
+
+        return RuleScriptRenameAnalyzer.Rename(document, line, column, newName);
     }
 
     /// <summary>
