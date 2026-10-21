@@ -59,6 +59,21 @@ internal sealed class RuleScriptNavigationAnalyzer
             .ToArray();
     }
 
+    public static RuleScriptHoverInfo? GetHover(RuleScriptDocumentAnalysisResult document, int line, int column)
+    {
+        var analyzer = new RuleScriptNavigationAnalyzer(document);
+        analyzer.Analyze();
+        var symbol = analyzer.FindSymbol(line, column);
+
+        if (symbol is null)
+        {
+            return null;
+        }
+
+        var declaration = analyzer._declarations.GetValueOrDefault(symbol.Key) ?? symbol;
+        return analyzer.CreateHover(declaration, symbol.SelectionRange ?? symbol.Range);
+    }
+
     private void Analyze()
     {
         foreach (var function in _document.Analysis.Functions.Where(IsExternalFunction))
@@ -66,7 +81,7 @@ internal sealed class RuleScriptNavigationAnalyzer
             AddExternalFunction(function);
         }
 
-        AddImportedDeclarations(_document.Statements, ResolveWorkingDirectory());
+        AddImportedDeclarations(_document.Statements, _document.BaseDirectory ?? ResolveWorkingDirectory());
         VisitStatements(_document.Statements, new NavigationScope(null, isFunctionScope: false), file: null);
     }
 
@@ -88,7 +103,9 @@ internal sealed class RuleScriptNavigationAnalyzer
             }
 
             var importedSource = _engine.ImportResolver.ReadAllText(path);
-            var importedStatements = new Parser.Parser(new Lexer.Lexer(importedSource).Tokenize()).Parse();
+            // Imported files may be mid-edit too, so navigation keeps whatever parses instead of failing the whole document.
+            var importedTokens = new Lexer.Lexer(importedSource).TokenizeWithDiagnostics([]);
+            var importedStatements = new Parser.Parser(importedTokens).ParseWithDiagnostics().Statements;
             AddImportedDeclarations(importedStatements, Path.GetDirectoryName(path) ?? baseDirectory);
             VisitStatements(importedStatements, new NavigationScope(null, isFunctionScope: false), path);
 
@@ -116,7 +133,10 @@ internal sealed class RuleScriptNavigationAnalyzer
                     {
                         if (TryCreateRange(file, parameter.Line, parameter.Column, parameter.Name, out var range))
                         {
-                            var symbol = new NavigationSymbol(parameter.Name, RuleScriptSymbolKind.Parameter, range, range, IsDeclaration: true);
+                            var symbol = new NavigationSymbol(parameter.Name, RuleScriptSymbolKind.Parameter, range, range, IsDeclaration: true)
+                            {
+                                ValueType = ParseTypeName(parameter.TypeName)
+                            };
                             functionScope.Declare(symbol);
                             AddDeclaration(symbol);
                         }
@@ -179,6 +199,9 @@ internal sealed class RuleScriptNavigationAnalyzer
                     break;
                 case DestructuringVarStatement destructuring:
                     VisitExpression(destructuring.Initializer, scope, file);
+                    break;
+                case ParallelStatementSyntax parallel:
+                    VisitTasks(parallel.Tasks, scope, file);
                     break;
             }
         }
@@ -248,7 +271,88 @@ internal sealed class RuleScriptNavigationAnalyzer
                 }
 
                 return;
+            case ParallelExpressionSyntax parallel:
+                VisitTasks(parallel.Tasks, scope, file);
+                return;
         }
+    }
+
+    private void VisitTasks(IEnumerable<TaskBlockSyntax> tasks, NavigationScope scope, string? file)
+    {
+        foreach (var task in tasks)
+        {
+            VisitStatements(task.Body, new NavigationScope(scope, isFunctionScope: false), file);
+        }
+    }
+
+    private RuleScriptHoverInfo CreateHover(NavigationSymbol declaration, RuleScriptSourceRange? range)
+    {
+        switch (declaration.Kind)
+        {
+            case RuleScriptSymbolKind.Function:
+            case RuleScriptSymbolKind.HostFunction:
+                var function = FindFunctionSymbol(declaration);
+                var parameters = declaration.Parameters ?? function?.Parameters ?? [];
+                var returnType = function?.ReturnType ?? declaration.ReturnType;
+                var prefix = function?.Kind switch
+                {
+                    RuleScriptFunctionKind.Host => "host function",
+                    RuleScriptFunctionKind.Builtin => "builtin function",
+                    _ when declaration.Kind == RuleScriptSymbolKind.HostFunction => "host function",
+                    _ => "function"
+                };
+                var signature = $"{prefix} {declaration.Name}({string.Join(", ", parameters.Select(parameter => FormatTyped(parameter.Name, parameter.Type)))})"
+                    + (IsKnownType(returnType) ? $" -> {RuleScriptTypeFacts.ToDisplayName(returnType)}" : string.Empty);
+                return new RuleScriptHoverInfo(
+                    declaration.Name,
+                    declaration.Kind,
+                    signature,
+                    function?.Documentation ?? declaration.Documentation,
+                    range,
+                    declaration.IsExternal);
+            case RuleScriptSymbolKind.Parameter:
+                return new RuleScriptHoverInfo(
+                    declaration.Name,
+                    declaration.Kind,
+                    $"(parameter) {FormatTyped(declaration.Name, declaration.ValueType)}",
+                    declaration.Documentation,
+                    range,
+                    declaration.IsExternal);
+            default:
+                var variable = _document.Analysis.Variables.FirstOrDefault(candidate => string.Equals(candidate.Name, declaration.Name, StringComparison.Ordinal));
+                var keyword = variable?.IsReadOnly == true ? "const" : "var";
+                return new RuleScriptHoverInfo(
+                    declaration.Name,
+                    declaration.Kind,
+                    $"{keyword} {FormatTyped(declaration.Name, variable?.Type ?? RuleScriptValueType.Unknown)}",
+                    declaration.Documentation ?? variable?.Documentation,
+                    range,
+                    declaration.IsExternal);
+        }
+    }
+
+    private RuleScriptFunctionSymbol? FindFunctionSymbol(NavigationSymbol declaration)
+    {
+        var candidates = _document.Analysis.Functions
+            .Where(function => string.Equals(function.Name, declaration.Name, StringComparison.Ordinal))
+            .ToArray();
+
+        return candidates.FirstOrDefault(function => declaration.Parameters is null || function.Parameters.Count == declaration.Parameters.Count)
+            ?? candidates.FirstOrDefault();
+    }
+
+    private static string FormatTyped(string name, RuleScriptValueType type)
+    {
+        return IsKnownType(type) ? $"{name}: {RuleScriptTypeFacts.ToDisplayName(type)}" : name;
+    }
+
+    private static bool IsKnownType(RuleScriptValueType type) => type != RuleScriptValueType.Unknown;
+
+    private static RuleScriptValueType ParseTypeName(string? typeName)
+    {
+        return typeName is not null && RuleScriptTypeFacts.TryParse(typeName, out var type)
+            ? type
+            : RuleScriptValueType.Unknown;
     }
 
     private NavigationSymbol? FindSymbol(int line, int column)
@@ -374,9 +478,7 @@ internal sealed class RuleScriptNavigationAnalyzer
             function.Documentation,
             Parameters: function.ParameterDefinitions.Select(parameter => new RuleScriptParameterSymbol(
                 parameter.Name,
-                parameter.TypeName is not null && RuleScriptTypeFacts.TryParse(parameter.TypeName, out var type)
-                    ? type
-                    : RuleScriptValueType.Unknown)).ToArray());
+                ParseTypeName(parameter.TypeName))).ToArray());
     }
 
     private void AddDeclaration(NavigationSymbol symbol)
@@ -502,6 +604,8 @@ internal sealed class RuleScriptNavigationAnalyzer
         IReadOnlyList<RuleScriptParameterSymbol>? Parameters = null,
         RuleScriptValueType ReturnType = RuleScriptValueType.Unknown)
     {
+        public RuleScriptValueType ValueType { get; init; } = RuleScriptValueType.Unknown;
+
         public string Key => RuleScriptNavigationAnalyzer.Key(Kind, Name);
 
         public RuleScriptDefinitionInfo ToDefinition()
