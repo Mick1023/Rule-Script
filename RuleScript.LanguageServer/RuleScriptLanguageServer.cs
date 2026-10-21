@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using OmniSharp.Extensions.LanguageServer.Protocol.Window;
 using OmniSharp.Extensions.LanguageServer.Server;
 using RuleScript.LanguageServer.Handlers;
 using OmniSharpLanguageServer = OmniSharp.Extensions.LanguageServer.Server.LanguageServer;
@@ -27,7 +28,9 @@ internal static class RuleScriptLanguageServer
                 Name = "RuleScript Language Server",
                 Version = typeof(RuleScriptLanguageServer).Assembly.GetName().Version?.ToString()
             })
-            .WithServices(services => services.AddSingleton(workspace))
+            .WithServices(services => services
+                .AddSingleton(workspace)
+                .AddSingleton<DiagnosticsPublisher>())
             .WithHandler<TextDocumentSyncHandler>()
             .WithHandler<DefinitionHandler>()
             .WithHandler<ReferencesHandler>()
@@ -37,10 +40,16 @@ internal static class RuleScriptLanguageServer
             .WithHandler<DocumentFormattingHandler>()
             .WithHandler<CompletionHandler>()
             .WithHandler<SignatureHelpHandler>()
-            .OnInitialize((_, request, _) =>
+            .WithHandler<RenameHandler>()
+            .WithHandler<PrepareRenameHandler>()
+            .WithHandler<ManifestWatcherHandler>()
+            .OnInitialize((server, request, _) =>
             {
-                var root = request.WorkspaceFolders?.FirstOrDefault()?.Uri ?? request.RootUri;
-                workspace.Initialize(root);
+                workspace.Warn = message => server.Window.LogWarning(message);
+
+                // Every workspace folder gets its own engine; older clients only send a root URI.
+                var roots = request.WorkspaceFolders?.Select(folder => folder.Uri).ToArray() ?? [];
+                workspace.Initialize(roots.Length > 0 ? roots : request.RootUri is { } root ? [root] : []);
                 return Task.CompletedTask;
             });
     }

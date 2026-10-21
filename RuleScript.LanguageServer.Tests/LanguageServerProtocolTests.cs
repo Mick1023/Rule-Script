@@ -81,6 +81,7 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
         Assert.NotNull(capabilities.DocumentFormattingProvider);
         Assert.Contains(".", capabilities.CompletionProvider!.TriggerCharacters!);
         Assert.Contains("(", capabilities.SignatureHelpProvider!.TriggerCharacters!);
+        Assert.True(capabilities.RenameProvider!.Value!.PrepareProvider);
         await Task.CompletedTask;
     }
 
@@ -165,6 +166,44 @@ public sealed class LanguageServerProtocolTests : IAsyncLifetime
 
         var latest = await WaitForDiagnosticsAsync(request => request.Version == 2);
         Assert.Empty(latest.Diagnostics);
+    }
+
+    [Fact]
+    public async Task Rename_ReturnsEditsAndReportsRejectionReason()
+    {
+        _client!.TextDocument.DidOpenTextDocument(new DidOpenTextDocumentParams
+        {
+            TextDocument = new TextDocumentItem
+            {
+                Uri = Uri,
+                LanguageId = "rulescript",
+                Version = 1,
+                Text = "var count = 1;\ncount = count + Length(\"x\");"
+            }
+        });
+        await WaitForDiagnosticsAsync(_ => true);
+
+        var prepare = await _client
+            .SendRequest("textDocument/prepareRename", new PrepareRenameParams { TextDocument = Uri, Position = new Position(0, 5) })
+            .Returning<RangeOrPlaceholderRange?>(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("count", prepare!.PlaceholderRange!.Placeholder);
+
+        var edit = await _client.TextDocument.RequestRename(new RenameParams
+        {
+            TextDocument = Uri,
+            Position = new Position(0, 5),
+            NewName = "total"
+        }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(3, Assert.Single(edit!.Changes!).Value.Count());
+
+        var rejection = await Assert.ThrowsAnyAsync<Exception>(() => _client.TextDocument.RequestRename(new RenameParams
+        {
+            TextDocument = Uri,
+            Position = new Position(1, 17),
+            NewName = "Size"
+        }).WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Contains("Host Functions cannot be renamed", rejection.ToString());
     }
 
     private async Task<PublishDiagnosticsParams> WaitForDiagnosticsAsync(Func<PublishDiagnosticsParams, bool> predicate)

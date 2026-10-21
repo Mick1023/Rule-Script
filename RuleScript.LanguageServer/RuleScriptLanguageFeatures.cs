@@ -134,6 +134,43 @@ internal static partial class RuleScriptLanguageFeatures
         };
     }
 
+    public static RangeOrPlaceholderRange PrepareRename(RuleScriptDocumentAnalysisResult document, Position position)
+    {
+        var (line, column) = PositionMapper.ToRuleScript(position);
+        var result = RuleScriptLanguageService.PrepareRename(document, line, column);
+
+        if (!result.CanRename)
+        {
+            throw new RenameRejectedException(result.RejectReason ?? "This symbol cannot be renamed.");
+        }
+
+        return new RangeOrPlaceholderRange(new PlaceholderRange
+        {
+            Range = PositionMapper.ToLsp(result.Range!),
+            Placeholder = result.Name!
+        });
+    }
+
+    public static WorkspaceEdit Rename(RuleScriptDocumentAnalysisResult document, DocumentUri uri, Position position, string newName)
+    {
+        var (line, column) = PositionMapper.ToRuleScript(position);
+        var result = RuleScriptLanguageService.Rename(document, line, column, newName);
+
+        if (!result.Success)
+        {
+            throw new RenameRejectedException(result.ErrorMessage ?? "This symbol cannot be renamed.");
+        }
+
+        return new WorkspaceEdit
+        {
+            Changes = result.Edits
+                .GroupBy(edit => ResolveUri(edit.File, uri))
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(edit => new TextEdit { Range = PositionMapper.ToLsp(edit), NewText = result.NewName }))
+        };
+    }
+
     public static IReadOnlyList<DocumentSymbol> GetDocumentSymbols(RuleScriptDocumentAnalysisResult document)
     {
         return RuleScriptLanguageService.GetDocumentSymbols(document).Select(ToLspSymbol).ToArray();

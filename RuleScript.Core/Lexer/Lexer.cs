@@ -55,6 +55,22 @@ public sealed class Lexer
         ["null"] = TokenType.Null
     };
 
+    /// <summary>
+    /// Gets whether the text is a reserved RuleScript keyword.
+    /// </summary>
+    internal static bool IsKeyword(string text) => Keywords.ContainsKey(text);
+
+    /// <summary>
+    /// Gets whether the text is a valid identifier that is not a reserved keyword.
+    /// </summary>
+    internal static bool IsIdentifier(string text)
+    {
+        return text.Length > 0
+            && IsIdentifierStart(text[0])
+            && text.All(IsIdentifierPart)
+            && !IsKeyword(text);
+    }
+
     public Lexer(string source)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
