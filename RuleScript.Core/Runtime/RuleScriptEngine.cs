@@ -602,10 +602,41 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(script);
 
+        return TryAnalyzeTokensCore(script, baseDirectory, cursorLine, cursorColumn).Attempt;
+    }
+
+    /// <summary>
+    /// Tolerantly lexes, parses, and analyzes a document for editor tooling, keeping the intermediate syntax state.
+    /// </summary>
+    internal (RuleScriptAnalysisAttempt Attempt, IReadOnlyList<Token> Tokens, RuleScript.Core.Parser.Parser Parser, IReadOnlyList<Statement> Statements) TryAnalyzeDocumentCore(
+        string script,
+        string? sourceFile)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        var baseDirectory = sourceFile is null ? ResolveWorkingDirectory() : ResolveAnalysisBaseDirectory(sourceFile);
+        return TryAnalyzeTokensCore(script, baseDirectory, cursorLine: null, cursorColumn: null);
+    }
+
+    private (RuleScriptAnalysisAttempt Attempt, IReadOnlyList<Token> Tokens, RuleScript.Core.Parser.Parser Parser, IReadOnlyList<Statement> Statements) TryAnalyzeTokensCore(
+        string script,
+        string baseDirectory,
+        int? cursorLine,
+        int? cursorColumn)
+    {
+        var lexicalDiagnostics = new List<SyntaxException>();
+        var tokens = new RuleScript.Core.Lexer.Lexer(script).TokenizeWithDiagnostics(lexicalDiagnostics);
+        var parser = new RuleScript.Core.Parser.Parser(tokens);
+
         try
         {
-            var tokens = new RuleScript.Core.Lexer.Lexer(script).Tokenize();
-            var parseResult = new RuleScript.Core.Parser.Parser(tokens).ParseWithDiagnostics();
+            var parseResult = parser.ParseWithDiagnostics();
+            var syntaxDiagnostics = lexicalDiagnostics
+                .Concat(parseResult.Diagnostics)
+                .OrderBy(exception => exception.Line ?? int.MaxValue)
+                .ThenBy(exception => exception.Column ?? int.MaxValue)
+                .ToArray();
+            var syntaxSucceeded = syntaxDiagnostics.Length == 0;
             var variables = new HashSet<string>(StringComparer.Ordinal);
             var userFunctions = new HashSet<string>(StringComparer.Ordinal);
             var importAliases = new HashSet<string>(StringComparer.Ordinal);
@@ -622,19 +653,23 @@ public sealed class RuleScriptEngine
                 baseDirectory,
                 cursorLine,
                 cursorColumn,
-                fallbackVisibleToAll: !parseResult.Success);
-            var diagnostics = parseResult.Diagnostics
+                fallbackVisibleToAll: !syntaxSucceeded);
+            var diagnostics = syntaxDiagnostics
                 .Select(CreateDiagnostic)
                 .Concat(symbols.Diagnostics)
                 .ToArray();
-            var success = parseResult.Success
+            var success = syntaxSucceeded
                 && diagnostics.All(diagnostic => diagnostic.Severity != RuleScriptDiagnosticSeverity.Error);
 
-            return new RuleScriptAnalysisAttempt(symbols, diagnostics, success);
+            return (new RuleScriptAnalysisAttempt(symbols, diagnostics, success), tokens, parser, parseResult.Statements);
         }
         catch (SyntaxException exception)
         {
-            return new RuleScriptAnalysisAttempt(AnalyzeBestEffort(script, baseDirectory), [CreateDiagnostic(exception)], success: false);
+            var attempt = new RuleScriptAnalysisAttempt(
+                AnalyzeBestEffort(script, baseDirectory),
+                lexicalDiagnostics.Append(exception).Select(CreateDiagnostic),
+                success: false);
+            return (attempt, tokens, parser, []);
         }
     }
 

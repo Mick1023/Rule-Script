@@ -11,6 +11,7 @@ public static class RuleScriptLanguageService
 {
     /// <summary>
     /// Parses and analyzes a document once so multiple editor features can reuse the same result.
+    /// Syntax errors are reported by throwing <see cref="Diagnostics.SyntaxException"/>; use <see cref="TryAnalyzeDocument(string)"/> for documents being edited.
     /// </summary>
     public static RuleScriptDocumentAnalysisResult AnalyzeDocument(string source)
     {
@@ -30,6 +31,52 @@ public static class RuleScriptLanguageService
         var statements = parser.Parse();
         var analysis = engine.AnalyzeParsedDocument(statements);
         return new RuleScriptDocumentAnalysisResult(engine, source, tokens, statements, parser.Regions, analysis);
+    }
+
+    /// <summary>
+    /// Best-effort parses and analyzes a document, collecting syntax errors as diagnostics instead of throwing.
+    /// Use this for documents that are being edited and may be temporarily incomplete.
+    /// </summary>
+    public static RuleScriptDocumentAnalysisResult TryAnalyzeDocument(string source)
+    {
+        return TryAnalyzeDocument(new RuleScriptEngine(), source);
+    }
+
+    /// <summary>
+    /// Best-effort parses and analyzes a document using the supplied engine metadata.
+    /// </summary>
+    public static RuleScriptDocumentAnalysisResult TryAnalyzeDocument(RuleScriptEngine engine, string source)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(source);
+
+        return TryAnalyzeDocumentCore(engine, source, sourceFile: null);
+    }
+
+    /// <summary>
+    /// Best-effort parses and analyzes a document, resolving relative imports from the specified source file.
+    /// </summary>
+    public static RuleScriptDocumentAnalysisResult TryAnalyzeDocument(RuleScriptEngine engine, string source, string sourceFile)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceFile);
+
+        return TryAnalyzeDocumentCore(engine, source, sourceFile);
+    }
+
+    private static RuleScriptDocumentAnalysisResult TryAnalyzeDocumentCore(RuleScriptEngine engine, string source, string? sourceFile)
+    {
+        var (attempt, tokens, parser, statements) = engine.TryAnalyzeDocumentCore(source, sourceFile);
+        return new RuleScriptDocumentAnalysisResult(
+            engine,
+            source,
+            tokens,
+            statements,
+            parser.Regions,
+            attempt.Symbols,
+            attempt.Diagnostics,
+            attempt.Success);
     }
 
     /// <summary>
