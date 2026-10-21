@@ -17,7 +17,13 @@
     <RepositoryUrl>https://github.com/Mick1023/Rule-Script</RepositoryUrl>
     <PackageProjectUrl>https://github.com/Mick1023/Rule-Script</PackageProjectUrl>
     <PackageTags>rulescript;lsp;language-server;dsl</PackageTags>
+    <PackageReleaseNotes>https://github.com/Mick1023/Rule-Script/releases/tag/lsp-v$(Version)</PackageReleaseNotes>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />

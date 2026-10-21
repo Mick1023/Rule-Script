@@ -21,6 +21,12 @@ Documents are synchronized in full on each change. Relative imports resolve from
 ## Install
 
 ```bash
+dotnet tool install --global RuleScript.LanguageServer
+```
+
+To build and install from source instead:
+
+```bash
 dotnet pack RuleScript.LanguageServer -c Release -o ./artifacts
 dotnet tool install --global --add-source ./artifacts RuleScript.LanguageServer
 ```
