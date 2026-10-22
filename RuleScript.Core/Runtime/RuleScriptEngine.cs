@@ -9,10 +9,7 @@ namespace RuleScript.Core.Runtime;
 public sealed class RuleScriptEngine
 {
     private readonly BuiltinFunctions _builtinFunctions;
-    private readonly Dictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptFunctionSymbol> _hostFunctionSignatures = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptFunctionSymbol> _asyncHostFunctionSignatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HostFunctionOverload[]> _hostFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuleScriptValueType> _knownVariables = new(StringComparer.Ordinal);
     private readonly List<RuleScriptBreakpoint> _breakpoints = [];
     private readonly object _executionSync = new();
@@ -99,8 +96,6 @@ public sealed class RuleScriptEngine
     /// </summary>
     public IReadOnlyList<string> RegisteredFunctionNames =>
         _hostFunctions.Keys
-            .Concat(_asyncHostFunctions.Keys)
-            .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -119,10 +114,13 @@ public sealed class RuleScriptEngine
     /// Gets typed function symbols registered on the engine.
     /// </summary>
     public IReadOnlyList<RuleScriptFunctionSymbol> RegisteredFunctionSymbols =>
-        _hostFunctionSignatures.Values
-            .Concat(_asyncHostFunctionSignatures.Values)
+        _hostFunctions.Values
+            .SelectMany(overloads => overloads)
+            .Select(overload => overload.Signature)
+            .OfType<RuleScriptFunctionSymbol>()
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ThenBy(symbol => symbol.HostMetadata?.IsAsync ?? false)
+            .ThenBy(symbol => symbol.Signature, StringComparer.Ordinal)
             .ToArray();
 
     /// <summary>
@@ -161,7 +159,7 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Registers or replaces a host function.
+    /// Registers or replaces an untyped host function. It accepts any arguments and replaces every sync overload of the name.
     /// </summary>
     public void RegisterFunction(string name, Func<IReadOnlyList<object?>, object?> function)
     {
@@ -170,8 +168,8 @@ public sealed class RuleScriptEngine
             throw new ArgumentException("Function name cannot be empty.", nameof(name));
         }
 
-        _hostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
-        _hostFunctionSignatures.Remove(name);
+        ArgumentNullException.ThrowIfNull(function);
+        AddHostFunctionOverload(name, new HostFunctionOverload(Signature: null, function, AsyncFunction: null));
     }
 
     public void RegisterFunction(string name, Func<IReadOnlyList<object?>, object?> function, bool threadSafe)
@@ -180,7 +178,9 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Registers or replaces a host function using extensible execution and metadata options.
+    /// Registers a host function using extensible execution and metadata options.
+    /// Registrations with distinct <see cref="RuleScriptHostFunctionOptions.Parameters"/> become overloads of the same name;
+    /// registering the same parameter types again replaces that overload.
     /// </summary>
     public void RegisterFunction(
         string name,
@@ -189,8 +189,7 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(function);
         var signature = CreateHostFunctionSignature(name, options, isAsync: false);
-        _hostFunctions[name] = function;
-        _hostFunctionSignatures[name] = signature;
+        AddHostFunctionOverload(name, new HostFunctionOverload(signature, function, AsyncFunction: null));
     }
 
     /// <summary>
@@ -200,6 +199,7 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(host);
         var registered = 0;
+        var registeredSignatures = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var method in host.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public))
         {
@@ -248,6 +248,13 @@ public sealed class RuleScriptEngine
                 ThreadSafe = attribute.ThreadSafe,
                 Documentation = attribute.Documentation
             };
+
+            var signatureKey = RuleScriptFunctionSymbol.CreateSignatureKey(name!, symbols);
+            if (!registeredSignatures.Add($"{(isAsync ? "async" : "sync")}:{signatureKey}"))
+            {
+                throw new NotSupportedException(
+                    $"Attributed host methods map to the same RuleScript signature '{RuleScriptFunctionSymbol.CreateSignature(name!, symbols)}'. Overloads must differ in RuleScript parameter count or types.");
+            }
 
             if (isAsync)
             {
@@ -308,7 +315,7 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Registers or replaces an async host function.
+    /// Registers or replaces an untyped async host function. It accepts any arguments and replaces every async overload of the name.
     /// </summary>
     public void RegisterFunctionAsync(string name, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>> function)
     {
@@ -317,8 +324,8 @@ public sealed class RuleScriptEngine
             throw new ArgumentException("Function name cannot be empty.", nameof(name));
         }
 
-        _asyncHostFunctions[name] = function ?? throw new ArgumentNullException(nameof(function));
-        _asyncHostFunctionSignatures.Remove(name);
+        ArgumentNullException.ThrowIfNull(function);
+        AddHostFunctionOverload(name, new HostFunctionOverload(Signature: null, Function: null, function));
     }
 
     public void RegisterFunctionAsync(
@@ -330,7 +337,9 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Registers or replaces an async host function using extensible execution and metadata options.
+    /// Registers an async host function using extensible execution and metadata options.
+    /// Registrations with distinct <see cref="RuleScriptHostFunctionOptions.Parameters"/> become overloads of the same name;
+    /// registering the same parameter types again replaces that overload.
     /// </summary>
     public void RegisterFunctionAsync(
         string name,
@@ -339,8 +348,7 @@ public sealed class RuleScriptEngine
     {
         ArgumentNullException.ThrowIfNull(function);
         var signature = CreateHostFunctionSignature(name, options, isAsync: true);
-        _asyncHostFunctions[name] = function;
-        _asyncHostFunctionSignatures[name] = signature;
+        AddHostFunctionOverload(name, new HostFunctionOverload(signature, Function: null, function));
     }
 
     /// <summary>
@@ -413,7 +421,7 @@ public sealed class RuleScriptEngine
     }
 
     /// <summary>
-    /// Removes a registered host function.
+    /// Removes a registered host function and all of its overloads.
     /// </summary>
     public bool UnregisterFunction(string name)
     {
@@ -422,11 +430,51 @@ public sealed class RuleScriptEngine
             throw new ArgumentException("Function name cannot be empty.", nameof(name));
         }
 
-        var removed = _hostFunctions.Remove(name);
-        var asyncRemoved = _asyncHostFunctions.Remove(name);
-        _hostFunctionSignatures.Remove(name);
-        _asyncHostFunctionSignatures.Remove(name);
-        return asyncRemoved || removed;
+        return _hostFunctions.Remove(name);
+    }
+
+    /// <summary>
+    /// Removes the host function overloads of a name whose parameter types match the specified signature.
+    /// </summary>
+    public bool UnregisterFunction(string name, IReadOnlyList<RuleScriptValueType> parameterTypes)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Function name cannot be empty.", nameof(name));
+        }
+
+        ArgumentNullException.ThrowIfNull(parameterTypes);
+
+        if (!_hostFunctions.TryGetValue(name, out var overloads))
+        {
+            return false;
+        }
+
+        var key = RuleScriptFunctionSymbol.CreateSignatureKey(
+            name,
+            parameterTypes.Select((type, index) => new RuleScriptParameterSymbol($"p{index}", type)));
+        var remaining = overloads.Where(overload => overload.SignatureKey != key).ToArray();
+        if (remaining.Length == overloads.Length)
+        {
+            return false;
+        }
+
+        if (remaining.Length == 0)
+        {
+            _hostFunctions.Remove(name);
+        }
+        else
+        {
+            _hostFunctions[name] = remaining;
+        }
+
+        return true;
+    }
+
+    private void AddHostFunctionOverload(string name, HostFunctionOverload overload)
+    {
+        _hostFunctions.TryGetValue(name, out var existing);
+        _hostFunctions[name] = HostFunctionOverload.Add(existing, overload);
     }
 
     /// <summary>
@@ -435,9 +483,6 @@ public sealed class RuleScriptEngine
     public void ClearFunctions()
     {
         _hostFunctions.Clear();
-        _asyncHostFunctions.Clear();
-        _hostFunctionSignatures.Clear();
-        _asyncHostFunctionSignatures.Clear();
     }
 
     /// <summary>
@@ -756,7 +801,9 @@ public sealed class RuleScriptEngine
             .GroupBy(function => function.Name, StringComparer.Ordinal)
             .ToDictionary(
                 group => group.Key,
-                group => group.Last().ReturnType,
+                group => group.Select(function => function.ReturnType).Distinct().Count() == 1
+                    ? group.First().ReturnType
+                    : RuleScriptValueType.Unknown,
                 StringComparer.Ordinal);
         foreach (var builtinFunction in builtinFunctions)
         {
@@ -1417,9 +1464,6 @@ public sealed class RuleScriptEngine
         return new Interpreter(
             _builtinFunctions,
             _hostFunctions,
-            _asyncHostFunctions,
-            _hostFunctionSignatures,
-            _asyncHostFunctionSignatures,
             MaxLoopIterations,
             LoopIterationLimitEnabled,
             ExecutionTimeout,

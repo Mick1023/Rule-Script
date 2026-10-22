@@ -10,10 +10,7 @@ namespace RuleScript.Core.Runtime;
 public sealed class Interpreter
 {
     private readonly BuiltinFunctions _builtinFunctions;
-    private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> _hostFunctions;
-    private readonly IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> _asyncHostFunctions;
-    private readonly IReadOnlyDictionary<string, RuleScriptFunctionSymbol> _hostFunctionSignatures;
-    private readonly IReadOnlyDictionary<string, RuleScriptFunctionSymbol> _asyncHostFunctionSignatures;
+    private readonly IReadOnlyDictionary<string, HostFunctionOverload[]> _hostFunctions;
     private readonly Func<RuleScriptRuntimeEvent, CancellationToken, Task<RuleScriptExecutionDirective>> _notifyRuntimeEventAsync;
     private readonly int _maxLoopIterations;
     private readonly bool _loopIterationLimitEnabled;
@@ -45,9 +42,13 @@ public sealed class Interpreter
         RuleScriptFunctionSymbol Symbol,
         RuleScriptFunctionSymbol? InvocationSignature,
         UserFunction? UserFunction,
-        bool IsSyncHost,
-        bool IsAsyncHost,
-        bool IsBuiltin);
+        HostFunctionOverload? Host,
+        bool IsBuiltin)
+    {
+        public bool IsSyncHost => Host is { IsAsync: false };
+
+        public bool IsAsyncHost => Host is { IsAsync: true };
+    }
 
     public Interpreter(BuiltinFunctions builtinFunctions)
         : this(builtinFunctions, new Dictionary<string, Func<IReadOnlyList<object?>, object?>>(StringComparer.Ordinal), 100000)
@@ -60,10 +61,10 @@ public sealed class Interpreter
         int maxLoopIterations = 100000)
         : this(
             builtinFunctions,
-            hostFunctions,
-            new Dictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>>(StringComparer.Ordinal),
-            new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal),
-            new Dictionary<string, RuleScriptFunctionSymbol>(StringComparer.Ordinal),
+            (hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions))).ToDictionary(
+                function => function.Key,
+                function => new[] { new HostFunctionOverload(Signature: null, function.Value, AsyncFunction: null) },
+                StringComparer.Ordinal),
             maxLoopIterations,
             true,
             TimeSpan.FromSeconds(30),
@@ -82,10 +83,7 @@ public sealed class Interpreter
 
     internal Interpreter(
         BuiltinFunctions builtinFunctions,
-        IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, object?>> hostFunctions,
-        IReadOnlyDictionary<string, Func<IReadOnlyList<object?>, CancellationToken, Task<object?>>> asyncHostFunctions,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> hostFunctionSignatures,
-        IReadOnlyDictionary<string, RuleScriptFunctionSymbol> asyncHostFunctionSignatures,
+        IReadOnlyDictionary<string, HostFunctionOverload[]> hostFunctions,
         int maxLoopIterations,
         bool loopIterationLimitEnabled,
         TimeSpan executionTimeout,
@@ -104,9 +102,6 @@ public sealed class Interpreter
     {
         _builtinFunctions = builtinFunctions ?? throw new ArgumentNullException(nameof(builtinFunctions));
         _hostFunctions = hostFunctions ?? throw new ArgumentNullException(nameof(hostFunctions));
-        _asyncHostFunctions = asyncHostFunctions ?? throw new ArgumentNullException(nameof(asyncHostFunctions));
-        _hostFunctionSignatures = hostFunctionSignatures ?? throw new ArgumentNullException(nameof(hostFunctionSignatures));
-        _asyncHostFunctionSignatures = asyncHostFunctionSignatures ?? throw new ArgumentNullException(nameof(asyncHostFunctionSignatures));
         _mainModule = mainModule ?? throw new ArgumentNullException(nameof(mainModule));
         _notifyRuntimeEvent = notifyRuntimeEvent ?? throw new ArgumentNullException(nameof(notifyRuntimeEvent));
         _notifyRuntimeEventAsync = notifyRuntimeEventAsync ?? throw new ArgumentNullException(nameof(notifyRuntimeEventAsync));
@@ -1720,9 +1715,8 @@ public sealed class Interpreter
 
         if (candidate.IsSyncHost)
         {
-            var hostFunction = _hostFunctions[expression.Name];
             EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
+            return InvokeHostFunction(expression.Name, candidate.Host!.Function!, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
         }
 
         if (candidate.IsAsyncHost)
@@ -1773,16 +1767,14 @@ public sealed class Interpreter
 
         if (candidate.IsAsyncHost)
         {
-            var asyncHostFunction = _asyncHostFunctions[expression.Name];
             EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
-            return await InvokeHostFunctionAsync(expression.Name, asyncHostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
+            return await InvokeHostFunctionAsync(expression.Name, candidate.Host!.AsyncFunction!, arguments, candidate.InvocationSignature, expression.Line, expression.Column, cancellationToken).ConfigureAwait(false);
         }
 
         if (candidate.IsSyncHost)
         {
-            var hostFunction = _hostFunctions[expression.Name];
             EnsureHostFunctionThreadSafe(expression.Name, candidate.InvocationSignature, expression.Line, expression.Column);
-            return InvokeHostFunction(expression.Name, hostFunction, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
+            return InvokeHostFunction(expression.Name, candidate.Host!.Function!, arguments, candidate.InvocationSignature, expression.Line, expression.Column);
         }
 
         try
@@ -1871,28 +1863,16 @@ public sealed class Interpreter
             candidates.AddRange(userFunctions.Select(CreateUserFunctionCandidate));
         }
 
-        if (_hostFunctions.ContainsKey(name))
+        if (_hostFunctions.TryGetValue(name, out var hostOverloads))
         {
-            _hostFunctionSignatures.TryGetValue(name, out var signature);
-            candidates.Add(new RuntimeOverloadCandidate(
-                signature ?? CreateFallbackFunctionSymbol(name, RuleScriptFunctionKind.Host),
-                signature,
-                UserFunction: null,
-                IsSyncHost: true,
-                IsAsyncHost: false,
-                IsBuiltin: false));
-        }
-
-        if (includeAsyncHosts && _asyncHostFunctions.ContainsKey(name))
-        {
-            _asyncHostFunctionSignatures.TryGetValue(name, out var signature);
-            candidates.Add(new RuntimeOverloadCandidate(
-                signature ?? CreateFallbackFunctionSymbol(name, RuleScriptFunctionKind.Host),
-                signature,
-                UserFunction: null,
-                IsSyncHost: false,
-                IsAsyncHost: true,
-                IsBuiltin: false));
+            candidates.AddRange(hostOverloads
+                .Where(overload => includeAsyncHosts || !overload.IsAsync)
+                .Select(overload => new RuntimeOverloadCandidate(
+                    overload.Signature ?? CreateFallbackFunctionSymbol(name, RuleScriptFunctionKind.Host),
+                    overload.Signature,
+                    UserFunction: null,
+                    overload,
+                    IsBuiltin: false)));
         }
 
         candidates.AddRange(_builtinFunctions.Signatures
@@ -1901,8 +1881,7 @@ public sealed class Interpreter
                 signature,
                 signature,
                 UserFunction: null,
-                IsSyncHost: false,
-                IsAsyncHost: false,
+                Host: null,
                 IsBuiltin: true)));
 
         return candidates;
@@ -1915,8 +1894,7 @@ public sealed class Interpreter
             signature,
             signature,
             userFunction,
-            IsSyncHost: false,
-            IsAsyncHost: false,
+            Host: null,
             IsBuiltin: false);
     }
 
@@ -2091,6 +2069,11 @@ public sealed class Interpreter
 
         if (candidate.IsSyncHost || candidate.IsAsyncHost)
         {
+            if (candidates.Count(other => other.Host is not null) > 1)
+            {
+                return;
+            }
+
             ValidateHostFunctionArguments(name, arguments, candidate.InvocationSignature, line, column);
             return;
         }
@@ -2373,9 +2356,6 @@ public sealed class Interpreter
         var interpreter = new Interpreter(
             _builtinFunctions,
             _hostFunctions,
-            _asyncHostFunctions,
-            _hostFunctionSignatures,
-            _asyncHostFunctionSignatures,
             _maxLoopIterations,
             _loopIterationLimitEnabled,
             _executionTimeout,
@@ -2493,8 +2473,7 @@ public sealed class Interpreter
             triggerSignature,
             triggerSignature,
             userFunction,
-            IsSyncHost: false,
-            IsAsyncHost: false,
+            Host: null,
             IsBuiltin: false);
     }
 
