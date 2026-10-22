@@ -1,6 +1,7 @@
 using RuleScript.Core.Diagnostics;
 using System.Collections;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace RuleScript.Core.Runtime;
 
@@ -14,6 +15,16 @@ public sealed class BuiltinFunctions
     /// The largest array <c>Range</c> creates, so a typo cannot allocate an unbounded array.
     /// </summary>
     internal const int MaxRangeLength = 1_000_000;
+
+    /// <summary>
+    /// The widest string <c>PadLeft</c> and <c>PadRight</c> create.
+    /// </summary>
+    internal const int MaxPadWidth = 1_000_000;
+
+    /// <summary>
+    /// How long one regular expression built-in may run, so a catastrophic pattern cannot hang a script.
+    /// </summary>
+    internal static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
     public BuiltinFunctions()
     {
@@ -56,6 +67,39 @@ public sealed class BuiltinFunctions
             new("length", RuleScriptValueType.Number));
         RegisterTyped("Length", Length, RuleScriptValueType.Number, "Returns the number of items in an array or characters in text.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("IndexOf", IndexOf, RuleScriptValueType.Number, "Returns the zero-based index of the first ordinal match of searchValue in text, or -1 when there is none.",
+            new("value", RuleScriptValueType.Any),
+            new("searchValue", RuleScriptValueType.Any));
+        RegisterTyped("LastIndexOf", LastIndexOf, RuleScriptValueType.Number, "Returns the zero-based index of the last ordinal match of searchValue in text, or -1 when there is none.",
+            new("value", RuleScriptValueType.Any),
+            new("searchValue", RuleScriptValueType.Any));
+        RegisterTyped("PadLeft", PadLeft, RuleScriptValueType.String, "Pads text on the left with spaces to the specified total width.",
+            new("value", RuleScriptValueType.Any),
+            new("totalWidth", RuleScriptValueType.Any));
+        RegisterTyped("PadLeft", PadLeft, RuleScriptValueType.String, "Pads text on the left with a single padding character to the specified total width.",
+            new("value", RuleScriptValueType.Any),
+            new("totalWidth", RuleScriptValueType.Any),
+            new("padding", RuleScriptValueType.Any));
+        RegisterTyped("PadRight", PadRight, RuleScriptValueType.String, "Pads text on the right with spaces to the specified total width.",
+            new("value", RuleScriptValueType.Any),
+            new("totalWidth", RuleScriptValueType.Any));
+        RegisterTyped("PadRight", PadRight, RuleScriptValueType.String, "Pads text on the right with a single padding character to the specified total width.",
+            new("value", RuleScriptValueType.Any),
+            new("totalWidth", RuleScriptValueType.Any),
+            new("padding", RuleScriptValueType.Any));
+        RegisterTyped("FormatNumber", FormatNumber, RuleScriptValueType.String, "Formats a number with a .NET numeric format string, such as \"0.00\" or \"N0\", using invariant culture.",
+            new("value", RuleScriptValueType.Any),
+            new("format", RuleScriptValueType.Any));
+        RegisterTyped("RegexIsMatch", RegexIsMatch, RuleScriptValueType.Boolean, "Returns whether text contains a match for a .NET regular expression pattern.",
+            new("value", RuleScriptValueType.Any),
+            new("pattern", RuleScriptValueType.Any));
+        RegisterTyped("RegexMatches", RegexMatches, RuleScriptValueType.Array, "Returns the text of every match for a .NET regular expression pattern.",
+            new("value", RuleScriptValueType.Any),
+            new("pattern", RuleScriptValueType.Any));
+        RegisterTyped("RegexReplace", RegexReplace, RuleScriptValueType.String, "Replaces every match for a .NET regular expression pattern. The replacement can refer to groups as $1.",
+            new("value", RuleScriptValueType.Any),
+            new("pattern", RuleScriptValueType.Any),
+            new("replacement", RuleScriptValueType.Any));
         RegisterTyped("ArrayAdd", ArrayAdd, RuleScriptValueType.Array, "Appends a value to an array and returns the same array.",
             new("array", RuleScriptValueType.Array),
             new("value", RuleScriptValueType.Any));
@@ -83,11 +127,31 @@ public sealed class BuiltinFunctions
             new("step", RuleScriptValueType.Number));
         RegisterTyped("ArrayClear", ArrayClear, RuleScriptValueType.Array, "Removes all items from an array and returns the same array.",
             new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
+        RegisterTyped("ArraySlice", ArraySlice, RuleScriptValueType.Array, "Returns a new array with the items from start to the end of the array.",
+            new("array", RuleScriptValueType.Any),
+            new("start", RuleScriptValueType.Any));
+        RegisterTyped("ArraySlice", ArraySlice, RuleScriptValueType.Array, "Returns a new array with the items from start up to, but not including, end.",
+            new("array", RuleScriptValueType.Any),
+            new("start", RuleScriptValueType.Any),
+            new("end", RuleScriptValueType.Any));
+        RegisterTyped("ArrayIndexOf", ArrayIndexOf, RuleScriptValueType.Number, "Returns the zero-based index of the first matching value in an array, or -1 when there is none.",
+            new("array", RuleScriptValueType.Any),
+            new("value", RuleScriptValueType.Any));
+        RegisterTyped("ArrayReverse", ArrayReverse, RuleScriptValueType.Array, "Reverses an array in place and returns the same array.",
+            new RuleScriptParameterSymbol("array", RuleScriptValueType.Any));
+        RegisterTyped("ArrayDistinct", ArrayDistinct, RuleScriptValueType.Array, "Returns a new array without duplicate values, keeping the first occurrence of each.",
+            new RuleScriptParameterSymbol("array", RuleScriptValueType.Any));
         RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array, "Returns the object's keys sorted by ordinal name.",
             new RuleScriptParameterSymbol("object", RuleScriptValueType.Object));
         RegisterTyped("ObjectContainsKey", ObjectContainsKey, RuleScriptValueType.Boolean, "Returns whether an object contains the specified string key.",
             new("object", RuleScriptValueType.Object),
             new("key", RuleScriptValueType.String));
+        RegisterTyped("ObjectRemove", ObjectRemove, RuleScriptValueType.Boolean, "Removes a key from an object and returns whether it was present.",
+            new("object", RuleScriptValueType.Any),
+            new("key", RuleScriptValueType.Any));
+        RegisterTyped("ObjectMerge", ObjectMerge, RuleScriptValueType.Object, "Returns a new object with the keys of both objects. Keys in second replace keys in first.",
+            new("first", RuleScriptValueType.Any),
+            new("second", RuleScriptValueType.Any));
         RegisterTyped("Abs", Abs, RuleScriptValueType.Number, "Returns the absolute value of a number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
         RegisterTyped("Min", Min, RuleScriptValueType.Number, "Returns the smaller of two numbers.",
@@ -106,6 +170,37 @@ public sealed class BuiltinFunctions
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
         RegisterTyped("Ceiling", Ceiling, RuleScriptValueType.Number, "Returns the smallest whole number greater than or equal to the number.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Number));
+        RegisterTyped("Pow", Pow, RuleScriptValueType.Number, "Returns value raised to the specified power.",
+            new("value", RuleScriptValueType.Any),
+            new("power", RuleScriptValueType.Any));
+        RegisterTyped("Sqrt", Sqrt, RuleScriptValueType.Number, "Returns the square root of a non-negative number.",
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("Sum", Sum, RuleScriptValueType.Number, "Returns the sum of an array of numbers. An empty array sums to 0.",
+            new RuleScriptParameterSymbol("values", RuleScriptValueType.Any));
+        RegisterTyped("Average", Average, RuleScriptValueType.Number, "Returns the average of a non-empty array of numbers.",
+            new RuleScriptParameterSymbol("values", RuleScriptValueType.Any));
+        RegisterTyped("Now", DateFunctions.Now, RuleScriptValueType.String, "Returns the host's local date and time as an ISO 8601 string without an offset.");
+        RegisterTyped("UtcNow", DateFunctions.UtcNow, RuleScriptValueType.String, "Returns the current UTC date and time as an ISO 8601 string ending in Z.");
+        RegisterTyped("Today", DateFunctions.Today, RuleScriptValueType.String, "Returns the host's local date as an ISO 8601 date string, such as 2026-10-22.");
+        RegisterTyped("DateAdd", DateFunctions.DateAdd, RuleScriptValueType.String, "Adds an amount of 'year', 'month', 'day', 'hour', 'minute', 'second', or 'millisecond' to an ISO 8601 date.",
+            new("date", RuleScriptValueType.Any),
+            new("amount", RuleScriptValueType.Any),
+            new("unit", RuleScriptValueType.Any));
+        RegisterTyped("DateDiff", DateFunctions.DateDiff, RuleScriptValueType.Number, "Returns end minus start in 'day', 'hour', 'minute', 'second', or 'millisecond' units, including fractions.",
+            new("start", RuleScriptValueType.Any),
+            new("end", RuleScriptValueType.Any),
+            new("unit", RuleScriptValueType.Any));
+        RegisterTyped("DatePart", DateFunctions.DatePart, RuleScriptValueType.Number, "Returns the 'year', 'month', 'day', 'hour', 'minute', 'second', 'millisecond', 'dayOfWeek' (0 is Sunday), or 'dayOfYear' of an ISO 8601 date.",
+            new("date", RuleScriptValueType.Any),
+            new("part", RuleScriptValueType.Any));
+        RegisterTyped("FormatDate", DateFunctions.FormatDate, RuleScriptValueType.String, "Formats an ISO 8601 date with a .NET date format string, such as \"yyyy/MM/dd HH:mm\", using invariant culture.",
+            new("date", RuleScriptValueType.Any),
+            new("format", RuleScriptValueType.Any));
+        RegisterTyped("ParseDate", DateFunctions.ParseDate, RuleScriptValueType.String, "Validates an ISO 8601 date string and returns it in normalized form.",
+            new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
+        RegisterTyped("ParseDate", DateFunctions.ParseDate, RuleScriptValueType.String, "Parses text with a .NET date format string, such as \"yyyy/MM/dd HH:mm\", and returns an ISO 8601 date string.",
+            new("value", RuleScriptValueType.Any),
+            new("format", RuleScriptValueType.Any));
         RegisterTyped("ParseBool", ParseBool, RuleScriptValueType.Boolean, "Parses a bool or string value as a boolean.",
             new RuleScriptParameterSymbol("value", RuleScriptValueType.Any));
         RegisterTyped("IsNull", IsNull, RuleScriptValueType.Boolean, "Returns whether the supplied value is null.",
@@ -367,6 +462,126 @@ public sealed class BuiltinFunctions
         return new RuntimeValue(ConvertToString(arguments[0].Value).Length);
     }
 
+    private static RuntimeValue IndexOf(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("IndexOf", arguments, 2);
+        return new RuntimeValue(ConvertToString(arguments[0].Value).IndexOf(ConvertToString(arguments[1].Value), StringComparison.Ordinal));
+    }
+
+    private static RuntimeValue LastIndexOf(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("LastIndexOf", arguments, 2);
+        var value = ConvertToString(arguments[0].Value);
+        var searchValue = ConvertToString(arguments[1].Value);
+
+        // An empty search value matches at the end, mirroring IndexOf matching at the start.
+        return new RuntimeValue(searchValue.Length == 0 ? value.Length : value.LastIndexOf(searchValue, StringComparison.Ordinal));
+    }
+
+    private static RuntimeValue PadLeft(IReadOnlyList<RuntimeValue> arguments)
+    {
+        var (value, totalWidth, padding) = ReadPadArguments("PadLeft", arguments);
+        return new RuntimeValue(value.PadLeft(totalWidth, padding));
+    }
+
+    private static RuntimeValue PadRight(IReadOnlyList<RuntimeValue> arguments)
+    {
+        var (value, totalWidth, padding) = ReadPadArguments("PadRight", arguments);
+        return new RuntimeValue(value.PadRight(totalWidth, padding));
+    }
+
+    private static (string Value, int TotalWidth, char Padding) ReadPadArguments(string functionName, IReadOnlyList<RuntimeValue> arguments)
+    {
+        if (arguments.Count is not (2 or 3))
+        {
+            throw new RuntimeException($"{functionName} expects 2 or 3 arguments but received {arguments.Count}.");
+        }
+
+        var totalWidth = RequireInt(functionName, "totalWidth", arguments[1].Value);
+        if (totalWidth is < 0 or > MaxPadWidth)
+        {
+            throw new RuntimeException($"{functionName} argument 'totalWidth' must be between 0 and {MaxPadWidth}.");
+        }
+
+        var padding = ' ';
+        if (arguments.Count == 3)
+        {
+            padding = arguments[2].Value is string { Length: 1 } text
+                ? text[0]
+                : throw new RuntimeException($"{functionName} argument 'padding' must be a single-character string.");
+        }
+
+        return (ConvertToString(arguments[0].Value), totalWidth, padding);
+    }
+
+    private static RuntimeValue FormatNumber(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("FormatNumber", arguments, 2);
+        RequireNumber("FormatNumber", arguments[0].Value);
+        var format = arguments[1].Value as string
+            ?? throw new RuntimeException("FormatNumber argument 'format' must be a string value.");
+
+        try
+        {
+            // Format the original value so decimals from JSON keep their precision.
+            return new RuntimeValue(((IFormattable)arguments[0].Value!).ToString(format, CultureInfo.InvariantCulture));
+        }
+        catch (FormatException exception)
+        {
+            throw new RuntimeException($"FormatNumber format '{format}' is not valid.", exception);
+        }
+    }
+
+    private static RuntimeValue RegexIsMatch(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("RegexIsMatch", arguments, 2);
+        return RunRegex("RegexIsMatch", arguments[1].Value, regex => new RuntimeValue(regex.IsMatch(ConvertToString(arguments[0].Value))));
+    }
+
+    private static RuntimeValue RegexMatches(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("RegexMatches", arguments, 2);
+        return RunRegex("RegexMatches", arguments[1].Value, regex => new RuntimeValue(regex
+            .Matches(ConvertToString(arguments[0].Value))
+            .Select(match => (object?)match.Value)
+            .ToList()));
+    }
+
+    private static RuntimeValue RegexReplace(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("RegexReplace", arguments, 3);
+        var replacement = arguments[2].Value as string
+            ?? throw new RuntimeException("RegexReplace argument 'replacement' must be a string value.");
+        return RunRegex("RegexReplace", arguments[1].Value, regex => new RuntimeValue(regex.Replace(ConvertToString(arguments[0].Value), replacement)));
+    }
+
+    private static RuntimeValue RunRegex(string functionName, object? pattern, Func<Regex, RuntimeValue> run)
+    {
+        if (pattern is not string text)
+        {
+            throw new RuntimeException($"{functionName} argument 'pattern' must be a string value.");
+        }
+
+        Regex regex;
+        try
+        {
+            regex = new Regex(text, RegexOptions.CultureInvariant, RegexTimeout);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new RuntimeException($"{functionName} pattern is not valid: {exception.Message}", exception);
+        }
+
+        try
+        {
+            return run(regex);
+        }
+        catch (RegexMatchTimeoutException exception)
+        {
+            throw new RuntimeException($"{functionName} timed out after {RegexTimeout.TotalSeconds:0} second(s).", exception);
+        }
+    }
+
     private static RuntimeValue ArrayAdd(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("ArrayAdd", arguments, 2);
@@ -481,6 +696,108 @@ public sealed class BuiltinFunctions
         return arguments[0];
     }
 
+    private static RuntimeValue ArraySlice(IReadOnlyList<RuntimeValue> arguments)
+    {
+        if (arguments.Count is not (2 or 3))
+        {
+            throw new RuntimeException($"ArraySlice expects 2 or 3 arguments but received {arguments.Count}.");
+        }
+
+        var list = RequireList("ArraySlice", arguments[0].Value);
+        var start = RequireInt("ArraySlice", "start", arguments[1].Value);
+        var end = arguments.Count == 3 ? RequireInt("ArraySlice", "end", arguments[2].Value) : list.Count;
+
+        if (start < 0 || end > list.Count || start > end)
+        {
+            throw new RuntimeException("ArraySlice range is outside the array bounds.");
+        }
+
+        var values = new List<object?>(end - start);
+        for (var index = start; index < end; index++)
+        {
+            values.Add(list[index]);
+        }
+
+        return new RuntimeValue(values);
+    }
+
+    private static RuntimeValue ArrayIndexOf(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArrayIndexOf", arguments, 2);
+        var list = RequireList("ArrayIndexOf", arguments[0].Value);
+
+        for (var index = 0; index < list.Count; index++)
+        {
+            if (AreValuesEqual(list[index], arguments[1].Value))
+            {
+                return new RuntimeValue(index);
+            }
+        }
+
+        return new RuntimeValue(-1);
+    }
+
+    private static RuntimeValue ArrayReverse(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArrayReverse", arguments, 1);
+        var list = RequireList("ArrayReverse", arguments[0].Value);
+        CopyToList(list.Cast<object?>().Reverse().ToArray(), list);
+        return arguments[0];
+    }
+
+    private static RuntimeValue ArrayDistinct(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ArrayDistinct", arguments, 1);
+        var list = RequireList("ArrayDistinct", arguments[0].Value);
+
+        // Numbers compare by value like ArrayContains, so 1 and 1.0 are duplicates.
+        var seen = new HashSet<object?>();
+        var values = new List<object?>();
+        foreach (var value in list)
+        {
+            if (seen.Add(TryGetDouble(value, out var number) ? number : value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return new RuntimeValue(values);
+    }
+
+    private static RuntimeValue ObjectRemove(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ObjectRemove", arguments, 2);
+        var values = arguments[0].Value as IDictionary<string, object?>
+            ?? throw new RuntimeException("ObjectRemove expects a mutable object value.");
+        var key = arguments[1].Value as string
+            ?? throw new RuntimeException("ObjectRemove argument 'key' must be a string value.");
+
+        if (values.IsReadOnly)
+        {
+            throw new RuntimeException("ObjectRemove expects a mutable object value.");
+        }
+
+        return new RuntimeValue(values.Remove(key));
+    }
+
+    private static RuntimeValue ObjectMerge(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("ObjectMerge", arguments, 2);
+        var merged = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in RequireObject("ObjectMerge", arguments[0].Value))
+        {
+            merged[key] = value;
+        }
+
+        foreach (var (key, value) in RequireObject("ObjectMerge", arguments[1].Value))
+        {
+            merged[key] = value;
+        }
+
+        return new RuntimeValue(merged);
+    }
+
     private static RuntimeValue Abs(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("Abs", arguments, 1);
@@ -524,6 +841,58 @@ public sealed class BuiltinFunctions
     {
         EnsureArgumentCount("Ceiling", arguments, 1);
         return new RuntimeValue(Math.Ceiling(RequireNumber("Ceiling", arguments[0].Value)));
+    }
+
+    private static RuntimeValue Pow(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("Pow", arguments, 2);
+        return new RuntimeValue(Math.Pow(RequireNumber("Pow", arguments[0].Value), RequireNumber("Pow", arguments[1].Value)));
+    }
+
+    private static RuntimeValue Sqrt(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("Sqrt", arguments, 1);
+        var value = RequireNumber("Sqrt", arguments[0].Value);
+        if (value < 0)
+        {
+            throw new RuntimeException("Sqrt expects a non-negative number.");
+        }
+
+        return new RuntimeValue(Math.Sqrt(value));
+    }
+
+    private static RuntimeValue Sum(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("Sum", arguments, 1);
+        return new RuntimeValue(RequireNumbers("Sum", arguments[0].Value).Sum());
+    }
+
+    private static RuntimeValue Average(IReadOnlyList<RuntimeValue> arguments)
+    {
+        EnsureArgumentCount("Average", arguments, 1);
+        var numbers = RequireNumbers("Average", arguments[0].Value);
+        if (numbers.Count == 0)
+        {
+            throw new RuntimeException("Average expects a non-empty array.");
+        }
+
+        return new RuntimeValue(numbers.Average());
+    }
+
+    private static List<double> RequireNumbers(string functionName, object? value)
+    {
+        var numbers = new List<double>();
+        foreach (var item in RequireList(functionName, value))
+        {
+            if (!TryGetDouble(item, out var number))
+            {
+                throw new RuntimeException($"{functionName} expects all elements to be numbers.");
+            }
+
+            numbers.Add(number);
+        }
+
+        return numbers;
     }
 
     private static RuntimeValue ParseBool(IReadOnlyList<RuntimeValue> arguments)
