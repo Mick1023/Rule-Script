@@ -83,6 +83,40 @@ public sealed class RuleScriptWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Manifest_RepeatedNamesDeclareHostFunctionOverloads()
+    {
+        File.WriteAllText(Path.Combine(_root, "rulescript.json"), """
+            {
+              "hostFunctions": [
+                {
+                  "name": "AddNumber",
+                  "parameters": [{ "name": "a", "type": "number" }, { "name": "b", "type": "number" }],
+                  "returnType": "number"
+                },
+                {
+                  "name": "AddNumber",
+                  "parameters": [{ "name": "a", "type": "number" }, { "name": "b", "type": "number" }, { "name": "c", "type": "number" }],
+                  "returnType": "number"
+                }
+              ]
+            }
+            """);
+        var workspace = CreateWorkspace(_root);
+        var main = Uri("main.rules");
+
+        workspace.Update(main, "var two = AddNumber(1, 2);\nvar three = AddNumber(1, 2, 3);\nvar more = AddNumber(1, ", 1);
+        var document = workspace.GetDocument(main)!;
+
+        Assert.DoesNotContain(document.Diagnostics, diagnostic =>
+            diagnostic.Line is 1 or 2 && diagnostic.Code is RuleScriptDiagnosticCodes.UndefinedFunction or RuleScriptDiagnosticCodes.TypeMismatch);
+        var help = RuleScriptLanguageService.GetSignatureHelp(document, 3, 25);
+        Assert.NotNull(help);
+        Assert.Equal(
+            ["AddNumber(a: number, b: number) -> number", "AddNumber(a: number, b: number, c: number) -> number"],
+            help.Signatures.Select(signature => signature.Label));
+    }
+
+    [Fact]
     public void WithoutManifest_HostSymbolsAreReportedAsUndefined()
     {
         var workspace = CreateWorkspace(_root);
