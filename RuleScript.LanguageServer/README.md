@@ -7,12 +7,12 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | LSP request | Behavior |
 |---|---|
 | `textDocument/publishDiagnostics` | Syntax and semantic diagnostics, refreshed on every change. Incomplete documents are analyzed tolerantly. |
-| `textDocument/definition` | Functions, variables, parameters, and exported functions in imported files. |
-| `textDocument/references` | All usages of the symbol under the cursor. |
-| `textDocument/hover` | Signature with parameter and return types, plus `///` documentation. |
+| `textDocument/definition` | Functions, variables, parameters, and exported functions in imported files. Calls to overloaded functions go to the overload that matches the arguments. |
+| `textDocument/references` | All usages of the symbol under the cursor. For an overloaded function, only the usages of that overload. |
+| `textDocument/hover` | Signature with parameter and return types, plus `///` documentation. Calls to overloaded functions show the overload that matches the arguments. |
 | `textDocument/completion` | In-scope variables and parameters, functions, import aliases, keywords, and block snippets; import members after `alias.`; `@HostTrigger` after `@`. Nothing is offered inside strings, comments, or where a new name is being declared. |
 | `textDocument/signatureHelp` | Parameter hints for the call around the cursor, triggered by `(` and `,`, including nested calls and `alias.Function(...)`. |
-| `textDocument/rename`, `textDocument/prepareRename` | Renames variables, parameters, loop variables, and non-exported functions. Built-in and Host Functions, exported symbols, and symbols declared in imported files are rejected with a reason, as are invalid names, names already in use, and renames that would change what references resolve to. |
+| `textDocument/rename`, `textDocument/prepareRename` | Renames variables, parameters, loop variables, and non-exported functions. Renaming an overloaded function renames only that overload. Built-in and Host Functions, exported symbols, and symbols declared in imported files are rejected with a reason, as are invalid names, names already in use, and renames that would change what references resolve to. |
 | `textDocument/documentSymbol` | Outline of imports, functions (with locals), variables, and constants. |
 | `textDocument/foldingRange` | `#region` blocks, multi-line statements and blocks, and comments. |
 | `textDocument/formatting` | `RuleScriptFormatter`. Documents with syntax errors are left unchanged. |

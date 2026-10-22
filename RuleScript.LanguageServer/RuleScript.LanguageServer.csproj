@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>RuleScript.LanguageServer</RootNamespace>
     <AssemblyName>RuleScript.LanguageServer</AssemblyName>
-    <Version>0.6.0</Version>
+    <Version>0.6.1</Version>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>rulescript-lsp</ToolCommandName>
     <PackageId>RuleScript.LanguageServer</PackageId>
