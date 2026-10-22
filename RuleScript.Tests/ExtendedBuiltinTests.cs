@@ -101,7 +101,7 @@ public sealed class ExtendedBuiltinTests
     [InlineData("Average([1, 2, 3, 4])", 2.5d)]
     public void Math_ComputesNumbers(string call, double expected)
     {
-        Assert.Equal(expected, Evaluate(call));
+        Assert.Equal((decimal)expected, Evaluate(call));
     }
 
     [Theory]
@@ -149,7 +149,7 @@ public sealed class ExtendedBuiltinTests
     {
         var context = new RuleScriptEngine().Execute("""var result = ArrayDistinct([1, 1.0, "1", null, null, "a", "a"]);""");
 
-        Assert.Equal([1, "1", null, "a"], AsList(context.Get("result")).Select(value => value is double number ? (object?)(int)number : value));
+        Assert.Equal([1, "1", null, "a"], AsList(context.Get("result")).Select(value => value is decimal number ? (object?)(int)number : value));
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public sealed class ExtendedBuiltinTests
     [InlineData("""DateDiff("2026-10-22T10:00:00", "2026-10-22T10:00:00.250", "millisecond")""", 250d)]
     public void DateDiff_ReturnsEndMinusStart(string call, double expected)
     {
-        Assert.Equal(expected, Evaluate(call));
+        Assert.Equal((decimal)expected, Evaluate(call));
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public sealed class ExtendedBuiltinTests
         var local = new DateTime(2026, 10, 22, 10, 30, 0, DateTimeKind.Local);
         var utc = local.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
 
-        Assert.Equal(0d, Evaluate($"""DateDiff("2026-10-22T10:30:00", "{utc}", "second")"""));
+        Assert.Equal(0m, Evaluate($"""DateDiff("2026-10-22T10:30:00", "{utc}", "second")"""));
     }
 
     [Theory]

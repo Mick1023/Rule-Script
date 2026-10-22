@@ -649,11 +649,11 @@ public sealed class BuiltinFunctions
             return arguments[0];
         }
 
-        if (list.Cast<object?>().All(value => TryGetDouble(value, out _)))
+        if (list.Cast<object?>().All(value => TryGetDecimal(value, out _)))
         {
             var sorted = list.Cast<object?>().OrderBy(value =>
             {
-                TryGetDouble(value, out var number);
+                TryGetDecimal(value, out var number);
                 return number;
             }).ToArray();
             CopyToList(sorted, list);
@@ -755,7 +755,7 @@ public sealed class BuiltinFunctions
         var values = new List<object?>();
         foreach (var value in list)
         {
-            if (seen.Add(TryGetDouble(value, out var number) ? number : value))
+            if (seen.Add(TryGetDecimal(value, out var number) ? number : value))
             {
                 values.Add(value);
             }
@@ -846,7 +846,9 @@ public sealed class BuiltinFunctions
     private static RuntimeValue Pow(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("Pow", arguments, 2);
-        return new RuntimeValue(Math.Pow(RequireNumber("Pow", arguments[0].Value), RequireNumber("Pow", arguments[1].Value)));
+        var value = (double)RequireNumber("Pow", arguments[0].Value);
+        var power = (double)RequireNumber("Pow", arguments[1].Value);
+        return new RuntimeValue(RuleScriptNumbers.FromDouble(Math.Pow(value, power), "Pow result"));
     }
 
     private static RuntimeValue Sqrt(IReadOnlyList<RuntimeValue> arguments)
@@ -858,13 +860,21 @@ public sealed class BuiltinFunctions
             throw new RuntimeException("Sqrt expects a non-negative number.");
         }
 
-        return new RuntimeValue(Math.Sqrt(value));
+        return new RuntimeValue(RuleScriptNumbers.FromDouble(Math.Sqrt((double)value), "Sqrt result"));
     }
 
     private static RuntimeValue Sum(IReadOnlyList<RuntimeValue> arguments)
     {
         EnsureArgumentCount("Sum", arguments, 1);
-        return new RuntimeValue(RequireNumbers("Sum", arguments[0].Value).Sum());
+        var numbers = RequireNumbers("Sum", arguments[0].Value);
+        try
+        {
+            return new RuntimeValue(numbers.Sum());
+        }
+        catch (OverflowException exception)
+        {
+            throw new RuntimeException("Sum result is outside the range of RuleScript numbers.", exception);
+        }
     }
 
     private static RuntimeValue Average(IReadOnlyList<RuntimeValue> arguments)
@@ -876,15 +886,22 @@ public sealed class BuiltinFunctions
             throw new RuntimeException("Average expects a non-empty array.");
         }
 
-        return new RuntimeValue(numbers.Average());
+        try
+        {
+            return new RuntimeValue(numbers.Average());
+        }
+        catch (OverflowException exception)
+        {
+            throw new RuntimeException("Average intermediate sum is outside the range of RuleScript numbers.", exception);
+        }
     }
 
-    private static List<double> RequireNumbers(string functionName, object? value)
+    private static List<decimal> RequireNumbers(string functionName, object? value)
     {
-        var numbers = new List<double>();
+        var numbers = new List<decimal>();
         foreach (var item in RequireList(functionName, value))
         {
-            if (!TryGetDouble(item, out var number))
+            if (!TryGetDecimal(item, out var number))
             {
                 throw new RuntimeException($"{functionName} expects all elements to be numbers.");
             }
@@ -982,45 +999,14 @@ public sealed class BuiltinFunctions
         }
     }
 
-    private static double RequireNumber(string functionName, object? value)
+    private static decimal RequireNumber(string functionName, object? value)
     {
-        if (TryGetDouble(value, out var number))
+        if (TryGetDecimal(value, out var number))
         {
             return number;
         }
 
         throw new RuntimeException($"{functionName} expects a number value.");
-    }
-
-    private static bool TryGetDouble(object? value, out double number)
-    {
-        switch (value)
-        {
-            case byte byteValue:
-                number = byteValue;
-                return true;
-            case short shortValue:
-                number = shortValue;
-                return true;
-            case int intValue:
-                number = intValue;
-                return true;
-            case long longValue:
-                number = longValue;
-                return true;
-            case float floatValue:
-                number = floatValue;
-                return true;
-            case double doubleValue:
-                number = doubleValue;
-                return true;
-            case decimal decimalValue:
-                number = (double)decimalValue;
-                return true;
-            default:
-                number = 0;
-                return false;
-        }
     }
 
     private static bool TryGetInteger(object? value, out int intValue)
@@ -1054,36 +1040,7 @@ public sealed class BuiltinFunctions
         }
     }
 
-    private static bool TryGetDecimal(object? value, out decimal decimalValue)
-    {
-        switch (value)
-        {
-            case byte byteValue:
-                decimalValue = byteValue;
-                return true;
-            case short shortValue:
-                decimalValue = shortValue;
-                return true;
-            case int intValue:
-                decimalValue = intValue;
-                return true;
-            case long longValue:
-                decimalValue = longValue;
-                return true;
-            case float floatValue:
-                decimalValue = (decimal)floatValue;
-                return true;
-            case double doubleValue:
-                decimalValue = (decimal)doubleValue;
-                return true;
-            case decimal directValue:
-                decimalValue = directValue;
-                return true;
-            default:
-                decimalValue = 0;
-                return false;
-        }
-    }
+    private static bool TryGetDecimal(object? value, out decimal number) => RuleScriptNumbers.TryGetDecimal(value, out number);
 
     private static string ConvertToString(object? value)
     {
@@ -1091,6 +1048,7 @@ public sealed class BuiltinFunctions
         {
             null => string.Empty,
             bool boolValue => boolValue ? "true" : "false",
+            decimal number => RuleScriptNumbers.ToText(number),
             IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty
         };
@@ -1098,7 +1056,7 @@ public sealed class BuiltinFunctions
 
     private static bool AreValuesEqual(object? left, object? right)
     {
-        if (TryGetDouble(left, out var leftNumber) && TryGetDouble(right, out var rightNumber))
+        if (TryGetDecimal(left, out var leftNumber) && TryGetDecimal(right, out var rightNumber))
         {
             return leftNumber.Equals(rightNumber);
         }

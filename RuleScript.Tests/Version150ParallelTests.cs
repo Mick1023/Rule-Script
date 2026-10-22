@@ -83,7 +83,7 @@ public sealed class Version150ParallelTests
             endparallel;
             """);
 
-        Assert.Equal([1d, "two", null], context.Get<List<object?>>("values"));
+        Assert.Equal([1m, "two", null], context.Get<List<object?>>("values"));
     }
 
     [Fact]

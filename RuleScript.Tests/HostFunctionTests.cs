@@ -59,7 +59,7 @@ public sealed class HostFunctionTests
 
         Assert.Equal(15d, context.Get<double>("result"));
         Assert.NotNull(received);
-        Assert.Equal(15d, received[0]);
+        Assert.Equal(15m, received[0]);
         Assert.Equal("OK", received[1]);
     }
 

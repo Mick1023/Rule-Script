@@ -96,13 +96,14 @@ internal static class DateFunctions
             ? end.Value - start.Value
             : ToInstant(end) - ToInstant(start);
 
-        return new RuntimeValue(unit switch
+        // Dividing ticks as decimals keeps fractions such as a third of a day exact to 28 digits.
+        return new RuntimeValue((decimal)difference.Ticks / unit switch
         {
-            "day" => difference.TotalDays,
-            "hour" => difference.TotalHours,
-            "minute" => difference.TotalMinutes,
-            "second" => difference.TotalSeconds,
-            "millisecond" => difference.TotalMilliseconds,
+            "day" => TimeSpan.TicksPerDay,
+            "hour" => TimeSpan.TicksPerHour,
+            "minute" => TimeSpan.TicksPerMinute,
+            "second" => TimeSpan.TicksPerSecond,
+            "millisecond" => TimeSpan.TicksPerMillisecond,
             _ => throw new RuntimeException($"DateDiff unit '{unit}' is not supported. Use {DiffUnits}.")
         });
     }

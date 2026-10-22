@@ -88,7 +88,9 @@ internal static class JsonFunctions
                 .Select(ConvertElement)
                 .ToList(),
             JsonValueKind.String => element.GetString(),
-            JsonValueKind.Number => element.GetDecimal(),
+            JsonValueKind.Number => element.TryGetDecimal(out var number)
+                ? number
+                : throw new RuntimeException($"JsonParse number {element.GetRawText()} is outside the range of RuleScript numbers."),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
@@ -103,7 +105,8 @@ internal static class JsonFunctions
             null => null,
             string => value,
             bool => value,
-            byte or short or int or long or float or double or decimal => value,
+            decimal number => RuleScriptNumbers.Normalize(number),
+            byte or short or int or long or float or double => value,
             Dictionary<string, object?> dictionary => dictionary.ToDictionary(
                 pair => pair.Key,
                 pair => NormalizeForJson(pair.Value),

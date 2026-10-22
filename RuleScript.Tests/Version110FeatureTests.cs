@@ -88,8 +88,8 @@ public sealed class Version110FeatureTests
         var snapshot = session.CurrentSnapshot;
 
         Assert.NotNull(snapshot);
-        Assert.Equal(41d, snapshot!.Locals["input"].Value);
-        Assert.Equal(42d, snapshot.Locals["local"].Value);
+        Assert.Equal(41m, snapshot!.Locals["input"].Value);
+        Assert.Equal(42m, snapshot.Locals["local"].Value);
         Assert.Empty(snapshot.Globals);
         Assert.Contains(snapshot.CallStack, frame => frame.EndsWith("::Calculate", StringComparison.Ordinal));
 
