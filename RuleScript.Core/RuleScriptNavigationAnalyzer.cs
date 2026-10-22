@@ -8,6 +8,7 @@ internal sealed class RuleScriptNavigationAnalyzer
     private readonly RuleScriptDocumentAnalysisResult _document;
     private readonly RuleScriptEngine _engine;
     private readonly Dictionary<string, NavigationSymbol> _declarations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<NavigationSymbol>> _functionOverloads = new(StringComparer.Ordinal);
     private readonly List<NavigationSymbol> _symbols = [];
     private readonly HashSet<string> _loadedImports = new(StringComparer.OrdinalIgnoreCase);
 
@@ -28,14 +29,7 @@ internal sealed class RuleScriptNavigationAnalyzer
             return null;
         }
 
-        if (symbol.IsExternal && analyzer._declarations.TryGetValue(symbol.Key, out var externalDeclaration))
-        {
-            return externalDeclaration.ToDefinition();
-        }
-
-        return analyzer._declarations.TryGetValue(symbol.Key, out var declaration)
-            ? declaration.ToDefinition()
-            : null;
+        return analyzer.ResolveDeclaration(symbol)?.ToDefinition();
     }
 
     public static IReadOnlyList<RuleScriptReferenceInfo> FindReferences(RuleScriptDocumentAnalysisResult document, int line, int column)
@@ -50,8 +44,11 @@ internal sealed class RuleScriptNavigationAnalyzer
         }
 
         var key = symbol.Key;
+        var declaration = analyzer.ResolveDeclaration(symbol);
+        var isOverloaded = analyzer._functionOverloads.TryGetValue(key, out var overloads) && overloads.Count > 1;
         return analyzer._symbols
             .Where(reference => string.Equals(reference.Key, key, StringComparison.Ordinal))
+            .Where(reference => !isOverloaded || ReferenceEquals(analyzer.ResolveDeclaration(reference), declaration))
             .OrderBy(reference => reference.Range?.File ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ThenBy(reference => reference.Range?.StartLine ?? 0)
             .ThenBy(reference => reference.Range?.StartColumn ?? 0)
@@ -70,8 +67,52 @@ internal sealed class RuleScriptNavigationAnalyzer
             return null;
         }
 
-        var declaration = analyzer._declarations.GetValueOrDefault(symbol.Key) ?? symbol;
-        return analyzer.CreateHover(declaration, symbol.SelectionRange ?? symbol.Range);
+        var declaration = analyzer.ResolveDeclaration(symbol) ?? symbol;
+        return analyzer.CreateHover(declaration, symbol.SelectionRange ?? symbol.Range, symbol);
+    }
+
+    /// <summary>
+    /// Overloads share one declaration key, so a function declaration resolves to itself and a call picks the overload
+    /// the semantic analyzer resolved, then one matching its argument count, before falling back to the last declaration
+    /// registered under the key.
+    /// </summary>
+    private NavigationSymbol? ResolveDeclaration(NavigationSymbol symbol)
+    {
+        if (IsFunctionDeclaration(symbol))
+        {
+            return symbol;
+        }
+
+        if (_functionOverloads.TryGetValue(symbol.Key, out var overloads))
+        {
+            if (symbol.ResolvedFunction is { } resolved
+                && overloads.FirstOrDefault(overload => HasSignature(overload, resolved.Parameters)) is { } exact)
+            {
+                return exact;
+            }
+
+            if (symbol.ArgumentCount is { } count
+                && overloads.FirstOrDefault(overload => overload.Parameters?.Count == count) is { } byCount)
+            {
+                return byCount;
+            }
+        }
+
+        return _declarations.GetValueOrDefault(symbol.Key);
+    }
+
+    private static bool IsFunctionDeclaration(NavigationSymbol symbol)
+    {
+        return symbol.IsDeclaration && symbol.Kind is RuleScriptSymbolKind.Function or RuleScriptSymbolKind.HostFunction;
+    }
+
+    private static bool HasSignature(NavigationSymbol declaration, IReadOnlyList<RuleScriptParameterSymbol> parameters)
+    {
+        return declaration.Parameters is not null
+            && string.Equals(
+                RuleScriptFunctionSymbol.CreateSignatureKey(declaration.Name, declaration.Parameters),
+                RuleScriptFunctionSymbol.CreateSignatureKey(declaration.Name, parameters),
+                StringComparison.Ordinal);
     }
 
     private void Analyze()
@@ -231,7 +272,7 @@ internal sealed class RuleScriptNavigationAnalyzer
                 AddGlobalVariableReference(globalIdentifier.Name, globalIdentifier.Line, globalIdentifier.Column + 1, file);
                 return;
             case FunctionCallExpression call:
-                AddFunctionReference(call.Name, call.Line, call.Column, file);
+                AddFunctionReference(call.Name, call.Line, call.Column, call.Arguments.Count, FindResolvedCall(call.Line, call.Column, file), file);
                 foreach (var argument in call.Arguments)
                 {
                     VisitExpression(argument, scope, file);
@@ -239,7 +280,13 @@ internal sealed class RuleScriptNavigationAnalyzer
 
                 return;
             case ModuleFunctionCallExpression moduleCall:
-                AddFunctionReference($"{moduleCall.ModuleName}.{moduleCall.FunctionName}", moduleCall.Line, moduleCall.Column + 1, file);
+                AddFunctionReference(
+                    $"{moduleCall.ModuleName}.{moduleCall.FunctionName}",
+                    moduleCall.Line,
+                    moduleCall.Column + 1,
+                    moduleCall.Arguments.Count,
+                    FindResolvedCall(moduleCall.Line, moduleCall.Column, file),
+                    file);
                 foreach (var argument in moduleCall.Arguments)
                 {
                     VisitExpression(argument, scope, file);
@@ -307,14 +354,17 @@ internal sealed class RuleScriptNavigationAnalyzer
         }
     }
 
-    private RuleScriptHoverInfo CreateHover(NavigationSymbol declaration, RuleScriptSourceRange? range)
+    private RuleScriptHoverInfo CreateHover(NavigationSymbol declaration, RuleScriptSourceRange? range, NavigationSymbol symbol)
     {
         switch (declaration.Kind)
         {
             case RuleScriptSymbolKind.Function:
             case RuleScriptSymbolKind.HostFunction:
-                var function = FindFunctionSymbol(declaration);
-                var parameters = declaration.Parameters ?? function?.Parameters ?? [];
+                var function = symbol.ResolvedFunction
+                    ?? FindFunctionSymbol(declaration, IsFunctionDeclaration(symbol) ? symbol.Parameters?.Count : symbol.ArgumentCount);
+                var parameters = declaration.Parameters is { } declared && (function is null || declared.Count == function.Parameters.Count)
+                    ? declared
+                    : function?.Parameters ?? [];
                 var returnType = function?.ReturnType ?? declaration.ReturnType;
                 var prefix = function is null && declaration.Kind == RuleScriptSymbolKind.HostFunction
                     ? RuleScriptSignatureFormatter.GetFunctionPrefix(RuleScriptFunctionKind.Host)
@@ -348,11 +398,27 @@ internal sealed class RuleScriptNavigationAnalyzer
         }
     }
 
-    private RuleScriptFunctionSymbol? FindFunctionSymbol(NavigationSymbol declaration)
+    private RuleScriptFunctionSymbol? FindFunctionSymbol(NavigationSymbol declaration, int? argumentCount)
     {
         var candidates = _document.Analysis.Functions
             .Where(function => string.Equals(function.Name, declaration.Name, StringComparison.Ordinal))
             .ToArray();
+
+        if (declaration.Parameters is not null
+            && candidates.FirstOrDefault(function => HasSignature(declaration, function.Parameters)) is { } exact)
+        {
+            return exact;
+        }
+
+        if (argumentCount is { } count)
+        {
+            var match = candidates.FirstOrDefault(function => function.Parameters.Count == count)
+                ?? candidates.FirstOrDefault(function => function.HostMetadata?.IsVariadic == true);
+            if (match is not null)
+            {
+                return match;
+            }
+        }
 
         return candidates.FirstOrDefault(function => declaration.Parameters is null || function.Parameters.Count == declaration.Parameters.Count)
             ?? candidates.FirstOrDefault();
@@ -372,7 +438,26 @@ internal sealed class RuleScriptNavigationAnalyzer
         return _symbols.LastOrDefault(symbol => RuleScriptSourceMapper.Contains(symbol.SelectionRange, line, column));
     }
 
-    private void AddFunctionReference(string name, int? line, int? column, string? file)
+    /// <summary>
+    /// The semantic analyzer only covers the open document, so calls inside imported files fall back to argument counts.
+    /// </summary>
+    private RuleScriptFunctionSymbol? FindResolvedCall(int? line, int? column, string? file)
+    {
+        return file is null
+            && line is { } callLine
+            && column is { } callColumn
+            && _document.Analysis.ResolvedCalls.TryGetValue((callLine, callColumn), out var function)
+                ? function
+                : null;
+    }
+
+    private void AddFunctionReference(
+        string name,
+        int? line,
+        int? column,
+        int argumentCount,
+        RuleScriptFunctionSymbol? resolvedFunction,
+        string? file)
     {
         if (!TryCreateRange(file, line, column, name.Contains('.') ? name[(name.IndexOf('.') + 1)..] : name, out var range))
         {
@@ -382,13 +467,24 @@ internal sealed class RuleScriptNavigationAnalyzer
         var key = Key(RuleScriptSymbolKind.Function, name);
         if (_declarations.ContainsKey(key))
         {
-            AddSymbol(new NavigationSymbol(name, RuleScriptSymbolKind.Function, range, range, IsDeclaration: false));
+            AddSymbol(new NavigationSymbol(name, RuleScriptSymbolKind.Function, range, range, IsDeclaration: false)
+            {
+                ArgumentCount = argumentCount,
+                ResolvedFunction = resolvedFunction
+            });
             return;
         }
 
         if (TryFindExternalFunction(name, out var externalFunction))
         {
-            AddSymbol(externalFunction with { Range = range, SelectionRange = range, IsDeclaration = false });
+            AddSymbol(externalFunction with
+            {
+                Range = range,
+                SelectionRange = range,
+                IsDeclaration = false,
+                ArgumentCount = argumentCount,
+                ResolvedFunction = resolvedFunction
+            });
         }
     }
 
@@ -496,6 +592,21 @@ internal sealed class RuleScriptNavigationAnalyzer
     private void AddDeclaration(NavigationSymbol symbol)
     {
         _declarations[symbol.Key] = symbol;
+        if (symbol.Kind is RuleScriptSymbolKind.Function or RuleScriptSymbolKind.HostFunction && symbol.Parameters is not null)
+        {
+            if (!_functionOverloads.TryGetValue(symbol.Key, out var overloads))
+            {
+                overloads = [];
+                _functionOverloads[symbol.Key] = overloads;
+            }
+
+            // Un-aliased imports register the same declaration twice; keep the first so references resolve to the visited symbol.
+            if (symbol.SelectionRange is null || !overloads.Any(existing => Equals(existing.SelectionRange, symbol.SelectionRange)))
+            {
+                overloads.Add(symbol);
+            }
+        }
+
         if (_symbols.Any(existing =>
                 existing.IsDeclaration == symbol.IsDeclaration
                 && string.Equals(existing.Key, symbol.Key, StringComparison.Ordinal)
@@ -617,6 +728,10 @@ internal sealed class RuleScriptNavigationAnalyzer
         RuleScriptValueType ReturnType = RuleScriptValueType.Unknown)
     {
         public RuleScriptValueType ValueType { get; init; } = RuleScriptValueType.Unknown;
+
+        public int? ArgumentCount { get; init; }
+
+        public RuleScriptFunctionSymbol? ResolvedFunction { get; init; }
 
         public string Key => RuleScriptNavigationAnalyzer.Key(Kind, Name);
 

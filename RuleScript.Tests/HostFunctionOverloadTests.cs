@@ -99,6 +99,50 @@ public sealed class HostFunctionOverloadTests
     }
 
     [Fact]
+    public void GetHover_SelectsHostOverloadByArgumentCount()
+    {
+        var engine = CreatePadEngine();
+        const string source = """
+            var one = Pad("a");
+            var two = Pad("a", 3);
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(engine, source);
+
+        Assert.Equal("host function Pad(text: string) -> string", RuleScriptLanguageService.GetHover(document, 1, 11)?.Signature);
+        Assert.Equal("host function Pad(text: string, width: number) -> string", RuleScriptLanguageService.GetHover(document, 2, 11)?.Signature);
+    }
+
+    [Fact]
+    public void GetHoverAndDefinition_SelectHostOverloadByArgumentType()
+    {
+        var engine = new RuleScriptEngine();
+        engine.RegisterFunction(
+            "Describe",
+            [new RuleScriptParameterSymbol("value", RuleScriptValueType.Number)],
+            RuleScriptValueType.String,
+            args => $"number:{args[0]}");
+        engine.RegisterFunction(
+            "Describe",
+            [new RuleScriptParameterSymbol("value", RuleScriptValueType.String)],
+            RuleScriptValueType.String,
+            args => $"string:{args[0]}");
+        const string source = """
+            var a = Describe(7);
+            var b = Describe("ok");
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(engine, source);
+
+        Assert.Equal("host function Describe(value: number) -> string", RuleScriptLanguageService.GetHover(document, 1, 9)?.Signature);
+        Assert.Equal("host function Describe(value: string) -> string", RuleScriptLanguageService.GetHover(document, 2, 9)?.Signature);
+        Assert.Equal(RuleScriptValueType.String, RuleScriptLanguageService.GetDefinition(document, 2, 9)?.Parameters?.Single().Type);
+        Assert.Equal(
+            [1],
+            RuleScriptLanguageService.FindReferences(document, 1, 9)
+                .Where(reference => reference.Range is not null)
+                .Select(reference => reference.Range!.StartLine));
+    }
+
+    [Fact]
     public void RegisterFunction_SameSignatureReplacesOnlyThatOverload()
     {
         var engine = CreatePadEngine();

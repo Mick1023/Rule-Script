@@ -850,11 +850,13 @@ public sealed class RuleScriptEngine
             registeredHostFunctions,
             _builtinFunctions.Names,
             builtinFunctions);
+        var resolvedCalls = new Dictionary<(int Line, int Column), RuleScriptFunctionSymbol>();
         var semanticDiagnostics = RuleScriptSemanticAnalyzer.Analyze(
             statements,
             _knownVariables,
             functionResolver,
-            importedConstantTypes)
+            importedConstantTypes,
+            resolvedCalls)
             .Concat(typedSymbols.Diagnostics)
             .ToArray();
 
@@ -869,7 +871,10 @@ public sealed class RuleScriptEngine
             visibleVariables,
             registeredHostFunctions,
             semanticDiagnostics,
-            builtinFunctions);
+            builtinFunctions)
+        {
+            ResolvedCalls = resolvedCalls
+        };
     }
 
     private static RuleScriptFunctionResolver CreateFunctionResolver(

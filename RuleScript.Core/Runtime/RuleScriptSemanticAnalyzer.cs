@@ -6,6 +6,7 @@ namespace RuleScript.Core.Runtime;
 internal static class RuleScriptSemanticAnalyzer
 {
     private static readonly AsyncLocal<bool> AnalyzingParallelTask = new();
+    private static readonly AsyncLocal<IDictionary<(int Line, int Column), RuleScriptFunctionSymbol>?> ResolvedCalls = new();
 
     private readonly record struct FunctionReturnContext(
         string FunctionName,
@@ -16,11 +17,31 @@ internal static class RuleScriptSemanticAnalyzer
         bool AlwaysReturns,
         RuleScriptValueType SuggestedReturnType);
 
+    /// <param name="resolvedCalls">Receives the overload each call resolves to, keyed by the call's line and column.</param>
     public static IReadOnlyList<RuleScriptDiagnostic> Analyze(
         IReadOnlyList<Statement> statements,
         IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
         IRuleScriptFunctionResolver functionResolver,
-        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null)
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos = null,
+        IDictionary<(int Line, int Column), RuleScriptFunctionSymbol>? resolvedCalls = null)
+    {
+        var previousResolvedCalls = ResolvedCalls.Value;
+        ResolvedCalls.Value = resolvedCalls;
+        try
+        {
+            return AnalyzeStatements(statements, knownVariables, functionResolver, knownTypeInfos);
+        }
+        finally
+        {
+            ResolvedCalls.Value = previousResolvedCalls;
+        }
+    }
+
+    private static IReadOnlyList<RuleScriptDiagnostic> AnalyzeStatements(
+        IReadOnlyList<Statement> statements,
+        IReadOnlyDictionary<string, RuleScriptValueType> knownVariables,
+        IRuleScriptFunctionResolver functionResolver,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo>? knownTypeInfos)
     {
         var diagnostics = new List<RuleScriptDiagnostic>();
         var globals = knownVariables.ToDictionary(
@@ -1535,6 +1556,11 @@ internal static class RuleScriptSemanticAnalyzer
         if (function is null)
         {
             return RuleScriptTypeInfo.Unknown;
+        }
+
+        if (ResolvedCalls.Value is { } resolvedCalls && line is { } callLine && column is { } callColumn)
+        {
+            resolvedCalls[(callLine, callColumn)] = function;
         }
 
         if (function.Kind is RuleScriptFunctionKind.User or RuleScriptFunctionKind.Imported)

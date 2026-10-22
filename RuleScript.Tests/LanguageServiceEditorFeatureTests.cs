@@ -66,6 +66,161 @@ public sealed class LanguageServiceEditorFeatureTests
     }
 
     [Fact]
+    public void GetHover_BuiltinOverload_MatchesCallArgumentCount()
+    {
+        const string source = """
+            var two = PadLeft("5", 2);
+            var three = PadLeft("5", 2, "0");
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(source);
+
+        Assert.Equal(
+            "builtin function PadLeft(value: any, totalWidth: any) -> string",
+            RuleScriptLanguageService.GetHover(document, 1, 11)?.Signature);
+        Assert.Equal(
+            "builtin function PadLeft(value: any, totalWidth: any, padding: any) -> string",
+            RuleScriptLanguageService.GetHover(document, 2, 13)?.Signature);
+    }
+
+    [Fact]
+    public void GetHover_UserOverload_MatchesCallAndDeclaration()
+    {
+        const string source = """
+            /// Scales by two.
+            function Scale(value: number) -> number:
+                return value * 2;
+            endfunction
+
+            /// Scales by a factor.
+            function Scale(value: number, factor: number) -> number:
+                return value * factor;
+            endfunction
+
+            var one = Scale(1);
+            var two = Scale(1, 3);
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(source);
+
+        var oneArgument = RuleScriptLanguageService.GetHover(document, 11, 11);
+        Assert.Equal("function Scale(value: number) -> number", oneArgument?.Signature);
+        Assert.Equal("Scales by two.", oneArgument?.Documentation);
+        Assert.Equal(
+            "function Scale(value: number, factor: number) -> number",
+            RuleScriptLanguageService.GetHover(document, 12, 11)?.Signature);
+        Assert.Equal(
+            "function Scale(value: number) -> number",
+            RuleScriptLanguageService.GetHover(document, 2, 10)?.Signature);
+    }
+
+    [Fact]
+    public void GetDefinition_UserOverload_MatchesCallAndDeclaration()
+    {
+        const string source = """
+            function Scale(value: number) -> number:
+                return value * 2;
+            endfunction
+
+            function Scale(value: number, factor: number) -> number:
+                return value * factor;
+            endfunction
+
+            var one = Scale(1);
+            var two = Scale(1, 3);
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(source);
+
+        Assert.Equal(1, RuleScriptLanguageService.GetDefinition(document, 9, 11)?.SelectionRange?.StartLine);
+        Assert.Equal(5, RuleScriptLanguageService.GetDefinition(document, 10, 11)?.SelectionRange?.StartLine);
+        Assert.Equal(1, RuleScriptLanguageService.GetDefinition(document, 1, 10)?.SelectionRange?.StartLine);
+    }
+
+    [Fact]
+    public void GetDefinition_BuiltinOverload_MatchesCallArgumentCount()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument("var text = PadLeft(\"5\", 2);");
+
+        var definition = RuleScriptLanguageService.GetDefinition(document, 1, 12);
+
+        Assert.NotNull(definition);
+        Assert.True(definition.IsExternal);
+        Assert.Equal(["value", "totalWidth"], definition.Parameters!.Select(parameter => parameter.Name));
+        Assert.Equal("Pads text on the left with spaces to the specified total width.", definition.Documentation);
+    }
+
+    private const string TypedOverloadSource = """
+        /// Describes a number.
+        function Describe(value: number) -> string:
+            return "number";
+        endfunction
+
+        /// Describes a string.
+        function Describe(value: string) -> string:
+            return "string";
+        endfunction
+
+        var a = Describe(7);
+        var b = Describe("ok");
+        var c = Describe(8);
+        """;
+
+    [Fact]
+    public void GetHoverAndDefinition_SameArityOverload_MatchesArgumentTypes()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(TypedOverloadSource);
+
+        var numberHover = RuleScriptLanguageService.GetHover(document, 11, 9);
+        var stringHover = RuleScriptLanguageService.GetHover(document, 12, 9);
+
+        Assert.Equal("function Describe(value: number) -> string", numberHover?.Signature);
+        Assert.Equal("Describes a number.", numberHover?.Documentation);
+        Assert.Equal("function Describe(value: string) -> string", stringHover?.Signature);
+        Assert.Equal("Describes a string.", stringHover?.Documentation);
+        Assert.Equal(2, RuleScriptLanguageService.GetDefinition(document, 11, 9)?.SelectionRange?.StartLine);
+        Assert.Equal(7, RuleScriptLanguageService.GetDefinition(document, 12, 9)?.SelectionRange?.StartLine);
+        Assert.Equal("function Describe(value: number) -> string", RuleScriptLanguageService.GetHover(document, 2, 10)?.Signature);
+        Assert.Equal("function Describe(value: string) -> string", RuleScriptLanguageService.GetHover(document, 7, 10)?.Signature);
+    }
+
+    [Fact]
+    public void FindReferences_Overload_ReturnsOnlyThatOverload()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(TypedOverloadSource);
+
+        var fromCall = RuleScriptLanguageService.FindReferences(document, 11, 9);
+        var fromDeclaration = RuleScriptLanguageService.FindReferences(document, 7, 10);
+
+        Assert.Equal([2, 11, 13], fromCall.Select(reference => reference.Range!.StartLine));
+        Assert.Equal([7, 12], fromDeclaration.Select(reference => reference.Range!.StartLine));
+    }
+
+    [Fact]
+    public void FindReferences_BuiltinOverload_ReturnsOnlyMatchingArgumentCount()
+    {
+        const string source = """
+            var a = PadLeft("5", 2);
+            var b = PadLeft("5", 2, "0");
+            var c = PadLeft("6", 3);
+            """;
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(source);
+
+        var references = RuleScriptLanguageService.FindReferences(document, 1, 9)
+            .Where(reference => reference.Range is not null);
+
+        Assert.Equal([1, 3], references.Select(reference => reference.Range!.StartLine));
+    }
+
+    [Fact]
+    public void Rename_Overload_EditsOnlyThatOverload()
+    {
+        var document = RuleScriptLanguageService.TryAnalyzeDocument(TypedOverloadSource);
+
+        var result = RuleScriptLanguageService.Rename(document, 7, 10, "DescribeText");
+
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Equal([7, 12], result.Edits.Select(edit => edit.StartLine));
+    }
+
+    [Fact]
     public void GetHover_ReturnsNullAwayFromSymbols()
     {
         var document = RuleScriptLanguageService.TryAnalyzeDocument(Source);
