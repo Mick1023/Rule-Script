@@ -39,7 +39,7 @@ Host applications register Host Functions and context variables at runtime, so t
 }
 ```
 
-Types are `any`, `null`, `number`, `string`, `boolean` (or `bool`), `array`, `object`, and `void`. Comments and trailing commas are allowed. Missing or unknown Host Function types fall back to `any`, and problems are reported in the client's output log. The server reloads the file when it changes, if the client supports file watching.
+Types are `any`, `null`, `number`, `string`, `boolean` (or `bool`), `array`, `object`, and `void`. Comments and trailing commas are allowed. Repeat a name with different parameters to declare overloads. Missing or unknown Host Function types fall back to `any`, and problems are reported in the client's output log. The server reloads the file when it changes, if the client supports file watching.
 
 The manifest only describes metadata for analysis; the server never runs Host Functions.
 
