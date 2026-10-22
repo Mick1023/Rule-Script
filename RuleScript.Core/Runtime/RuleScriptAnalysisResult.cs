@@ -51,6 +51,12 @@ public sealed class RuleScriptAnalysisResult
     }
 
     /// <summary>
+    /// Gets the overload each function call in the script resolved to, keyed by the call's line and column.
+    /// </summary>
+    internal IReadOnlyDictionary<(int Line, int Column), RuleScriptFunctionSymbol> ResolvedCalls { get; init; }
+        = new Dictionary<(int Line, int Column), RuleScriptFunctionSymbol>();
+
+    /// <summary>
     /// Gets variable names declared or assigned in the script.
     /// </summary>
     public IReadOnlyList<string> VariableNames { get; }
