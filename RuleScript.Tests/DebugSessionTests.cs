@@ -289,12 +289,12 @@ public sealed class DebugSessionTests
 
         Assert.Equal(RuleScriptRuntimeEventKind.BreakpointHit, pause.Kind);
         Assert.Equal(5, pause.Location.Line);
-        Assert.Equal([5d, 4d], printedValues);
+        Assert.Equal([5m, 4m], printedValues);
 
         session.Continue();
         await runTask.WaitAsync(TestTimeout());
 
-        Assert.Equal([5d, 4d, 3d, 2d, 1d, 0d], printedValues);
+        Assert.Equal([5m, 4m, 3m, 2m, 1m, 0m], printedValues);
     }
 
     [Fact]
@@ -363,7 +363,7 @@ public sealed class DebugSessionTests
             result = 9;
             """).WaitAsync(TestTimeout());
 
-        Assert.Equal([5d, 4d], printedValues);
+        Assert.Equal([5m, 4m], printedValues);
         Assert.Equal(9d, context.Get<double>("result"));
     }
 

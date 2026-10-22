@@ -2917,7 +2917,7 @@ public sealed class Interpreter
     {
         if (TryGetNumber(left, out var leftNumber) && TryGetNumber(right, out var rightNumber))
         {
-            return new RuntimeValue(leftNumber + rightNumber);
+            return Calculate(leftNumber, rightNumber, expression, (a, b) => a + b);
         }
 
         if (left is string && right is string)
@@ -2933,17 +2933,33 @@ public sealed class Interpreter
         throw new RuntimeException("Operator '+' requires number operands or at least one string operand.", expression.Line, expression.Column, expression.TokenText);
     }
 
-    private static RuntimeValue NumberOperation(object? left, object? right, string operatorText, BinaryExpression expression, Func<double, double, double> operation)
+    private static RuntimeValue NumberOperation(object? left, object? right, string operatorText, BinaryExpression expression, Func<decimal, decimal, decimal> operation)
     {
         if (TryGetNumber(left, out var leftNumber) && TryGetNumber(right, out var rightNumber))
         {
-            return new RuntimeValue(operation(leftNumber, rightNumber));
+            return Calculate(leftNumber, rightNumber, expression, operation);
         }
 
         throw new RuntimeException($"Operator '{operatorText}' requires number operands.", expression.Line, expression.Column, expression.TokenText);
     }
 
-    private static RuntimeValue NumberComparison(object? left, object? right, string operatorText, BinaryExpression expression, Func<double, double, bool> comparison)
+    private static RuntimeValue Calculate(decimal left, decimal right, BinaryExpression expression, Func<decimal, decimal, decimal> operation)
+    {
+        try
+        {
+            return new RuntimeValue(operation(left, right));
+        }
+        catch (DivideByZeroException)
+        {
+            throw new RuntimeException("Division by zero.", expression.Line, expression.Column, expression.TokenText);
+        }
+        catch (OverflowException)
+        {
+            throw new RuntimeException("Arithmetic result is outside the range of RuleScript numbers.", expression.Line, expression.Column, expression.TokenText);
+        }
+    }
+
+    private static RuntimeValue NumberComparison(object? left, object? right, string operatorText, BinaryExpression expression, Func<decimal, decimal, bool> comparison)
     {
         if (TryGetNumber(left, out var leftNumber) && TryGetNumber(right, out var rightNumber))
         {
@@ -2979,36 +2995,7 @@ public sealed class Interpreter
         };
     }
 
-    private static bool TryGetNumber(object? value, out double number)
-    {
-        switch (value)
-        {
-            case byte byteValue:
-                number = byteValue;
-                return true;
-            case short shortValue:
-                number = shortValue;
-                return true;
-            case int intValue:
-                number = intValue;
-                return true;
-            case long longValue:
-                number = longValue;
-                return true;
-            case float floatValue:
-                number = floatValue;
-                return true;
-            case double doubleValue:
-                number = doubleValue;
-                return true;
-            case decimal decimalValue:
-                number = (double)decimalValue;
-                return true;
-            default:
-                number = 0;
-                return false;
-        }
-    }
+    private static bool TryGetNumber(object? value, out decimal number) => RuleScriptNumbers.TryGetDecimal(value, out number);
 
     private static IEnumerable<object?> GetIterableItems(object? value, ForeachStatement statement)
     {
@@ -3059,6 +3046,7 @@ public sealed class Interpreter
         {
             null => string.Empty,
             bool boolValue => boolValue ? "true" : "false",
+            decimal number => RuleScriptNumbers.ToText(number),
             IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty
         };

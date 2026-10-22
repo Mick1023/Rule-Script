@@ -116,7 +116,19 @@ public sealed class RuntimeContext
     /// </summary>
     public T? GetOrDefault<T>(string name, T? defaultValue = default)
     {
-        return TryGet(name, out var value) && value is T typedValue ? typedValue : defaultValue;
+        if (!TryGet(name, out var value))
+        {
+            return defaultValue;
+        }
+
+        try
+        {
+            return value is null ? defaultValue : new RuntimeValue(value).As<T>();
+        }
+        catch (Exception exception) when (exception is InvalidCastException or OverflowException)
+        {
+            return defaultValue;
+        }
     }
 
     /// <summary>

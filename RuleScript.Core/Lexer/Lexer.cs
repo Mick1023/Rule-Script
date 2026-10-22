@@ -406,7 +406,12 @@ public sealed class Lexer
         }
 
         var text = _source[_start.._current];
-        AddToken(TokenType.Number, double.Parse(text, System.Globalization.CultureInfo.InvariantCulture));
+        if (!decimal.TryParse(text, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var number))
+        {
+            Report(new SyntaxException("Number literal is outside the range of RuleScript numbers.", _line, _tokenColumn, text));
+        }
+
+        AddToken(TokenType.Number, number);
     }
 
     private void ScanIdentifier()

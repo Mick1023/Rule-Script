@@ -1811,12 +1811,12 @@ internal static class RuleScriptSemanticAnalyzer
         object? value = expression switch
         {
             LiteralExpression literal => literal.Value,
-            UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: double number } } => -number,
+            UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: decimal number } } => -number,
             _ => null
         };
 
         if (expression is not LiteralExpression
-            && expression is not UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: double } })
+            && expression is not UnaryExpression { Operator: TokenType.Minus, Operand: LiteralExpression { Value: decimal } })
         {
             constant = default;
             return false;

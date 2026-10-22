@@ -22,7 +22,7 @@ public sealed class ParserTests
         var varStatement = Assert.IsType<VarStatement>(statement);
 
         Assert.Equal("a", varStatement.Name);
-        AssertLiteral(1d, varStatement.Initializer);
+        AssertLiteral(1m, varStatement.Initializer);
     }
 
     [Fact]
@@ -65,11 +65,11 @@ public sealed class ParserTests
         var expressionStatement = Assert.IsType<ExpressionStatement>(statement);
         var plus = AssertBinary(expressionStatement.Expression, TokenType.Plus);
 
-        AssertLiteral(1d, plus.Left);
+        AssertLiteral(1m, plus.Left);
 
         var star = AssertBinary(plus.Right, TokenType.Star);
-        AssertLiteral(2d, star.Left);
-        AssertLiteral(3d, star.Right);
+        AssertLiteral(2m, star.Left);
+        AssertLiteral(3m, star.Right);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class ParserTests
         var star = AssertBinary(expressionStatement.Expression, TokenType.Star);
 
         AssertBinary(star.Left, TokenType.Plus);
-        AssertLiteral(3d, star.Right);
+        AssertLiteral(3m, star.Right);
     }
 
     [Fact]
