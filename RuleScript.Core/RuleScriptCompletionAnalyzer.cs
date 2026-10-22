@@ -224,8 +224,27 @@ internal static class RuleScriptCompletionAnalyzer
             switch (token.Type)
             {
                 case TokenType.String:
-                    var terminated = token.Lexeme.Length > 1 && token.Lexeme[^1] == '"';
+                    var terminated = token.Lexeme.Length > 1 && token.Lexeme[^1] == token.Lexeme[0];
                     if (IsBefore(line, column, token.EndLine, token.EndColumn, inclusive: !terminated))
+                    {
+                        return true;
+                    }
+
+                    break;
+                case TokenType.TemplateHead:
+                case TokenType.TemplateMiddle:
+                    // The position right after "${" starts a substitution expression.
+                    if (IsBefore(line, column, token.EndLine, token.EndColumn, inclusive: false))
+                    {
+                        return true;
+                    }
+
+                    break;
+                case TokenType.TemplateTail:
+                    // Tokens starting at the position were skipped above, so the position before the
+                    // closing '}' still belongs to the substitution expression.
+                    var tailTerminated = token.Lexeme.Length > 1 && token.Lexeme[^1] == '`';
+                    if (IsBefore(line, column, token.EndLine, token.EndColumn, inclusive: !tailTerminated))
                     {
                         return true;
                     }

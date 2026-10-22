@@ -73,6 +73,31 @@ internal sealed class RuleScriptTypeInfo
             properties: properties.ToDictionary(property => property.Key, property => property.Value, StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// Merges the types of two alternative values, such as the branches of a conditional expression.
+    /// </summary>
+    public static RuleScriptTypeInfo Merge(RuleScriptTypeInfo first, RuleScriptTypeInfo second)
+    {
+        if (first.Kind == RuleScriptValueType.Null)
+        {
+            return second.MakeNullable();
+        }
+
+        if (second.Kind == RuleScriptValueType.Null)
+        {
+            return first.MakeNullable();
+        }
+
+        if (first.Kind != second.Kind || first.Kind == RuleScriptValueType.Unknown)
+        {
+            return Unknown;
+        }
+
+        // Array and object shapes are only kept when both branches share them.
+        var merged = ReferenceEquals(first, second) ? first : From(first.Kind);
+        return first.IsNullable || second.IsNullable ? merged.MakeNullable() : merged;
+    }
+
     public bool TryGetProperty(string name, out RuleScriptTypeInfo propertyType)
     {
         if (Properties is not null && Properties.TryGetValue(name, out var value))

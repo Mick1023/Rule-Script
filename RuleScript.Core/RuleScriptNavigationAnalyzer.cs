@@ -203,6 +203,10 @@ internal sealed class RuleScriptNavigationAnalyzer
                     VisitExpression(targetAssignment.Target, scope, file);
                     VisitExpression(targetAssignment.Value, scope, file);
                     break;
+                case CompoundAssignmentStatement compoundAssignment:
+                    VisitExpression(compoundAssignment.Target, scope, file);
+                    VisitExpression(compoundAssignment.Value, scope, file);
+                    break;
                 case DestructuringVarStatement destructuring:
                     VisitExpression(destructuring.Initializer, scope, file);
                     break;
@@ -269,6 +273,18 @@ internal sealed class RuleScriptNavigationAnalyzer
             case NullCoalescingExpression nullCoalescing:
                 VisitExpression(nullCoalescing.Left, scope, file);
                 VisitExpression(nullCoalescing.Right, scope, file);
+                return;
+            case ConditionalExpression conditional:
+                VisitExpression(conditional.Condition, scope, file);
+                VisitExpression(conditional.WhenTrue, scope, file);
+                VisitExpression(conditional.WhenFalse, scope, file);
+                return;
+            case TemplateStringExpression template:
+                foreach (var part in template.Expressions)
+                {
+                    VisitExpression(part, scope, file);
+                }
+
                 return;
             case ObjectLiteralExpression objectLiteral:
                 foreach (var property in objectLiteral.Properties)

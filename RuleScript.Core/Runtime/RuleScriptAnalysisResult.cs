@@ -33,13 +33,14 @@ public sealed class RuleScriptAnalysisResult
             : SnapshotVariables(visibleVariables, []);
         VisibleVariableNames = Snapshot(VisibleVariables.Select(variable => variable.Name));
         HostFunctions = SnapshotHostFunctions(hostFunctions);
-        BuiltinFunctions = SnapshotBuiltinFunctions(builtinFunctions);
+        var builtinSymbols = builtinFunctions?.ToArray() ?? [];
+        BuiltinFunctions = SnapshotBuiltinFunctions(builtinSymbols);
         Functions = SnapshotAllFunctions(
             UserFunctions,
             UserFunctionNames,
             HostFunctions.Select(function => function.ToFunctionSymbol()),
             HostFunctionNames,
-            BuiltinFunctions.Select(function => function.ToFunctionSymbol()),
+            builtinSymbols,
             BuiltinFunctionNames);
         HostTriggers = UserFunctions
             .Where(function => function.HostTriggerMetadata is not null)
@@ -214,7 +215,10 @@ public sealed class RuleScriptAnalysisResult
     private static IReadOnlyList<RuleScriptBuiltinFunctionSymbol> SnapshotBuiltinFunctions(
         IEnumerable<RuleScriptFunctionSymbol>? symbols)
     {
+        // The compatibility projection keeps one entry per name: the first registered overload.
+        // Functions lists every overload.
         return symbols?
+            .DistinctBy(symbol => symbol.Name, StringComparer.Ordinal)
             .Select(symbol => new RuleScriptBuiltinFunctionSymbol(symbol))
             .OrderBy(symbol => symbol.Name, StringComparer.Ordinal)
             .ToArray()

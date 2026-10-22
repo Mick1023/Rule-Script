@@ -7,7 +7,13 @@ namespace RuleScript.Core.Runtime;
 public sealed class BuiltinFunctions
 {
     private readonly Dictionary<string, Func<IReadOnlyList<RuntimeValue>, RuntimeValue>> _functions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuleScriptFunctionSymbol> _signatures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<RuleScriptFunctionSymbol>> _signatures = new(StringComparer.Ordinal);
+    private RuleScriptFunctionSymbol[]? _signatureSnapshot;
+
+    /// <summary>
+    /// The largest array <c>Range</c> creates, so a typo cannot allocate an unbounded array.
+    /// </summary>
+    internal const int MaxRangeLength = 1_000_000;
 
     public BuiltinFunctions()
     {
@@ -68,6 +74,13 @@ public sealed class BuiltinFunctions
         RegisterTyped("ArrayContains", ArrayContains, RuleScriptValueType.Boolean, "Returns whether an array contains a matching value.",
             new("array", RuleScriptValueType.Array),
             new("value", RuleScriptValueType.Any));
+        RegisterTyped("Range", Range, RuleScriptValueType.Array, "Returns the integers from start up to, but not including, end.",
+            new("start", RuleScriptValueType.Number),
+            new("end", RuleScriptValueType.Number));
+        RegisterTyped("Range", Range, RuleScriptValueType.Array, "Returns the integers from start up to, but not including, end, counting by step. A negative step counts down.",
+            new("start", RuleScriptValueType.Number),
+            new("end", RuleScriptValueType.Number),
+            new("step", RuleScriptValueType.Number));
         RegisterTyped("ArrayClear", ArrayClear, RuleScriptValueType.Array, "Removes all items from an array and returns the same array.",
             new RuleScriptParameterSymbol("array", RuleScriptValueType.Array));
         RegisterTyped("ObjectKeys", ObjectKeys, RuleScriptValueType.Array, "Returns the object's keys sorted by ordinal name.",
@@ -120,7 +133,8 @@ public sealed class BuiltinFunctions
 
     public IEnumerable<string> Names => _functions.Keys;
 
-    internal IReadOnlyCollection<RuleScriptFunctionSymbol> Signatures => _signatures.Values;
+    internal IReadOnlyCollection<RuleScriptFunctionSymbol> Signatures =>
+        _signatureSnapshot ??= _signatures.Values.SelectMany(overloads => overloads).ToArray();
 
     public void Register(string name, Func<IReadOnlyList<RuntimeValue>, RuntimeValue> function)
     {
@@ -131,6 +145,7 @@ public sealed class BuiltinFunctions
 
         _functions[name] = function ?? throw new ArgumentNullException(nameof(function));
         _signatures.Remove(name);
+        _signatureSnapshot = null;
     }
 
     private void RegisterTyped(
@@ -140,8 +155,15 @@ public sealed class BuiltinFunctions
         string documentation,
         params RuleScriptParameterSymbol[] parameters)
     {
-        Register(name, function);
-        _signatures[name] = new RuleScriptFunctionSymbol(
+        if (!_signatures.TryGetValue(name, out var overloads))
+        {
+            Register(name, function);
+            overloads = [];
+            _signatures[name] = overloads;
+        }
+
+        _signatureSnapshot = null;
+        overloads.Add(new RuleScriptFunctionSymbol(
             name,
             parameters,
             returnType,
@@ -149,7 +171,7 @@ public sealed class BuiltinFunctions
             isExported: false,
             documentation: documentation,
             kind: RuleScriptFunctionKind.Builtin,
-            builtinMetadata: new RuleScriptBuiltinFunctionMetadata());
+            builtinMetadata: new RuleScriptBuiltinFunctionMetadata()));
     }
 
     public RuntimeValue Invoke(string name, IReadOnlyList<RuntimeValue> arguments)
@@ -297,6 +319,41 @@ public sealed class BuiltinFunctions
         }
 
         return new RuntimeValue(value.Substring(start, length));
+    }
+
+    private static RuntimeValue Range(IReadOnlyList<RuntimeValue> arguments)
+    {
+        if (arguments.Count is not (2 or 3))
+        {
+            throw new RuntimeException($"Range expects 2 or 3 arguments but received {arguments.Count}.");
+        }
+
+        var start = RequireInt("Range", "start", arguments[0].Value);
+        var end = RequireInt("Range", "end", arguments[1].Value);
+        var step = arguments.Count == 3 ? RequireInt("Range", "step", arguments[2].Value) : 1;
+
+        if (step == 0)
+        {
+            throw new RuntimeException("Range argument 'step' cannot be 0.");
+        }
+
+        // long arithmetic keeps ranges near int.MinValue and int.MaxValue from overflowing.
+        long distance = step > 0 ? (long)end - start : (long)start - end;
+        long stepSize = Math.Abs((long)step);
+        var count = distance <= 0 ? 0 : (distance + stepSize - 1) / stepSize;
+
+        if (count > MaxRangeLength)
+        {
+            throw new RuntimeException($"Range would create {count} items, but the maximum is {MaxRangeLength}.");
+        }
+
+        var values = new List<object?>((int)count);
+        for (var i = 0; i < count; i++)
+        {
+            values.Add((int)(start + (long)i * step));
+        }
+
+        return new RuntimeValue(values);
     }
 
     private static RuntimeValue Length(IReadOnlyList<RuntimeValue> arguments)

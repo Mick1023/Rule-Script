@@ -418,6 +418,14 @@ internal static class RuleScriptSymbolAnalyzer
                 SetType(globals, identifier.Name, assignedGlobalType);
                 SetType(allVariables, identifier.Name, assignedGlobalType);
                 break;
+            case CompoundAssignmentStatement { Target: IdentifierExpression identifier } assignment:
+                SetVariable(scope, allVariables, identifier.Name, InferCompoundAssignment(assignment, scope, globals, hostFunctionReturnTypes));
+                break;
+            case CompoundAssignmentStatement { Target: GlobalIdentifierExpression identifier } assignment:
+                var compoundGlobalType = InferCompoundAssignment(assignment, scope, globals, hostFunctionReturnTypes);
+                SetType(globals, identifier.Name, compoundGlobalType);
+                SetType(allVariables, identifier.Name, compoundGlobalType);
+                break;
             case GlobalAssignmentStatement assignment:
                 var globalType = Infer(assignment.Value, scope, globals, hostFunctionReturnTypes);
                 SetType(globals, assignment.Name, globalType);
@@ -573,6 +581,19 @@ internal static class RuleScriptSymbolAnalyzer
         }
     }
 
+    private static RuleScriptTypeInfo InferCompoundAssignment(
+        CompoundAssignmentStatement assignment,
+        IDictionary<string, RuleScriptTypeInfo> scope,
+        IDictionary<string, RuleScriptTypeInfo> globals,
+        IReadOnlyDictionary<string, RuleScriptTypeInfo> hostFunctionReturnTypes)
+    {
+        return InferBinary(
+            new BinaryExpression(assignment.Target, assignment.Operator, assignment.Value),
+            scope,
+            globals,
+            hostFunctionReturnTypes);
+    }
+
     private static RuleScriptTypeInfo Infer(
         Expression? expression,
         IDictionary<string, RuleScriptTypeInfo> scope,
@@ -592,6 +613,10 @@ internal static class RuleScriptSymbolAnalyzer
             UnaryExpression { Operator: TokenType.Minus } => RuleScriptTypeInfo.From(RuleScriptValueType.Number),
             BinaryExpression binary => InferBinary(binary, scope, globals, hostFunctionReturnTypes),
             NullCoalescingExpression coalescing => InferNullCoalescing(coalescing, scope, globals, hostFunctionReturnTypes),
+            ConditionalExpression conditional => RuleScriptTypeInfo.Merge(
+                Infer(conditional.WhenTrue, scope, globals, hostFunctionReturnTypes),
+                Infer(conditional.WhenFalse, scope, globals, hostFunctionReturnTypes)),
+            TemplateStringExpression => RuleScriptTypeInfo.From(RuleScriptValueType.String),
             FunctionCallExpression call => InferFunction(call, scope, globals, hostFunctionReturnTypes),
             IndexExpression index => Infer(index.Target, scope, globals, hostFunctionReturnTypes).ElementType ?? RuleScriptTypeInfo.Unknown,
             MemberAccessExpression member => InferMemberAccess(member, scope, globals, hostFunctionReturnTypes),

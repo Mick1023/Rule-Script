@@ -79,5 +79,22 @@ public enum TokenType
     Dot,
     Comma,
     Semicolon,
-    Colon
+    Colon,
+
+    // Appended to keep the numeric values of earlier members stable.
+    Question,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign,
+
+    /// <summary>The start of a template string up to its first substitution, such as <c>`Lot ${</c>.</summary>
+    TemplateHead,
+
+    /// <summary>Template text between two substitutions, such as <c>} at ${</c>.</summary>
+    TemplateMiddle,
+
+    /// <summary>Template text after the last substitution, such as <c>} arrived`</c>.</summary>
+    TemplateTail
 }
