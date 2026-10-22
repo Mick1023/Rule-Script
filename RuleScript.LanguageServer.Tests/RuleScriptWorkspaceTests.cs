@@ -117,6 +117,50 @@ public sealed class RuleScriptWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Manifest_HostFunctionOverloadsResolvePerCall()
+    {
+        File.WriteAllText(Path.Combine(_root, "rulescript.json"), """
+            {
+              "hostFunctions": [
+                {
+                  "name": "Describe",
+                  "parameters": [{ "name": "value", "type": "number" }],
+                  "returnType": "string"
+                },
+                {
+                  "name": "Describe",
+                  "parameters": [{ "name": "value", "type": "string" }],
+                  "returnType": "string"
+                },
+                {
+                  "name": "Describe",
+                  "parameters": [{ "name": "value", "type": "number" }, { "name": "digits", "type": "number" }],
+                  "returnType": "string"
+                }
+              ]
+            }
+            """);
+        var workspace = CreateWorkspace(_root);
+        var main = Uri("main.rules");
+
+        workspace.Update(main, "var a = Describe(1);\nvar b = Describe(\"x\");\nvar c = Describe(1, 2);\nvar d = Describe(2);", 1);
+        var document = workspace.GetDocument(main)!;
+
+        Assert.Contains("Describe(value: number) -> string", HoverText(document, 0));
+        Assert.Contains("Describe(value: string) -> string", HoverText(document, 1));
+        Assert.Contains("Describe(value: number, digits: number) -> string", HoverText(document, 2));
+        Assert.Equal(
+            [0, 3],
+            RuleScriptLanguageFeatures.GetReferences(document, main, new Position(0, 8), includeDeclaration: true)
+                .Select(location => location.Range.Start.Line));
+    }
+
+    private static string HoverText(RuleScriptDocumentAnalysisResult document, int line)
+    {
+        return RuleScriptLanguageFeatures.GetHover(document, new Position(line, 8))!.Contents.MarkupContent!.Value;
+    }
+
+    [Fact]
     public void WithoutManifest_HostSymbolsAreReportedAsUndefined()
     {
         var workspace = CreateWorkspace(_root);
